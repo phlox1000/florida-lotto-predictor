@@ -1,11 +1,16 @@
-import { eq } from "drizzle-orm";
+import { eq, desc, and, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users } from "../drizzle/schema";
+import {
+  InsertUser, users,
+  drawResults, InsertDrawResult,
+  predictions, InsertPrediction,
+  ticketSelections, InsertTicketSelection,
+  modelPerformance, InsertModelPerformance,
+} from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
-// Lazily create the drizzle instance so local tooling can run without a DB.
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
@@ -18,26 +23,16 @@ export async function getDb() {
   return _db;
 }
 
+// ─── User queries ───────────────────────────────────────────────────────────────
 export async function upsertUser(user: InsertUser): Promise<void> {
-  if (!user.openId) {
-    throw new Error("User openId is required for upsert");
-  }
-
+  if (!user.openId) throw new Error("User openId is required for upsert");
   const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot upsert user: database not available");
-    return;
-  }
-
+  if (!db) { console.warn("[Database] Cannot upsert user: database not available"); return; }
   try {
-    const values: InsertUser = {
-      openId: user.openId,
-    };
+    const values: InsertUser = { openId: user.openId };
     const updateSet: Record<string, unknown> = {};
-
     const textFields = ["name", "email", "loginMethod"] as const;
     type TextField = (typeof textFields)[number];
-
     const assignNullable = (field: TextField) => {
       const value = user[field];
       if (value === undefined) return;
@@ -45,48 +40,116 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       values[field] = normalized;
       updateSet[field] = normalized;
     };
-
     textFields.forEach(assignNullable);
-
-    if (user.lastSignedIn !== undefined) {
-      values.lastSignedIn = user.lastSignedIn;
-      updateSet.lastSignedIn = user.lastSignedIn;
-    }
-    if (user.role !== undefined) {
-      values.role = user.role;
-      updateSet.role = user.role;
-    } else if (user.openId === ENV.ownerOpenId) {
-      values.role = 'admin';
-      updateSet.role = 'admin';
-    }
-
-    if (!values.lastSignedIn) {
-      values.lastSignedIn = new Date();
-    }
-
-    if (Object.keys(updateSet).length === 0) {
-      updateSet.lastSignedIn = new Date();
-    }
-
-    await db.insert(users).values(values).onDuplicateKeyUpdate({
-      set: updateSet,
-    });
-  } catch (error) {
-    console.error("[Database] Failed to upsert user:", error);
-    throw error;
-  }
+    if (user.lastSignedIn !== undefined) { values.lastSignedIn = user.lastSignedIn; updateSet.lastSignedIn = user.lastSignedIn; }
+    if (user.role !== undefined) { values.role = user.role; updateSet.role = user.role; }
+    else if (user.openId === ENV.ownerOpenId) { values.role = 'admin'; updateSet.role = 'admin'; }
+    if (!values.lastSignedIn) values.lastSignedIn = new Date();
+    if (Object.keys(updateSet).length === 0) updateSet.lastSignedIn = new Date();
+    await db.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet });
+  } catch (error) { console.error("[Database] Failed to upsert user:", error); throw error; }
 }
 
 export async function getUserByOpenId(openId: string) {
   const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot get user: database not available");
-    return undefined;
-  }
-
+  if (!db) { console.warn("[Database] Cannot get user: database not available"); return undefined; }
   const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
-
   return result.length > 0 ? result[0] : undefined;
 }
 
-// TODO: add feature queries here as your schema grows.
+// ─── Draw Results ───────────────────────────────────────────────────────────────
+export async function insertDrawResult(data: InsertDrawResult) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(drawResults).values(data);
+  return result;
+}
+
+export async function getDrawResults(gameType: string, limit = 200) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(drawResults)
+    .where(eq(drawResults.gameType, gameType))
+    .orderBy(desc(drawResults.drawDate))
+    .limit(limit);
+}
+
+export async function getLatestDrawResults(limit = 10) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(drawResults)
+    .orderBy(desc(drawResults.drawDate))
+    .limit(limit);
+}
+
+export async function getAllDrawResults(limit = 500) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(drawResults)
+    .orderBy(desc(drawResults.drawDate))
+    .limit(limit);
+}
+
+// ─── Predictions ────────────────────────────────────────────────────────────────
+export async function insertPredictions(data: InsertPrediction[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (data.length === 0) return;
+  await db.insert(predictions).values(data);
+}
+
+export async function getUserPredictions(userId: number, limit = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(predictions)
+    .where(eq(predictions.userId, userId))
+    .orderBy(desc(predictions.createdAt))
+    .limit(limit);
+}
+
+export async function getRecentPredictions(gameType: string, limit = 100) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(predictions)
+    .where(eq(predictions.gameType, gameType))
+    .orderBy(desc(predictions.createdAt))
+    .limit(limit);
+}
+
+// ─── Ticket Selections ─────────────────────────────────────────────────────────
+export async function insertTicketSelection(data: InsertTicketSelection) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.insert(ticketSelections).values(data);
+}
+
+export async function getUserTicketSelections(userId: number, limit = 20) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(ticketSelections)
+    .where(eq(ticketSelections.userId, userId))
+    .orderBy(desc(ticketSelections.createdAt))
+    .limit(limit);
+}
+
+// ─── Model Performance ─────────────────────────────────────────────────────────
+export async function insertModelPerformance(data: InsertModelPerformance[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  if (data.length === 0) return;
+  await db.insert(modelPerformance).values(data);
+}
+
+export async function getModelPerformanceStats(gameType: string) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({
+    modelName: modelPerformance.modelName,
+    totalPredictions: sql<number>`COUNT(*)`,
+    avgMainHits: sql<number>`AVG(${modelPerformance.mainHits})`,
+    avgSpecialHits: sql<number>`AVG(${modelPerformance.specialHits})`,
+    maxMainHits: sql<number>`MAX(${modelPerformance.mainHits})`,
+  }).from(modelPerformance)
+    .where(eq(modelPerformance.gameType, gameType))
+    .groupBy(modelPerformance.modelName);
+}

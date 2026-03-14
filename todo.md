@@ -1,0 +1,17 @@
+# Project TODO
+
+- [x] Database schema: draw_results, predictions, prediction_history, model_performance tables
+- [x] Backend prediction engine: port all 16 models (Random, Poisson x3, HotCold x2, BalancedHotCold, Gap, CoOccurrence, Delta, TemporalEcho, MonteCarlo, Markov, Bayesian, QuantumEntanglement, AIOracleEnsemble)
+- [x] tRPC API endpoints for predictions by game type (Fantasy 5, Powerball, Mega Millions, Florida Lotto, Cash4Life, Pick 2-5)
+- [x] Budget-aware ticket selector: 20 tickets within $75 constraint
+- [x] Dark neon theme with cyan and gold accents
+- [x] Responsive landing page with game selection and prediction display
+- [x] Prediction display showing all 16 model outputs with confidence scores
+- [x] Prediction history view with timestamps and model performance metrics
+- [x] Real-time draw results display for latest winning numbers
+- [x] Admin panel for manually adding draw results
+- [x] User authentication via Manus OAuth for personal prediction history
+- [x] LLM-powered analysis: model performance explanations, pattern analysis, personalized strategy recommendations
+- [x] Auto-fetch Florida Lottery results from official sources via Data API
+- [x] Owner notifications for accuracy thresholds and unusual pattern detection
+- [x] Vitest tests for backend logic
