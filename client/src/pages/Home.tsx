@@ -151,7 +151,6 @@ export default function Home() {
   const [, navigate] = useLocation();
   const [selectedGame, setSelectedGame] = useState<GameType>("fantasy_5");
   const generatePredictions = trpc.predictions.generate.useMutation();
-  const generateTickets = trpc.tickets.generate.useMutation();
 
   const gameOptions = useMemo(() =>
     GAME_TYPES.map(id => ({ id, name: FLORIDA_GAMES[id].name })),
@@ -164,11 +163,6 @@ export default function Home() {
     });
   };
 
-  const handleBudgetTickets = () => {
-    generateTickets.mutate({ gameType: selectedGame, budget: 75, maxTickets: 20 }, {
-      onSuccess: () => navigate("/predictions"),
-    });
-  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -208,41 +202,22 @@ export default function Home() {
                 </SelectContent>
               </Select>
 
-              <div className="flex gap-3">
-                <Button
-                  size="lg"
-                  className="flex-1 h-12 bg-primary text-primary-foreground hover:bg-primary/90 glow-cyan-sm"
-                  onClick={handlePredict}
-                  disabled={generatePredictions.isPending}
-                >
-                  {generatePredictions.isPending ? (
-                    <span className="flex items-center gap-2">
-                      <Zap className="w-4 h-4 animate-spin" /> Generating...
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-2">
-                      <Zap className="w-4 h-4" /> Get Predictions
-                    </span>
-                  )}
-                </Button>
-                <Button
-                  size="lg"
-                  variant="outline"
-                  className="flex-1 h-12 border-accent/50 text-accent hover:bg-accent/10"
-                  onClick={handleBudgetTickets}
-                  disabled={generateTickets.isPending}
-                >
-                  {generateTickets.isPending ? (
-                    <span className="flex items-center gap-2">
-                      Selecting...
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-2">
-                      20 Tickets / $75
-                    </span>
-                  )}
-                </Button>
-              </div>
+              <Button
+                size="lg"
+                className="w-full h-12 bg-primary text-primary-foreground hover:bg-primary/90 glow-cyan-sm"
+                onClick={handlePredict}
+                disabled={generatePredictions.isPending}
+              >
+                {generatePredictions.isPending ? (
+                  <span className="flex items-center gap-2">
+                    <Zap className="w-4 h-4 animate-spin" /> Generating...
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-2">
+                    <Zap className="w-4 h-4" /> Get Predictions
+                  </span>
+                )}
+              </Button>
             </div>
           </div>
         </div>

@@ -56,3 +56,4 @@
 - [x] Ensure bulk fetch option is available in Admin panel (moved to top row alongside PDF upload)
 - [x] Remove budget icon completely from home page (removed feature card, icon, and Dollar import)
 - [x] Fix PWA install: split icon purposes, added manifest id/scope, bumped SW cache, network-first strategy
+- [x] Remove "20 Tickets / $75" budget button from home page hero section
