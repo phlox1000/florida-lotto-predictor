@@ -54,3 +54,5 @@
 - [x] Remove budget icon from home page
 - [x] Make PDF upload option more prominent and easier to find (moved to top of Admin page)
 - [x] Ensure bulk fetch option is available in Admin panel (moved to top row alongside PDF upload)
+- [x] Remove budget icon completely from home page (removed feature card, icon, and Dollar import)
+- [x] Fix PWA install: split icon purposes, added manifest id/scope, bumped SW cache, network-first strategy
