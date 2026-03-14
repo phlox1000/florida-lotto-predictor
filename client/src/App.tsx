@@ -9,6 +9,7 @@ import Predictions from "./pages/Predictions";
 import History from "./pages/History";
 import Admin from "./pages/Admin";
 import Analysis from "./pages/Analysis";
+import Compare from "./pages/Compare";
 import InstallPrompt from "./components/InstallPrompt";
 
 function Router() {
@@ -19,6 +20,7 @@ function Router() {
       <Route path="/history" component={History} />
       <Route path="/admin" component={Admin} />
       <Route path="/analysis" component={Analysis} />
+      <Route path="/compare" component={Compare} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

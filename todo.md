@@ -27,3 +27,5 @@
 - [x] Draw schedule awareness: know when each game draws, show next draw countdown
 - [x] Auto-fetch results after each drawing (scheduled check via auto-evaluate on draw insert)
 - [x] Draw schedule UI: show next draw dates and countdowns on home page
+- [x] Results vs Predictions comparison view: side-by-side of predictions vs actual draws with hit/miss highlighting per model
+- [x] Export Tickets to PDF: printable list of 20 selected tickets for store reference
