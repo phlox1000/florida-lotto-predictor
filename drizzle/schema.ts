@@ -114,3 +114,44 @@ export const pushSubscriptions = mysqlTable("push_subscriptions", {
 
 export type PushSubscription = typeof pushSubscriptions.$inferSelect;
 export type InsertPushSubscription = typeof pushSubscriptions.$inferInsert;
+
+/** Uploaded PDF files for historical data import */
+export const pdfUploads = mysqlTable("pdf_uploads", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  fileName: varchar("fileName", { length: 256 }).notNull(),
+  fileUrl: text("fileUrl").notNull(),
+  fileKey: varchar("fileKey", { length: 256 }).notNull(),
+  gameType: varchar("gameType", { length: 32 }),
+  status: mysqlEnum("status", ["pending", "processing", "completed", "failed"]).default("pending").notNull(),
+  drawsExtracted: int("drawsExtracted").default(0),
+  errorMessage: text("errorMessage"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type PdfUpload = typeof pdfUploads.$inferSelect;
+export type InsertPdfUpload = typeof pdfUploads.$inferInsert;
+
+/** Purchased tickets for win/loss tracking */
+export const purchasedTickets = mysqlTable("purchased_tickets", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  gameType: varchar("gameType", { length: 32 }).notNull(),
+  mainNumbers: json("mainNumbers").notNull(), // number[]
+  specialNumbers: json("specialNumbers"), // number[] | null
+  purchaseDate: bigint("purchaseDate", { mode: "number" }).notNull(),
+  drawDate: bigint("drawDate", { mode: "number" }),
+  cost: float("cost").notNull(),
+  outcome: mysqlEnum("outcome", ["pending", "loss", "win"]).default("pending").notNull(),
+  winAmount: float("winAmount").default(0),
+  mainHits: int("mainHits").default(0),
+  specialHits: int("specialHits").default(0),
+  notes: text("notes"),
+  modelSource: varchar("modelSource", { length: 64 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type PurchasedTicket = typeof purchasedTickets.$inferSelect;
+export type InsertPurchasedTicket = typeof purchasedTickets.$inferInsert;

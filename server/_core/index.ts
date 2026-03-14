@@ -35,6 +35,10 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   // OAuth callback under /api/oauth/callback
   registerOAuthRoutes(app);
+  // PDF upload route (needs raw body, registered before tRPC)
+  const { registerUploadRoutes } = await import("../upload");
+  registerUploadRoutes(app);
+
   // tRPC API
   app.use(
     "/api/trpc",

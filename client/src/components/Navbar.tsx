@@ -1,7 +1,7 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { getLoginUrl } from "@/const";
-import { Dices, History, BarChart3, Shield, Brain, GitCompareArrows, Heart, Settings, Menu, X } from "lucide-react";
+import { Dices, History, BarChart3, Shield, Brain, GitCompareArrows, Heart, Settings, Menu, X, Target } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 
@@ -12,6 +12,7 @@ const navItems = [
   { path: "/analysis", label: "AI Analysis", icon: Brain },
   { path: "/compare", label: "Compare", icon: GitCompareArrows },
   { path: "/favorites", label: "Favorites", icon: Heart },
+  { path: "/tracker", label: "Tracker", icon: Target },
 ];
 
 export default function Navbar() {

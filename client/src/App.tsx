@@ -12,6 +12,7 @@ import Analysis from "./pages/Analysis";
 import Compare from "./pages/Compare";
 import Favorites from "./pages/Favorites";
 import Settings from "./pages/Settings";
+import Tracker from "./pages/Tracker";
 import InstallPrompt from "./components/InstallPrompt";
 
 function Router() {
@@ -25,6 +26,7 @@ function Router() {
       <Route path="/compare" component={Compare} />
       <Route path="/favorites" component={Favorites} />
       <Route path="/settings" component={Settings} />
+      <Route path="/tracker" component={Tracker} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

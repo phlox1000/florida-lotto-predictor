@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { trpc } from "@/lib/trpc";
 import { FLORIDA_GAMES, GAME_TYPES, type GameType, type PredictionResult } from "@shared/lottery";
-import { Zap, DollarSign, Dices, Target, Sparkles, Printer, Heart } from "lucide-react";
+import { Zap, DollarSign, Dices, Target, Sparkles, Printer, Heart, ShoppingCart } from "lucide-react";
 import { useState, useMemo, useCallback } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { toast } from "sonner";
@@ -321,6 +321,27 @@ export default function Predictions() {
     toast.success("Print dialog opened in a new window");
   }, [ticketData]);
 
+  const logBulk = trpc.tracker.logBulkPurchase.useMutation({
+    onSuccess: (data) => toast.success(`Logged ${data.count} tickets to your tracker!`),
+    onError: () => toast.error("Failed to log purchases. Please sign in first."),
+  });
+
+  const handleLogPurchases = useCallback(() => {
+    if (!isAuthenticated) { toast.error("Sign in to log purchases"); return; }
+    if (!ticketData) return;
+    const gameCfg = FLORIDA_GAMES[selectedGame];
+    logBulk.mutate({
+      tickets: (ticketData.tickets as TicketEntry[]).map(t => ({
+        gameType: selectedGame,
+        mainNumbers: t.mainNumbers,
+        specialNumbers: t.specialNumbers?.length ? t.specialNumbers : undefined,
+        cost: gameCfg.ticketPrice,
+        modelSource: t.modelSource,
+      })),
+      purchaseDate: Date.now(),
+    });
+  }, [isAuthenticated, ticketData, selectedGame, logBulk]);
+
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
@@ -413,6 +434,16 @@ export default function Predictions() {
                     >
                       <Printer className="w-4 h-4 mr-1" />
                       Print Tickets
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleLogPurchases}
+                      disabled={logBulk.isPending}
+                      className="border-green-500/50 text-green-400 hover:bg-green-500/10"
+                    >
+                      <ShoppingCart className="w-4 h-4 mr-1" />
+                      {logBulk.isPending ? "Logging..." : "Log Purchases"}
                     </Button>
                   </div>
                 </div>

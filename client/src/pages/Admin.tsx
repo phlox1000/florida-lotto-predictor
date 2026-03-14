@@ -11,8 +11,8 @@ import { Progress } from "@/components/ui/progress";
 import { trpc } from "@/lib/trpc";
 import { FLORIDA_GAMES, GAME_TYPES, type GameType } from "@shared/lottery";
 import { getLoginUrl } from "@/const";
-import { Shield, Plus, Download, Database, Trophy, LogIn, RefreshCw, History, BarChart3, Activity } from "lucide-react";
-import { useState, useMemo } from "react";
+import { Shield, Plus, Download, Database, Trophy, LogIn, RefreshCw, History, BarChart3, Activity, Upload, FileText, CheckCircle, XCircle, Loader2 } from "lucide-react";
+import { useState, useMemo, useRef } from "react";
 import { toast } from "sonner";
 
 function AddDrawForm() {
@@ -237,6 +237,163 @@ function FetchDataSection() {
             Bulk History fetches up to 50 past draws to improve prediction accuracy.
           </p>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function PdfUploadSection() {
+  const [uploading, setUploading] = useState(false);
+  const [gameType, setGameType] = useState<GameType | "auto">("auto");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { data: uploads, refetch: refetchUploads } = trpc.dataFetch.pdfUploads.useQuery();
+  const utils = trpc.useUtils();
+
+  const gameOptions = useMemo(() =>
+    GAME_TYPES.map(id => ({ id, name: FLORIDA_GAMES[id].name })),
+    []
+  );
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.type !== "application/pdf") {
+      toast.error("Please select a PDF file");
+      return;
+    }
+    if (file.size > 16 * 1024 * 1024) {
+      toast.error("File too large. Maximum 16MB.");
+      return;
+    }
+
+    setUploading(true);
+    try {
+      // Read file as base64
+      const buffer = await file.arrayBuffer();
+      const base64 = btoa(
+        new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
+      );
+
+      const response = await fetch("/api/upload-pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileName: file.name,
+          fileData: base64,
+          gameType: gameType === "auto" ? undefined : gameType,
+        }),
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        toast.success("PDF uploaded! Numbers are being extracted...");
+        refetchUploads();
+        // Poll for completion
+        const pollInterval = setInterval(async () => {
+          const updated = await refetchUploads();
+          const upload = updated.data?.find((u: any) => u.id === result.uploadId);
+          if (upload && upload.status !== "processing" && upload.status !== "pending") {
+            clearInterval(pollInterval);
+            if (upload.status === "completed") {
+              toast.success(`Extracted ${upload.drawsExtracted} draws from PDF!`);
+              utils.draws.all.invalidate();
+              utils.schedule.dataHealth.invalidate();
+            } else {
+              toast.error(`PDF processing failed: ${upload.errorMessage || "Unknown error"}`);
+            }
+          }
+        }, 3000);
+        // Stop polling after 2 minutes
+        setTimeout(() => clearInterval(pollInterval), 120000);
+      } else {
+        toast.error(result.error || "Upload failed");
+      }
+    } catch (err) {
+      toast.error("Failed to upload PDF");
+      console.error(err);
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  return (
+    <Card className="bg-card border-border/50">
+      <CardHeader>
+        <CardTitle className="text-lg flex items-center gap-2">
+          <Upload className="w-5 h-5 text-primary" />
+          Upload PDF Results
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-sm text-muted-foreground">
+          Upload PDF files containing historical winning numbers. Numbers will be extracted and added to the prediction database.
+        </p>
+
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <Label>Game Type (optional)</Label>
+            <Select value={gameType} onValueChange={(v) => setGameType(v as GameType | "auto")}>
+              <SelectTrigger className="bg-input"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">Auto-detect from PDF</SelectItem>
+                {gameOptions.map(g => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf"
+            onChange={handleFileSelect}
+            className="hidden"
+          />
+
+          <Button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="w-full bg-primary text-primary-foreground"
+            size="lg"
+          >
+            {uploading ? (
+              <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Uploading &amp; Processing...</>
+            ) : (
+              <><Upload className="w-4 h-4 mr-2" />Select PDF File</>
+            )}
+          </Button>
+        </div>
+
+        {/* Upload History */}
+        {uploads && uploads.length > 0 && (
+          <div className="space-y-2 pt-2 border-t border-border/50">
+            <p className="text-xs text-muted-foreground font-medium">Recent Uploads</p>
+            {uploads.slice(0, 5).map((upload: any) => (
+              <div key={upload.id} className="flex items-center gap-2 text-xs">
+                <FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                <span className="truncate flex-1 text-foreground">{upload.fileName}</span>
+                {upload.status === "completed" ? (
+                  <Badge variant="outline" className="text-[9px] border-green-500/30 text-green-400 flex-shrink-0">
+                    <CheckCircle className="w-3 h-3 mr-1" />{upload.drawsExtracted} draws
+                  </Badge>
+                ) : upload.status === "processing" || upload.status === "pending" ? (
+                  <Badge variant="outline" className="text-[9px] border-primary/30 text-primary flex-shrink-0">
+                    <Loader2 className="w-3 h-3 mr-1 animate-spin" />Processing
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-[9px] border-destructive/30 text-destructive flex-shrink-0">
+                    <XCircle className="w-3 h-3 mr-1" />Failed
+                  </Badge>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <p className="text-[10px] text-muted-foreground">
+          Supports PDF files up to 16MB. AI extracts numbers automatically.
+        </p>
       </CardContent>
     </Card>
   );
@@ -470,9 +627,14 @@ export default function Admin() {
         </div>
 
         {/* Add Draw + Fetch Data */}
-        <div className="grid lg:grid-cols-2 gap-6 mb-8">
+        <div className="grid lg:grid-cols-2 gap-6 mb-6">
           <AddDrawForm />
           <FetchDataSection />
+        </div>
+
+        {/* PDF Upload */}
+        <div className="grid lg:grid-cols-1 gap-6 mb-8">
+          <PdfUploadSection />
         </div>
 
         {/* All Draw Results */}

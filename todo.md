@@ -36,3 +36,11 @@
 - [x] Push notifications: browser push subscription management
 - [x] Push notification triggers: new draw results, high prediction accuracy
 - [x] Push notification UI: enable/disable toggle in user settings
+- [x] PDF upload: database table for uploaded files metadata
+- [x] PDF upload: backend endpoint to receive PDF, store in S3, parse winning numbers with LLM
+- [x] PDF upload: extract numbers from PDF and insert into draw_results for prediction use
+- [x] PDF upload: UI in Admin panel with file upload, progress, and parse results display
+- [x] Win/loss tracker: database table for purchased tickets with outcome tracking
+- [x] Win/loss tracker: backend endpoints for logging purchases, recording wins, and ROI calculation
+- [x] Win/loss tracker: dedicated page with purchase log, win/loss stats, and ROI dashboard
+- [x] Win/loss tracker: navbar link and Log Purchases button on Predictions page

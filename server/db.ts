@@ -8,6 +8,8 @@ import {
   modelPerformance, InsertModelPerformance,
   favorites, InsertFavorite,
   pushSubscriptions, InsertPushSubscription,
+  pdfUploads, InsertPdfUpload,
+  purchasedTickets, InsertPurchasedTicket,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -336,4 +338,120 @@ export async function getActivePushSubscriptions() {
   if (!db) return [];
   return db.select().from(pushSubscriptions)
     .where(eq(pushSubscriptions.enabled, 1));
+}
+
+// ─── PDF Uploads ──────────────────────────────────────────────────────────────
+export async function insertPdfUpload(data: InsertPdfUpload) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(pdfUploads).values(data);
+  return (result as any)[0]?.insertId;
+}
+
+export async function updatePdfUploadStatus(
+  id: number,
+  status: "pending" | "processing" | "completed" | "failed",
+  extra?: { drawsExtracted?: number; errorMessage?: string | null }
+) {
+  const db = await getDb();
+  if (!db) return;
+  const updateData: Record<string, unknown> = { status };
+  if (extra?.drawsExtracted !== undefined) updateData.drawsExtracted = extra.drawsExtracted;
+  if (extra?.errorMessage !== undefined) updateData.errorMessage = extra.errorMessage;
+  await db.update(pdfUploads).set(updateData).where(eq(pdfUploads.id, id));
+}
+
+export async function getUserPdfUploads(userId: number, limit = 20) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(pdfUploads)
+    .where(eq(pdfUploads.userId, userId))
+    .orderBy(desc(pdfUploads.createdAt))
+    .limit(limit);
+}
+
+// ─── Purchased Tickets (Win/Loss Tracker) ─────────────────────────────────────
+export async function insertPurchasedTicket(data: InsertPurchasedTicket) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(purchasedTickets).values(data);
+  return (result as any)[0]?.insertId;
+}
+
+export async function getUserPurchasedTickets(userId: number, limit = 100) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(purchasedTickets)
+    .where(eq(purchasedTickets.userId, userId))
+    .orderBy(desc(purchasedTickets.purchaseDate))
+    .limit(limit);
+}
+
+export async function updatePurchasedTicketOutcome(
+  id: number,
+  userId: number,
+  outcome: "pending" | "loss" | "win",
+  winAmount?: number,
+  mainHits?: number,
+  specialHits?: number
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const updateData: Record<string, unknown> = { outcome };
+  if (winAmount !== undefined) updateData.winAmount = winAmount;
+  if (mainHits !== undefined) updateData.mainHits = mainHits;
+  if (specialHits !== undefined) updateData.specialHits = specialHits;
+  await db.update(purchasedTickets)
+    .set(updateData)
+    .where(and(eq(purchasedTickets.id, id), eq(purchasedTickets.userId, userId)));
+}
+
+export async function deletePurchasedTicket(id: number, userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(purchasedTickets)
+    .where(and(eq(purchasedTickets.id, id), eq(purchasedTickets.userId, userId)));
+}
+
+export async function getUserROIStats(userId: number) {
+  const db = await getDb();
+  if (!db) return { totalSpent: 0, totalWon: 0, totalTickets: 0, wins: 0, losses: 0, pending: 0, roi: 0 };
+  const result = await db.select({
+    totalSpent: sql<number>`COALESCE(SUM(${purchasedTickets.cost}), 0)`,
+    totalWon: sql<number>`COALESCE(SUM(${purchasedTickets.winAmount}), 0)`,
+    totalTickets: sql<number>`COUNT(*)`,
+    wins: sql<number>`SUM(CASE WHEN ${purchasedTickets.outcome} = 'win' THEN 1 ELSE 0 END)`,
+    losses: sql<number>`SUM(CASE WHEN ${purchasedTickets.outcome} = 'loss' THEN 1 ELSE 0 END)`,
+    pending: sql<number>`SUM(CASE WHEN ${purchasedTickets.outcome} = 'pending' THEN 1 ELSE 0 END)`,
+  }).from(purchasedTickets)
+    .where(eq(purchasedTickets.userId, userId));
+
+  const stats = result[0] || { totalSpent: 0, totalWon: 0, totalTickets: 0, wins: 0, losses: 0, pending: 0 };
+  const totalSpent = Number(stats.totalSpent) || 0;
+  const totalWon = Number(stats.totalWon) || 0;
+  const roi = totalSpent > 0 ? ((totalWon - totalSpent) / totalSpent) * 100 : 0;
+
+  return {
+    totalSpent,
+    totalWon,
+    totalTickets: Number(stats.totalTickets) || 0,
+    wins: Number(stats.wins) || 0,
+    losses: Number(stats.losses) || 0,
+    pending: Number(stats.pending) || 0,
+    roi: Math.round(roi * 100) / 100,
+  };
+}
+
+export async function getROIByGame(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({
+    gameType: purchasedTickets.gameType,
+    totalSpent: sql<number>`COALESCE(SUM(${purchasedTickets.cost}), 0)`,
+    totalWon: sql<number>`COALESCE(SUM(${purchasedTickets.winAmount}), 0)`,
+    totalTickets: sql<number>`COUNT(*)`,
+    wins: sql<number>`SUM(CASE WHEN ${purchasedTickets.outcome} = 'win' THEN 1 ELSE 0 END)`,
+  }).from(purchasedTickets)
+    .where(eq(purchasedTickets.userId, userId))
+    .groupBy(purchasedTickets.gameType);
 }
