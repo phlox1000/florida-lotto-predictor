@@ -44,3 +44,10 @@
 - [x] Win/loss tracker: backend endpoints for logging purchases, recording wins, and ROI calculation
 - [x] Win/loss tracker: dedicated page with purchase log, win/loss stats, and ROI dashboard
 - [x] Win/loss tracker: navbar link and Log Purchases button on Predictions page
+- [x] Audit prediction engine: ensure all 16 models use real mathematical formulas, no random fallbacks or fake data
+- [x] Remove all Math.random() — replaced with deterministic weighted selection from historical data
+- [x] Models return insufficient_data flag with clear message when not enough history exists
+- [x] Streak/pattern dashboard: hot/cold number streaks visualization
+- [x] Streak/pattern dashboard: number frequency charts (bar/line charts)
+- [x] Streak/pattern dashboard: overdue numbers analysis
+- [x] Streak/pattern dashboard: navbar link and route

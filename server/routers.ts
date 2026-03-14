@@ -988,7 +988,118 @@ export const appRouter = router({
       .query(async ({ ctx }) => {
         return getROIByGame(ctx.user.id);
       }),
+   }),
+
+  // ─── Patterns & Streaks ──────────────────────────────────────────────────────
+  patterns: router({
+    /** Full pattern analysis for a game: frequency, streaks, overdue, pairs */
+    analyze: publicProcedure
+      .input(z.object({ gameType: gameTypeSchema, lookback: z.number().min(10).max(500).default(100) }))
+      .query(async ({ input }) => {
+        const draws = await getDrawResults(input.gameType, input.lookback);
+        const cfg = FLORIDA_GAMES[input.gameType];
+        if (draws.length === 0) return { frequency: [], streaks: [], overdue: [], pairs: [], drawCount: 0 };
+
+        const allMain = draws.map(d => (d.mainNumbers as number[]));
+        const allSpecial = draws.map(d => (d.specialNumbers as number[]));
+        const pool = range(1, cfg.mainMax);
+
+        // --- Frequency analysis ---
+        const freqMap = new Map<number, number>();
+        for (const nums of allMain) for (const n of nums) freqMap.set(n, (freqMap.get(n) || 0) + 1);
+        const frequency = pool.map(n => ({
+          number: n,
+          count: freqMap.get(n) || 0,
+          percentage: ((freqMap.get(n) || 0) / draws.length) * 100,
+        })).sort((a, b) => b.count - a.count);
+
+        // --- Hot/Cold streaks ---
+        const streaks: Array<{ number: number; currentStreak: number; streakType: "hot" | "cold"; maxHotStreak: number; maxColdStreak: number }> = [];
+        for (const n of pool) {
+          let currentStreak = 0;
+          let streakType: "hot" | "cold" = "cold";
+          let maxHot = 0, maxCold = 0, tempHot = 0, tempCold = 0;
+          // draws are newest-first from DB, reverse for chronological
+          const chronological = [...allMain].reverse();
+          for (const nums of chronological) {
+            if (nums.includes(n)) {
+              tempHot++;
+              if (tempCold > maxCold) maxCold = tempCold;
+              tempCold = 0;
+            } else {
+              tempCold++;
+              if (tempHot > maxHot) maxHot = tempHot;
+              tempHot = 0;
+            }
+          }
+          if (tempHot > maxHot) maxHot = tempHot;
+          if (tempCold > maxCold) maxCold = tempCold;
+          // Current streak from most recent draws
+          const recentFirst = allMain;
+          if (recentFirst[0]?.includes(n)) {
+            streakType = "hot";
+            for (const nums of recentFirst) {
+              if (nums.includes(n)) currentStreak++;
+              else break;
+            }
+          } else {
+            streakType = "cold";
+            for (const nums of recentFirst) {
+              if (!nums.includes(n)) currentStreak++;
+              else break;
+            }
+          }
+          streaks.push({ number: n, currentStreak, streakType, maxHotStreak: maxHot, maxColdStreak: maxCold });
+        }
+        streaks.sort((a, b) => b.currentStreak - a.currentStreak);
+
+        // --- Overdue numbers ---
+        const overdue = pool.map(n => {
+          let gap = draws.length;
+          for (let i = 0; i < allMain.length; i++) {
+            if (allMain[i].includes(n)) { gap = i; break; }
+          }
+          return { number: n, drawsSinceLastAppearance: gap, averageGap: draws.length / Math.max(1, freqMap.get(n) || 1) };
+        }).sort((a, b) => b.drawsSinceLastAppearance - a.drawsSinceLastAppearance);
+
+        // --- Top pairs (co-occurrence) ---
+        const pairMap = new Map<string, number>();
+        for (const nums of allMain) {
+          for (let i = 0; i < nums.length; i++) {
+            for (let j = i + 1; j < nums.length; j++) {
+              const key = `${Math.min(nums[i], nums[j])}-${Math.max(nums[i], nums[j])}`;
+              pairMap.set(key, (pairMap.get(key) || 0) + 1);
+            }
+          }
+        }
+        const pairs = [...pairMap.entries()]
+          .map(([key, count]) => {
+            const [a, b] = key.split("-").map(Number);
+            return { numberA: a, numberB: b, count, percentage: (count / draws.length) * 100 };
+          })
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 20);
+
+        // --- Special number frequency (if applicable) ---
+        let specialFrequency: Array<{ number: number; count: number; percentage: number }> = [];
+        if (cfg.specialCount > 0) {
+          const specPool = range(1, cfg.specialMax);
+          const specFreqMap = new Map<number, number>();
+          for (const nums of allSpecial) for (const n of nums) specFreqMap.set(n, (specFreqMap.get(n) || 0) + 1);
+          specialFrequency = specPool.map(n => ({
+            number: n,
+            count: specFreqMap.get(n) || 0,
+            percentage: ((specFreqMap.get(n) || 0) / draws.length) * 100,
+          })).sort((a, b) => b.count - a.count);
+        }
+
+        return { frequency, streaks, overdue, pairs, specialFrequency, drawCount: draws.length };
+      }),
   }),
 });
+
+function range(start: number, end: number): number[] {
+  return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+}
 
 export type AppRouter = typeof appRouter;

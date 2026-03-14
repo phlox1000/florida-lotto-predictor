@@ -33,8 +33,10 @@ function ConfidenceMeter({ score }: { score: number }) {
 
 function ModelCard({ pred, gameType, onFavorite }: { pred: PredictionResult; gameType?: string; onFavorite?: (pred: PredictionResult) => void }) {
   const isOracle = pred.modelName === "ai_oracle";
+  const meta = pred.metadata as Record<string, unknown>;
+  const isInsufficient = meta?.insufficient_data === true;
   return (
-    <Card className={`bg-card border-border/50 ${isOracle ? "border-accent/40 glow-gold-sm" : "hover:border-primary/30"} transition-all`}>
+    <Card className={`bg-card border-border/50 ${isInsufficient ? "opacity-60 border-yellow-500/20" : isOracle ? "border-accent/40 glow-gold-sm" : "hover:border-primary/30"} transition-all`}>
       <CardContent className="p-4 space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -42,7 +44,7 @@ function ModelCard({ pred, gameType, onFavorite }: { pred: PredictionResult; gam
             <span className="text-sm font-semibold">{pred.modelName.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}</span>
           </div>
           <div className="flex items-center gap-1.5">
-            {onFavorite && (
+            {!isInsufficient && onFavorite && (
               <button
                 onClick={() => onFavorite(pred)}
                 className="p-1 rounded-md text-muted-foreground hover:text-red-400 hover:bg-red-400/10 transition-colors"
@@ -51,15 +53,21 @@ function ModelCard({ pred, gameType, onFavorite }: { pred: PredictionResult; gam
                 <Heart className="w-3.5 h-3.5" />
               </button>
             )}
-            <Badge variant="outline" className="text-xs border-border">
-              {(pred.metadata as Record<string, unknown>)?.strategy as string || "model"}
+            <Badge variant="outline" className={`text-xs ${isInsufficient ? "border-yellow-500/40 text-yellow-400" : "border-border"}`}>
+              {isInsufficient ? "needs data" : (meta?.strategy as string || "model")}
             </Badge>
           </div>
         </div>
-        <div className="flex gap-1.5 flex-wrap">
-          {pred.mainNumbers.map((n, i) => <LottoBall key={i} number={n} />)}
-          {pred.specialNumbers.map((n, i) => <LottoBall key={`s-${i}`} number={n} variant="special" />)}
-        </div>
+        {isInsufficient ? (
+          <div className="py-2 text-xs text-yellow-400/80 italic">
+            {meta?.message as string || "Insufficient historical data for this model."}
+          </div>
+        ) : (
+          <div className="flex gap-1.5 flex-wrap">
+            {pred.mainNumbers.map((n, i) => <LottoBall key={i} number={n} />)}
+            {pred.specialNumbers.map((n, i) => <LottoBall key={`s-${i}`} number={n} variant="special" />)}
+          </div>
+        )}
         <ConfidenceMeter score={pred.confidenceScore} />
       </CardContent>
     </Card>

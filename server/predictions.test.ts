@@ -7,16 +7,18 @@ describe("Prediction Engine", () => {
   const powerball = FLORIDA_GAMES.powerball;
   const pick3 = FLORIDA_GAMES.pick_3;
 
-  // Generate mock history
+  // Generate mock history with deterministic data
   function mockHistory(cfg: GameConfig, count: number) {
     const history = [];
     for (let i = 0; i < count; i++) {
       const mainNumbers: number[] = [];
       const used = new Set<number>();
+      let seed = i * 7 + 3;
       while (mainNumbers.length < cfg.mainCount) {
+        seed = (seed * 31 + 17) % 10000;
         const n = cfg.isDigitGame
-          ? Math.floor(Math.random() * 10)
-          : Math.floor(Math.random() * cfg.mainMax) + 1;
+          ? seed % 10
+          : (seed % cfg.mainMax) + 1;
         if (cfg.isDigitGame || !used.has(n)) {
           mainNumbers.push(n);
           used.add(n);
@@ -24,7 +26,8 @@ describe("Prediction Engine", () => {
       }
       const specialNumbers: number[] = [];
       for (let j = 0; j < cfg.specialCount; j++) {
-        specialNumbers.push(Math.floor(Math.random() * cfg.specialMax) + 1);
+        seed = (seed * 31 + 17) % 10000;
+        specialNumbers.push((seed % cfg.specialMax) + 1);
       }
       history.push({
         mainNumbers: mainNumbers.sort((a, b) => a - b),
@@ -59,20 +62,30 @@ describe("Prediction Engine", () => {
       expect(results).toHaveLength(16);
     });
 
-    it("each prediction has correct number of main numbers for Fantasy 5", () => {
+    it("each prediction has correct number of main numbers OR is marked insufficient", () => {
       const history = mockHistory(fantasy5, 100);
       const results = runAllModels(fantasy5, history);
       for (const pred of results) {
-        expect(pred.mainNumbers).toHaveLength(fantasy5.mainCount);
+        const meta = pred.metadata as Record<string, unknown>;
+        if (meta?.insufficient_data === true) {
+          expect(pred.mainNumbers).toHaveLength(0);
+        } else {
+          expect(pred.mainNumbers).toHaveLength(fantasy5.mainCount);
+        }
       }
     });
 
-    it("each prediction has correct number of main numbers for Powerball", () => {
+    it("Powerball predictions have correct main and special counts OR are insufficient", () => {
       const history = mockHistory(powerball, 100);
       const results = runAllModels(powerball, history);
       for (const pred of results) {
-        expect(pred.mainNumbers).toHaveLength(powerball.mainCount);
-        expect(pred.specialNumbers).toHaveLength(powerball.specialCount);
+        const meta = pred.metadata as Record<string, unknown>;
+        if (meta?.insufficient_data === true) {
+          expect(pred.mainNumbers).toHaveLength(0);
+        } else {
+          expect(pred.mainNumbers).toHaveLength(powerball.mainCount);
+          expect(pred.specialNumbers).toHaveLength(powerball.specialCount);
+        }
       }
     });
 
@@ -107,11 +120,11 @@ describe("Prediction Engine", () => {
       }
     });
 
-    it("all 16 model names are present", () => {
+    it("all 16 model names are present (frequency_baseline replaces random)", () => {
       const history = mockHistory(fantasy5, 200);
       const results = runAllModels(fantasy5, history);
       const names = results.map(r => r.modelName);
-      expect(names).toContain("random");
+      expect(names).toContain("frequency_baseline");
       expect(names).toContain("poisson_standard");
       expect(names).toContain("poisson_short");
       expect(names).toContain("poisson_long");
@@ -133,6 +146,13 @@ describe("Prediction Engine", () => {
       const history = mockHistory(fantasy5, 200);
       const results = runAllModels(fantasy5, history);
       expect(results[results.length - 1].modelName).toBe("ai_oracle");
+    });
+
+    it("frequency_baseline always produces results even with no history", () => {
+      const results = runAllModels(fantasy5, []);
+      const baseline = results.find(r => r.modelName === "frequency_baseline");
+      expect(baseline).toBeDefined();
+      expect(baseline!.mainNumbers).toHaveLength(fantasy5.mainCount);
     });
   });
 
@@ -157,7 +177,6 @@ describe("Prediction Engine", () => {
       const preds = runAllModels(powerball, history);
       const selection = selectBudgetTickets(powerball, preds, 75, 20);
       expect(selection.totalCost).toBeLessThanOrEqual(75);
-      // Powerball is $2/ticket, so max 37 tickets, but capped at 20
       expect(selection.tickets.length).toBeLessThanOrEqual(20);
     });
 

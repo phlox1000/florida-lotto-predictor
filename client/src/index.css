@@ -222,4 +222,24 @@
     color: oklch(0.13 0.02 260);
     box-shadow: 0 0 10px oklch(0.85 0.17 85 / 0.4);
   }
+  .lotto-ball-hot {
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+    color: white;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+  }
+  .lotto-ball-cold {
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    color: white;
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+  }
+  .lotto-ball-overdue {
+    background: linear-gradient(135deg, #eab308, #ca8a04);
+    color: oklch(0.13 0.02 260);
+    box-shadow: 0 0 10px rgba(234, 179, 8, 0.5);
+  }
+  .lotto-ball-pair {
+    background: linear-gradient(135deg, #a855f7, #7c3aed);
+    color: white;
+    box-shadow: 0 0 10px rgba(168, 85, 247, 0.5);
+  }
 }
