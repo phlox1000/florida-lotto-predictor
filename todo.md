@@ -21,3 +21,9 @@
 - [x] PWA install prompt component
 - [x] App icons generation (192x192, 512x512)
 - [x] Fix auto-fetch to pull most recent FL lottery results (now scrapes floridalottery.com directly)
+- [x] Bulk historical data fetcher (fetch last 30-60 draws per game from floridalottery.com)
+- [x] Model accuracy tracker: compare predictions vs actual results, track hit rates per model
+- [x] Auto-weight ensemble: use historical accuracy to weight models in the AI Oracle ensemble
+- [x] Draw schedule awareness: know when each game draws, show next draw countdown
+- [x] Auto-fetch results after each drawing (scheduled check via auto-evaluate on draw insert)
+- [x] Draw schedule UI: show next draw dates and countdowns on home page

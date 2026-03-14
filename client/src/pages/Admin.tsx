@@ -7,20 +7,13 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Progress } from "@/components/ui/progress";
 import { trpc } from "@/lib/trpc";
 import { FLORIDA_GAMES, GAME_TYPES, type GameType } from "@shared/lottery";
 import { getLoginUrl } from "@/const";
-import { Shield, Plus, Download, Database, Trophy, LogIn, RefreshCw } from "lucide-react";
+import { Shield, Plus, Download, Database, Trophy, LogIn, RefreshCw, History, BarChart3, Activity } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
-
-function LottoBall({ number, variant = "main" }: { number: number; variant?: "main" | "special" }) {
-  return (
-    <span className={`lotto-ball ${variant === "special" ? "lotto-ball-special" : "lotto-ball-main"}`}>
-      {number}
-    </span>
-  );
-}
 
 function AddDrawForm() {
   const [gameType, setGameType] = useState<GameType>("fantasy_5");
@@ -55,12 +48,13 @@ function AddDrawForm() {
       drawTime,
     }, {
       onSuccess: () => {
-        toast.success("Draw result added successfully");
+        toast.success("Draw result added & predictions auto-evaluated");
         setMainNumbers("");
         setSpecialNumbers("");
         setDrawDate("");
         utils.draws.latest.invalidate();
         utils.draws.all.invalidate();
+        utils.schedule.dataHealth.invalidate();
       },
       onError: (err) => toast.error(err.message),
     });
@@ -85,13 +79,9 @@ function AddDrawForm() {
             <div className="space-y-2">
               <Label>Game Type</Label>
               <Select value={gameType} onValueChange={(v) => setGameType(v as GameType)}>
-                <SelectTrigger className="bg-input">
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger className="bg-input"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {gameOptions.map(g => (
-                    <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
-                  ))}
+                  {gameOptions.map(g => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -100,43 +90,28 @@ function AddDrawForm() {
               <Input type="date" value={drawDate} onChange={e => setDrawDate(e.target.value)} className="bg-input" required />
             </div>
           </div>
-
           <div className="space-y-2">
-            <Label>Main Numbers ({gameCfg.mainCount} numbers, 1-{gameCfg.mainMax}, comma-separated)</Label>
-            <Input
-              value={mainNumbers}
-              onChange={e => setMainNumbers(e.target.value)}
+            <Label>Main Numbers ({gameCfg.mainCount} numbers, {gameCfg.isDigitGame ? "0-9" : `1-${gameCfg.mainMax}`}, comma-separated)</Label>
+            <Input value={mainNumbers} onChange={e => setMainNumbers(e.target.value)}
               placeholder={`e.g. ${Array.from({length: gameCfg.mainCount}, (_, i) => i + 1).join(", ")}`}
-              className="bg-input"
-              required
-            />
+              className="bg-input" required />
           </div>
-
           {gameCfg.specialCount > 0 && (
             <div className="space-y-2">
               <Label>Special Number(s) ({gameCfg.specialCount}, 1-{gameCfg.specialMax})</Label>
-              <Input
-                value={specialNumbers}
-                onChange={e => setSpecialNumbers(e.target.value)}
-                placeholder="e.g. 5"
-                className="bg-input"
-              />
+              <Input value={specialNumbers} onChange={e => setSpecialNumbers(e.target.value)} placeholder="e.g. 5" className="bg-input" />
             </div>
           )}
-
           <div className="space-y-2">
             <Label>Draw Time</Label>
             <Select value={drawTime} onValueChange={setDrawTime}>
-              <SelectTrigger className="bg-input">
-                <SelectValue />
-              </SelectTrigger>
+              <SelectTrigger className="bg-input"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="evening">Evening</SelectItem>
                 <SelectItem value="midday">Midday</SelectItem>
               </SelectContent>
             </Select>
           </div>
-
           <Button type="submit" disabled={addDraw.isPending} className="bg-primary text-primary-foreground">
             {addDraw.isPending ? "Adding..." : "Add Draw Result"}
           </Button>
@@ -150,12 +125,33 @@ function FetchDataSection() {
   const [gameType, setGameType] = useState<GameType>("fantasy_5");
   const fetchLatest = trpc.dataFetch.fetchLatest.useMutation();
   const fetchAll = trpc.dataFetch.fetchAll.useMutation();
+  const fetchHistory = trpc.dataFetch.fetchHistory.useMutation();
   const utils = trpc.useUtils();
 
   const gameOptions = useMemo(() =>
     GAME_TYPES.map(id => ({ id, name: FLORIDA_GAMES[id].name })),
     []
   );
+
+  const isFetching = fetchLatest.isPending || fetchAll.isPending || fetchHistory.isPending;
+
+  const handleFetchAll = () => {
+    fetchAll.mutate(undefined, {
+      onSuccess: (data) => {
+        if (data.success) {
+          const totalInserted = Object.values(data.results).reduce((sum, r) => sum + r.count, 0);
+          toast.success(`Fetched ${totalInserted} draw(s). Predictions auto-evaluated.`);
+          utils.draws.latest.invalidate();
+          utils.draws.all.invalidate();
+          utils.schedule.dataHealth.invalidate();
+          utils.performance.stats.invalidate();
+        } else {
+          toast.error("Failed to fetch results");
+        }
+      },
+      onError: (err) => toast.error(err.message),
+    });
+  };
 
   const handleFetchSingle = () => {
     fetchLatest.mutate({ gameType }, {
@@ -164,6 +160,7 @@ function FetchDataSection() {
           toast.success(`Fetched ${data.insertedCount} new draw(s) for ${FLORIDA_GAMES[gameType].name}`);
           utils.draws.latest.invalidate();
           utils.draws.all.invalidate();
+          utils.schedule.dataHealth.invalidate();
         } else {
           toast.error("Failed to fetch results");
         }
@@ -172,27 +169,21 @@ function FetchDataSection() {
     });
   };
 
-  const handleFetchAll = () => {
-    fetchAll.mutate(undefined, {
+  const handleFetchHistory = () => {
+    fetchHistory.mutate({ gameType, drawCount: 50 }, {
       onSuccess: (data) => {
         if (data.success) {
-          const totalInserted = Object.values(data.results).reduce((sum, r) => sum + r.count, 0);
-          const gamesSummary = Object.entries(data.results)
-            .filter(([_, r]) => r.count > 0)
-            .map(([gt, r]) => `${FLORIDA_GAMES[gt as GameType]?.name || gt}: ${r.count}`)
-            .join(", ");
-          toast.success(`Fetched ${totalInserted} draw(s) from floridalottery.com${gamesSummary ? ` (${gamesSummary})` : ""}`);
+          toast.success(`Loaded ${data.insertedCount} historical draws for ${FLORIDA_GAMES[gameType].name} (${data.skippedCount} duplicates skipped)`);
           utils.draws.latest.invalidate();
           utils.draws.all.invalidate();
+          utils.schedule.dataHealth.invalidate();
         } else {
-          toast.error("Failed to fetch results");
+          toast.error("Failed to fetch historical data");
         }
       },
       onError: (err) => toast.error(err.message),
     });
   };
-
-  const isFetching = fetchLatest.isPending || fetchAll.isPending;
 
   return (
     <Card className="bg-card border-border/50">
@@ -204,55 +195,166 @@ function FetchDataSection() {
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">
-          Fetch the latest Florida Lottery results directly from <span className="text-primary">floridalottery.com</span>. Results are automatically saved to the database.
+          Fetch results from <span className="text-primary">floridalottery.com</span>. Predictions are auto-evaluated against new draws.
         </p>
 
-        {/* Fetch All Games */}
-        <Button
-          onClick={handleFetchAll}
-          disabled={isFetching}
-          className="w-full bg-accent text-accent-foreground hover:bg-accent/90"
-          size="lg"
-        >
+        <Button onClick={handleFetchAll} disabled={isFetching}
+          className="w-full bg-accent text-accent-foreground hover:bg-accent/90" size="lg">
           {fetchAll.isPending ? (
-            <>
-              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-              Fetching All Games...
-            </>
+            <><RefreshCw className="w-4 h-4 mr-2 animate-spin" />Fetching All Games...</>
           ) : (
-            <>
-              <RefreshCw className="w-4 h-4 mr-2" />
-              Fetch All Games (Latest Results)
-            </>
+            <><RefreshCw className="w-4 h-4 mr-2" />Fetch All Games (Latest)</>
           )}
         </Button>
 
         <div className="relative">
-          <div className="absolute inset-0 flex items-center">
-            <span className="w-full border-t border-border/50" />
-          </div>
+          <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-border/50" /></div>
           <div className="relative flex justify-center text-xs uppercase">
-            <span className="bg-card px-2 text-muted-foreground">or fetch single game</span>
+            <span className="bg-card px-2 text-muted-foreground">or fetch by game</span>
           </div>
         </div>
 
-        {/* Fetch Single Game */}
-        <div className="flex gap-3">
+        <div className="space-y-3">
           <Select value={gameType} onValueChange={(v) => setGameType(v as GameType)}>
-            <SelectTrigger className="w-[180px] bg-input">
+            <SelectTrigger className="bg-input"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {gameOptions.map(g => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <div className="flex gap-2">
+            <Button onClick={handleFetchSingle} disabled={isFetching} variant="outline"
+              className="flex-1 border-primary/30 text-primary hover:bg-primary/10">
+              <Download className="w-4 h-4 mr-1" />
+              {fetchLatest.isPending ? "Fetching..." : "Latest"}
+            </Button>
+            <Button onClick={handleFetchHistory} disabled={isFetching} variant="outline"
+              className="flex-1 border-accent/30 text-accent hover:bg-accent/10">
+              <History className="w-4 h-4 mr-1" />
+              {fetchHistory.isPending ? "Loading..." : "Bulk History"}
+            </Button>
+          </div>
+          <p className="text-[10px] text-muted-foreground text-center">
+            Bulk History fetches up to 50 past draws to improve prediction accuracy.
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function DataHealthDashboard() {
+  const { data, isLoading } = trpc.schedule.dataHealth.useQuery();
+
+  if (isLoading) {
+    return <div className="grid grid-cols-3 gap-2">{[1,2,3].map(i => <Skeleton key={i} className="h-16" />)}</div>;
+  }
+
+  if (!data) return null;
+
+  const maxCount = Math.max(...data.map(d => d.drawCount), 1);
+
+  return (
+    <Card className="bg-card border-border/50">
+      <CardHeader>
+        <CardTitle className="text-lg flex items-center gap-2">
+          <Database className="w-5 h-5 text-primary" />
+          Data Health
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-3">
+          {data.map(d => (
+            <div key={d.gameType} className="space-y-1">
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground">{d.gameName}</span>
+                <span className="font-mono text-foreground">{d.drawCount} draws</span>
+              </div>
+              <Progress value={(d.drawCount / maxCount) * 100} className="h-2" />
+            </div>
+          ))}
+        </div>
+        <p className="text-[10px] text-muted-foreground mt-3">
+          More historical data = better predictions. Aim for 50+ draws per game.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ModelAccuracyDashboard() {
+  const [gameType, setGameType] = useState<GameType>("fantasy_5");
+  const { data: stats, isLoading: statsLoading } = trpc.performance.stats.useQuery({ gameType });
+  const { data: weights, isLoading: weightsLoading } = trpc.performance.weights.useQuery({ gameType });
+
+  const gameOptions = useMemo(() =>
+    GAME_TYPES.map(id => ({ id, name: FLORIDA_GAMES[id].name })),
+    []
+  );
+
+  const isLoading = statsLoading || weightsLoading;
+
+  return (
+    <Card className="bg-card border-border/50">
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-lg flex items-center gap-2">
+            <BarChart3 className="w-5 h-5 text-accent" />
+            Model Accuracy Tracker
+          </CardTitle>
+          <Select value={gameType} onValueChange={(v) => setGameType(v as GameType)}>
+            <SelectTrigger className="w-[140px] bg-input text-xs h-8">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {gameOptions.map(g => (
-                <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
-              ))}
+              {gameOptions.map(g => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
             </SelectContent>
           </Select>
-          <Button onClick={handleFetchSingle} disabled={isFetching} variant="outline" className="border-primary/30 text-primary hover:bg-primary/10">
-            <Download className="w-4 h-4 mr-1" />
-            {fetchLatest.isPending ? "Fetching..." : "Fetch"}
-          </Button>
         </div>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="space-y-2">{[1,2,3].map(i => <Skeleton key={i} className="h-8" />)}</div>
+        ) : !stats || stats.length === 0 ? (
+          <div className="text-center py-6 text-muted-foreground">
+            <Activity className="w-8 h-8 mx-auto mb-2 opacity-30" />
+            <p className="text-sm">No accuracy data yet.</p>
+            <p className="text-xs mt-1">Generate predictions, then add draw results to start tracking.</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <div className="grid grid-cols-[1fr_60px_60px_60px] gap-2 text-[10px] text-muted-foreground font-medium pb-1 border-b border-border/50">
+              <span>Model</span>
+              <span className="text-right">Evals</span>
+              <span className="text-right">Avg Hits</span>
+              <span className="text-right">Weight</span>
+            </div>
+            {stats
+              .sort((a, b) => Number(b.avgMainHits) - Number(a.avgMainHits))
+              .map(s => {
+                const weight = weights?.[s.modelName];
+                const avgHits = Number(s.avgMainHits).toFixed(1);
+                return (
+                  <div key={s.modelName} className="grid grid-cols-[1fr_60px_60px_60px] gap-2 text-xs items-center">
+                    <span className="font-mono text-foreground truncate">{s.modelName}</span>
+                    <span className="text-right text-muted-foreground">{s.totalPredictions}</span>
+                    <span className="text-right font-bold text-primary">{avgHits}</span>
+                    <span className="text-right">
+                      {weight !== undefined ? (
+                        <Badge variant="outline" className={`text-[9px] ${weight > 0.7 ? "border-primary/50 text-primary" : "border-border/50 text-muted-foreground"}`}>
+                          {(weight * 100).toFixed(0)}%
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
+          </div>
+        )}
+        <p className="text-[10px] text-muted-foreground mt-3">
+          Weights auto-adjust as more data is collected. Higher weight = more influence in AI Oracle ensemble.
+        </p>
       </CardContent>
     </Card>
   );
@@ -262,19 +364,14 @@ function AllDrawResults() {
   const { data, isLoading } = trpc.draws.all.useQuery({ limit: 100 });
 
   if (isLoading) {
-    return (
-      <div className="space-y-2">
-        {[1, 2, 3, 4, 5].map(i => <Skeleton key={i} className="h-12 w-full" />)}
-      </div>
-    );
+    return <div className="space-y-2">{[1,2,3,4,5].map(i => <Skeleton key={i} className="h-12 w-full" />)}</div>;
   }
 
   if (!data || data.length === 0) {
     return (
       <div className="text-center py-8 text-muted-foreground">
         <Database className="w-10 h-10 mx-auto mb-2 opacity-30" />
-        <p className="text-sm">No draw results in the database yet.</p>
-        <p className="text-xs mt-1">Use "Fetch All Games" above to pull the latest results.</p>
+        <p className="text-sm">No draw results yet. Use "Fetch All Games" above.</p>
       </div>
     );
   }
@@ -328,10 +425,7 @@ export default function Admin() {
     return (
       <div className="min-h-screen bg-background">
         <Navbar />
-        <div className="container py-8">
-          <Skeleton className="h-8 w-48 mb-4" />
-          <Skeleton className="h-64 w-full" />
-        </div>
+        <div className="container py-8"><Skeleton className="h-8 w-48 mb-4" /><Skeleton className="h-64 w-full" /></div>
       </div>
     );
   }
@@ -346,9 +440,7 @@ export default function Admin() {
               <LogIn className="w-12 h-12 mx-auto mb-4 text-muted-foreground opacity-40" />
               <h2 className="text-xl font-semibold mb-2">Sign in required</h2>
               <p className="text-sm text-muted-foreground mb-6">Admin access is required to manage draw results.</p>
-              <Button asChild className="bg-primary text-primary-foreground">
-                <a href={getLoginUrl()}>Sign In</a>
-              </Button>
+              <Button asChild className="bg-primary text-primary-foreground"><a href={getLoginUrl()}>Sign In</a></Button>
             </>
           ) : (
             <>
@@ -371,11 +463,19 @@ export default function Admin() {
           Admin Panel
         </h1>
 
+        {/* Data Health + Model Accuracy */}
+        <div className="grid lg:grid-cols-2 gap-6 mb-6">
+          <DataHealthDashboard />
+          <ModelAccuracyDashboard />
+        </div>
+
+        {/* Add Draw + Fetch Data */}
         <div className="grid lg:grid-cols-2 gap-6 mb-8">
           <AddDrawForm />
           <FetchDataSection />
         </div>
 
+        {/* All Draw Results */}
         <Card className="bg-card border-border/50">
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">

@@ -1,4 +1,4 @@
-import { eq, desc, and, sql } from "drizzle-orm";
+import { eq, desc, and, sql, gte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users,
@@ -90,6 +90,16 @@ export async function getAllDrawResults(limit = 500) {
     .limit(limit);
 }
 
+/** Get the count of draw results for a game type */
+export async function getDrawResultCount(gameType: string): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const result = await db.select({ count: sql<number>`COUNT(*)` })
+    .from(drawResults)
+    .where(eq(drawResults.gameType, gameType));
+  return result[0]?.count ?? 0;
+}
+
 // ─── Predictions ────────────────────────────────────────────────────────────────
 export async function insertPredictions(data: InsertPrediction[]) {
   const db = await getDb();
@@ -152,4 +162,89 @@ export async function getModelPerformanceStats(gameType: string) {
   }).from(modelPerformance)
     .where(eq(modelPerformance.gameType, gameType))
     .groupBy(modelPerformance.modelName);
+}
+
+/**
+ * Calculate model weights based on historical accuracy.
+ * Returns a map of modelName -> weight (0-1, higher = better).
+ * Models with no performance data get a default weight of 0.5.
+ */
+export async function getModelWeights(gameType: string): Promise<Record<string, number>> {
+  const stats = await getModelPerformanceStats(gameType);
+  const weights: Record<string, number> = {};
+
+  if (stats.length === 0) return weights; // empty = use defaults
+
+  // Find the max average hits for normalization
+  const maxAvg = Math.max(...stats.map(s => Number(s.avgMainHits) || 0), 0.001);
+
+  for (const s of stats) {
+    const avg = Number(s.avgMainHits) || 0;
+    const total = Number(s.totalPredictions) || 0;
+    // Weight = normalized accuracy * confidence factor (more data = more confidence)
+    const accuracyNorm = avg / maxAvg;
+    const confidenceFactor = Math.min(total / 10, 1); // full confidence after 10 evaluations
+    weights[s.modelName] = 0.3 + 0.7 * accuracyNorm * confidenceFactor; // floor at 0.3
+  }
+
+  return weights;
+}
+
+/**
+ * Evaluate predictions against a draw result and record performance.
+ * Called after a new draw result is added.
+ */
+export async function evaluatePredictionsAgainstDraw(
+  drawId: number,
+  gameType: string,
+  mainNumbers: number[],
+  specialNumbers: number[]
+) {
+  const db = await getDb();
+  if (!db) return { evaluated: 0, highAccuracy: 0 };
+
+  // Get predictions made before this draw (within last 7 days)
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const recentPreds = await db.select().from(predictions)
+    .where(and(
+      eq(predictions.gameType, gameType),
+      gte(predictions.createdAt, sevenDaysAgo),
+    ))
+    .orderBy(desc(predictions.createdAt))
+    .limit(200);
+
+  if (recentPreds.length === 0) return { evaluated: 0, highAccuracy: 0 };
+
+  const resultMainSet = new Set(mainNumbers);
+  const resultSpecialSet = new Set(specialNumbers);
+  const perfRecords: InsertModelPerformance[] = [];
+  let highAccuracy = 0;
+
+  for (const pred of recentPreds) {
+    const predMain = pred.mainNumbers as number[];
+    const predSpecial = (pred.specialNumbers as number[]) || [];
+
+    const mainHits = predMain.filter(n => resultMainSet.has(n)).length;
+    const specialHits = predSpecial.filter(n => resultSpecialSet.has(n)).length;
+
+    perfRecords.push({
+      modelName: pred.modelName,
+      gameType,
+      drawResultId: drawId,
+      predictionId: pred.id,
+      mainHits,
+      specialHits,
+    });
+
+    // Check for high accuracy (60%+ main number match)
+    if (mainHits >= Math.ceil(predMain.length * 0.6)) {
+      highAccuracy++;
+    }
+  }
+
+  if (perfRecords.length > 0) {
+    await insertModelPerformance(perfRecords);
+  }
+
+  return { evaluated: perfRecords.length, highAccuracy };
 }

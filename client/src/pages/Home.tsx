@@ -1,13 +1,14 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import Navbar from "@/components/Navbar";
 import { trpc } from "@/lib/trpc";
 import { FLORIDA_GAMES, GAME_TYPES, type GameType } from "@shared/lottery";
-import { Dices, Zap, TrendingUp, DollarSign, Brain, Trophy, ArrowRight, Sparkles } from "lucide-react";
-import { useState, useMemo } from "react";
+import { Dices, Zap, TrendingUp, DollarSign, Brain, Trophy, ArrowRight, Sparkles, Clock, Timer, AlertCircle } from "lucide-react";
+import { useState, useMemo, useEffect } from "react";
 import { useLocation } from "wouter";
 
 function LottoBall({ number, variant = "main" }: { number: number; variant?: "main" | "special" }) {
@@ -15,6 +16,87 @@ function LottoBall({ number, variant = "main" }: { number: number; variant?: "ma
     <span className={`lotto-ball ${variant === "special" ? "lotto-ball-special" : "lotto-ball-main"}`}>
       {number}
     </span>
+  );
+}
+
+function DrawScheduleCountdown() {
+  const { data, isLoading } = trpc.schedule.all.useQuery(undefined, {
+    refetchInterval: 60000, // refresh every minute
+  });
+  const [, setTick] = useState(0);
+
+  // Re-render every 30s to update countdowns
+  useEffect(() => {
+    const interval = setInterval(() => setTick(t => t + 1), 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (isLoading) {
+    return (
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+        {[1, 2, 3, 4, 5].map(i => <Skeleton key={i} className="h-24" />)}
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  // Filter to active games with upcoming draws, sorted by next draw time
+  const activeGames = data
+    .filter(g => !g.schedule.ended && g.nextDraw)
+    .sort((a, b) => new Date(a.nextDraw!).getTime() - new Date(b.nextDraw!).getTime());
+
+  const endedGames = data.filter(g => g.schedule.ended);
+
+  // Recalculate countdown live
+  const getCountdown = (nextDrawIso: string) => {
+    const target = new Date(nextDrawIso);
+    const now = new Date();
+    const etOffset = -5;
+    const etNow = new Date(now.getTime() + (now.getTimezoneOffset() + etOffset * 60) * 60000);
+    const diff = target.getTime() - etNow.getTime();
+    if (diff <= 0) return "Drawing now!";
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+        {activeGames.map(g => {
+          const isToday = g.nextDraw && new Date(g.nextDraw).toDateString() === new Date().toDateString();
+          return (
+            <Card key={g.gameType} className={`bg-card border-border/50 ${isToday ? "border-primary/40 glow-cyan-sm" : ""}`}>
+              <CardContent className="p-3 text-center">
+                <p className="text-xs font-medium text-muted-foreground mb-1">{g.gameName}</p>
+                <div className="flex items-center justify-center gap-1 mb-1">
+                  <Timer className={`w-3.5 h-3.5 ${isToday ? "text-primary animate-pulse" : "text-muted-foreground"}`} />
+                  <span className={`text-sm font-bold ${isToday ? "text-primary" : "text-foreground"}`}>
+                    {g.nextDraw ? getCountdown(g.nextDraw) : "—"}
+                  </span>
+                </div>
+                <p className="text-[10px] text-muted-foreground">{g.schedule.description}</p>
+                {isToday && <Badge variant="outline" className="text-[9px] mt-1 border-primary/30 text-primary">Today</Badge>}
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+      {endedGames.length > 0 && (
+        <div className="flex gap-2 flex-wrap">
+          {endedGames.map(g => (
+            <Badge key={g.gameType} variant="outline" className="text-[10px] text-muted-foreground border-border/50">
+              <AlertCircle className="w-2.5 h-2.5 mr-1" />
+              {g.gameName}: {g.countdown}
+            </Badge>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -98,7 +180,7 @@ export default function Home() {
         <div className="absolute top-20 left-1/4 w-64 h-64 bg-primary/5 rounded-full blur-3xl" />
         <div className="absolute top-40 right-1/4 w-48 h-48 bg-accent/5 rounded-full blur-3xl" />
 
-        <div className="container relative pt-16 pb-12">
+        <div className="container relative pt-16 pb-8">
           <div className="max-w-3xl mx-auto text-center">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-sm mb-6">
               <Sparkles className="w-3.5 h-3.5" />
@@ -166,6 +248,15 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Draw Schedule Countdown */}
+      <section className="container pb-8">
+        <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
+          <Clock className="w-5 h-5 text-primary" />
+          Next Draws
+        </h2>
+        <DrawScheduleCountdown />
+      </section>
+
       {/* Features + Latest Results */}
       <section className="container pb-16">
         <div className="grid md:grid-cols-2 gap-8">
@@ -177,7 +268,7 @@ export default function Home() {
             </h2>
             {[
               { icon: TrendingUp, title: "16 Statistical Models", desc: "From Poisson distributions to Markov chains, quantum-inspired algorithms, and Bayesian inference." },
-              { icon: Brain, title: "AI Oracle Ensemble", desc: "Meta-model that watches all 15 siblings, Bayesian-updates weights, and outputs optimized consensus." },
+              { icon: Brain, title: "AI Oracle Ensemble", desc: "Meta-model that watches all 15 siblings, auto-weights by historical accuracy, and outputs optimized consensus." },
               { icon: DollarSign, title: "Budget-Aware Selection", desc: "Automatically selects the best 20 tickets within your $75 budget using multi-step filtering." },
               { icon: Sparkles, title: "LLM-Powered Analysis", desc: "Natural language explanations of patterns, model performance, and personalized strategy recommendations." },
             ].map((f, i) => (

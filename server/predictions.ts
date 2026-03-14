@@ -369,12 +369,14 @@ function quantumEntanglementModel(cfg: GameConfig, history: HistoryDraw[]): Pred
   };
 }
 
-function aiOracleModel(cfg: GameConfig, history: HistoryDraw[], siblingResults: PredictionResult[]): PredictionResult {
-  // Meta-ensemble: weighted vote from all sibling model outputs
+function aiOracleModel(cfg: GameConfig, history: HistoryDraw[], siblingResults: PredictionResult[], modelWeights?: Record<string, number>): PredictionResult {
+  // Meta-ensemble: weighted vote from all sibling model outputs, using accuracy-based weights when available
   const votes = new Map<number, number>();
   let confAccum = 0;
   for (const pred of siblingResults) {
-    const w = pred.confidenceScore;
+    // Use historical accuracy weight if available, otherwise use confidence score
+    const accuracyWeight = modelWeights?.[pred.modelName] ?? 1.0;
+    const w = pred.confidenceScore * accuracyWeight;
     for (const n of pred.mainNumbers) {
       votes.set(n, (votes.get(n) || 0) + w);
     }
@@ -398,7 +400,11 @@ function aiOracleModel(cfg: GameConfig, history: HistoryDraw[], siblingResults: 
 
 // ─── Public API ─────────────────────────────────────────────────────────────────
 
-export function runAllModels(cfg: GameConfig, history: HistoryDraw[]): PredictionResult[] {
+/**
+ * Run all 16 models. When modelWeights are provided (from historical accuracy tracking),
+ * the AI Oracle ensemble uses them to weight models proportionally to their past performance.
+ */
+export function runAllModels(cfg: GameConfig, history: HistoryDraw[], modelWeights?: Record<string, number>): PredictionResult[] {
   const siblingResults: PredictionResult[] = [
     randomModel(cfg, history),
     poissonModel(cfg, history, 50, "poisson_standard"),
@@ -416,8 +422,8 @@ export function runAllModels(cfg: GameConfig, history: HistoryDraw[]): Predictio
     bayesianModel(cfg, history),
     quantumEntanglementModel(cfg, history),
   ];
-  // AI Oracle runs last with all sibling results
-  siblingResults.push(aiOracleModel(cfg, history, siblingResults));
+  // AI Oracle runs last with all sibling results + accuracy-based weights
+  siblingResults.push(aiOracleModel(cfg, history, siblingResults, modelWeights));
   return siblingResults;
 }
 
