@@ -1,0 +1,9 @@
+{
+  "query": "DELETE FROM draw_results WHERE source != 'floridalottery.com';",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway03.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 4TyHE3rVc6QyPw4.ad97ac670d8e --database 6J86Kiyju8nzk4hczi9dXp --execute DELETE FROM draw_results WHERE source != 'floridalottery.com';",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 364
+}

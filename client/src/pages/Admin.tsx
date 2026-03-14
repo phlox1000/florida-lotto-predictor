@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { trpc } from "@/lib/trpc";
 import { FLORIDA_GAMES, GAME_TYPES, type GameType } from "@shared/lottery";
 import { getLoginUrl } from "@/const";
-import { Shield, Plus, Download, Database, Trophy, LogIn } from "lucide-react";
+import { Shield, Plus, Download, Database, Trophy, LogIn, RefreshCw } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
 
@@ -149,6 +149,7 @@ function AddDrawForm() {
 function FetchDataSection() {
   const [gameType, setGameType] = useState<GameType>("fantasy_5");
   const fetchLatest = trpc.dataFetch.fetchLatest.useMutation();
+  const fetchAll = trpc.dataFetch.fetchAll.useMutation();
   const utils = trpc.useUtils();
 
   const gameOptions = useMemo(() =>
@@ -156,11 +157,11 @@ function FetchDataSection() {
     []
   );
 
-  const handleFetch = () => {
+  const handleFetchSingle = () => {
     fetchLatest.mutate({ gameType }, {
       onSuccess: (data) => {
         if (data.success) {
-          toast.success("Latest results fetched and saved");
+          toast.success(`Fetched ${data.insertedCount} new draw(s) for ${FLORIDA_GAMES[gameType].name}`);
           utils.draws.latest.invalidate();
           utils.draws.all.invalidate();
         } else {
@@ -170,6 +171,28 @@ function FetchDataSection() {
       onError: (err) => toast.error(err.message),
     });
   };
+
+  const handleFetchAll = () => {
+    fetchAll.mutate(undefined, {
+      onSuccess: (data) => {
+        if (data.success) {
+          const totalInserted = Object.values(data.results).reduce((sum, r) => sum + r.count, 0);
+          const gamesSummary = Object.entries(data.results)
+            .filter(([_, r]) => r.count > 0)
+            .map(([gt, r]) => `${FLORIDA_GAMES[gt as GameType]?.name || gt}: ${r.count}`)
+            .join(", ");
+          toast.success(`Fetched ${totalInserted} draw(s) from floridalottery.com${gamesSummary ? ` (${gamesSummary})` : ""}`);
+          utils.draws.latest.invalidate();
+          utils.draws.all.invalidate();
+        } else {
+          toast.error("Failed to fetch results");
+        }
+      },
+      onError: (err) => toast.error(err.message),
+    });
+  };
+
+  const isFetching = fetchLatest.isPending || fetchAll.isPending;
 
   return (
     <Card className="bg-card border-border/50">
@@ -181,8 +204,39 @@ function FetchDataSection() {
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">
-          Fetch the latest Florida Lottery results using the Data API. Results are automatically saved to the database.
+          Fetch the latest Florida Lottery results directly from <span className="text-primary">floridalottery.com</span>. Results are automatically saved to the database.
         </p>
+
+        {/* Fetch All Games */}
+        <Button
+          onClick={handleFetchAll}
+          disabled={isFetching}
+          className="w-full bg-accent text-accent-foreground hover:bg-accent/90"
+          size="lg"
+        >
+          {fetchAll.isPending ? (
+            <>
+              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+              Fetching All Games...
+            </>
+          ) : (
+            <>
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Fetch All Games (Latest Results)
+            </>
+          )}
+        </Button>
+
+        <div className="relative">
+          <div className="absolute inset-0 flex items-center">
+            <span className="w-full border-t border-border/50" />
+          </div>
+          <div className="relative flex justify-center text-xs uppercase">
+            <span className="bg-card px-2 text-muted-foreground">or fetch single game</span>
+          </div>
+        </div>
+
+        {/* Fetch Single Game */}
         <div className="flex gap-3">
           <Select value={gameType} onValueChange={(v) => setGameType(v as GameType)}>
             <SelectTrigger className="w-[180px] bg-input">
@@ -194,9 +248,9 @@ function FetchDataSection() {
               ))}
             </SelectContent>
           </Select>
-          <Button onClick={handleFetch} disabled={fetchLatest.isPending} className="bg-accent text-accent-foreground hover:bg-accent/90">
+          <Button onClick={handleFetchSingle} disabled={isFetching} variant="outline" className="border-primary/30 text-primary hover:bg-primary/10">
             <Download className="w-4 h-4 mr-1" />
-            {fetchLatest.isPending ? "Fetching..." : "Fetch Latest"}
+            {fetchLatest.isPending ? "Fetching..." : "Fetch"}
           </Button>
         </div>
       </CardContent>
@@ -220,6 +274,7 @@ function AllDrawResults() {
       <div className="text-center py-8 text-muted-foreground">
         <Database className="w-10 h-10 mx-auto mb-2 opacity-30" />
         <p className="text-sm">No draw results in the database yet.</p>
+        <p className="text-xs mt-1">Use "Fetch All Games" above to pull the latest results.</p>
       </div>
     );
   }

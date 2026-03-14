@@ -20,3 +20,4 @@
 - [x] Mobile-optimized meta tags (viewport, theme-color, apple-touch-icon)
 - [x] PWA install prompt component
 - [x] App icons generation (192x192, 512x512)
+- [x] Fix auto-fetch to pull most recent FL lottery results (now scrapes floridalottery.com directly)

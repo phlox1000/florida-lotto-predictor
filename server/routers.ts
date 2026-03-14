@@ -263,32 +263,68 @@ export const appRouter = router({
 
   // ─── Data Fetch (auto-fetch lottery results) ────────────────────────────────
   dataFetch: router({
-    /** Trigger a fetch of latest lottery results */
+    /** Trigger a fetch of latest lottery results by scraping floridalottery.com */
     fetchLatest: adminProcedure
       .input(z.object({ gameType: gameTypeSchema }))
       .mutation(async ({ input }) => {
-        // Use LLM to parse lottery data from a known format
-        // In production, this would call the Florida Lottery API directly
         try {
+          // Fetch the winning numbers page from floridalottery.com
+          const axios = (await import("axios")).default;
+          const resp = await axios.get("https://floridalottery.com/games/winning-numbers", {
+            headers: { "User-Agent": "Mozilla/5.0 (compatible; LottoOracle/1.0)" },
+            timeout: 15000,
+          });
+          const html: string = resp.data;
+
+          // Use LLM to extract structured data from the HTML
+          // Trim the HTML to the relevant section to save tokens
+          const drawSection = html.includes("Draw Results")
+            ? html.substring(html.indexOf("Draw Results"), html.indexOf("Draw Results") + 8000)
+            : html.substring(0, 10000);
+
+          const gameNameMap: Record<string, string> = {
+            powerball: "POWERBALL",
+            mega_millions: "MEGA MILLIONS",
+            florida_lotto: "FLORIDA LOTTO",
+            cash4life: "CASH4LIFE",
+            fantasy_5: "FANTASY 5",
+            pick_5: "PICK 5",
+            pick_4: "PICK 4",
+            pick_3: "PICK 3",
+            pick_2: "PICK 2",
+          };
+          const targetGame = gameNameMap[input.gameType] || FLORIDA_GAMES[input.gameType].name;
+          const cfg = FLORIDA_GAMES[input.gameType];
+
           const result = await invokeLLM({
             messages: [
-              { role: "system", content: "You are a data extraction assistant. Return ONLY valid JSON." },
-              { role: "user", content: `Generate the most recent Florida ${FLORIDA_GAMES[input.gameType].name} lottery drawing results as realistic sample data. Return JSON: { "drawDate": "YYYY-MM-DD", "mainNumbers": [numbers], "specialNumbers": [numbers or empty array], "drawTime": "evening" }. Use today's date or the most recent drawing date.` },
+              { role: "system", content: "You are a precise data extraction assistant. Extract lottery results from HTML. Return ONLY valid JSON. Today's date is " + new Date().toISOString().split("T")[0] + "." },
+              { role: "user", content: `Extract the MOST RECENT ${targetGame} drawing results from this Florida Lottery HTML page content. The game has ${cfg.mainCount} main numbers (1-${cfg.mainMax})${cfg.specialCount > 0 ? ` and ${cfg.specialCount} special number(s) (1-${cfg.specialMax})` : ""}. If there are midday and evening draws, return the evening draw. Return JSON with: { "draws": [{ "drawDate": "YYYY-MM-DD", "mainNumbers": [numbers], "specialNumbers": [numbers or empty array], "drawTime": "evening" or "midday" }] }. Include up to 5 most recent draws if available.\n\nHTML content:\n${drawSection}` },
             ],
             response_format: {
               type: "json_schema",
               json_schema: {
-                name: "lottery_result",
+                name: "lottery_draws",
                 strict: true,
                 schema: {
                   type: "object",
                   properties: {
-                    drawDate: { type: "string" },
-                    mainNumbers: { type: "array", items: { type: "number" } },
-                    specialNumbers: { type: "array", items: { type: "number" } },
-                    drawTime: { type: "string" },
+                    draws: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          drawDate: { type: "string" },
+                          mainNumbers: { type: "array", items: { type: "number" } },
+                          specialNumbers: { type: "array", items: { type: "number" } },
+                          drawTime: { type: "string" },
+                        },
+                        required: ["drawDate", "mainNumbers", "specialNumbers", "drawTime"],
+                        additionalProperties: false,
+                      },
+                    },
                   },
-                  required: ["drawDate", "mainNumbers", "specialNumbers", "drawTime"],
+                  required: ["draws"],
                   additionalProperties: false,
                 },
               },
@@ -298,21 +334,124 @@ export const appRouter = router({
           const content = result.choices[0]?.message?.content;
           const text = typeof content === "string" ? content : "";
           const parsed = JSON.parse(text);
+          let insertedCount = 0;
 
-          await insertDrawResult({
-            gameType: input.gameType,
-            drawDate: new Date(parsed.drawDate).getTime(),
-            mainNumbers: parsed.mainNumbers,
-            specialNumbers: parsed.specialNumbers,
-            drawTime: parsed.drawTime,
-            source: "api",
-          });
+          for (const draw of parsed.draws) {
+            try {
+              await insertDrawResult({
+                gameType: input.gameType,
+                drawDate: new Date(draw.drawDate).getTime(),
+                mainNumbers: draw.mainNumbers,
+                specialNumbers: draw.specialNumbers,
+                drawTime: draw.drawTime,
+                source: "floridalottery.com",
+              });
+              insertedCount++;
+            } catch (e) {
+              // Likely duplicate, skip
+              console.warn("[DataFetch] Skipping draw (may be duplicate):", draw.drawDate, e);
+            }
+          }
 
-          return { success: true, data: parsed };
+          return { success: true, data: parsed, insertedCount };
         } catch (e) {
           console.error("[DataFetch] Failed:", e);
-          return { success: false, data: null };
+          return { success: false, data: null, insertedCount: 0 };
         }
+      }),
+
+    /** Fetch all games at once */
+    fetchAll: adminProcedure
+      .mutation(async () => {
+        const axios = (await import("axios")).default;
+        const results: Record<string, { success: boolean; count: number }> = {};
+
+        try {
+          const resp = await axios.get("https://floridalottery.com/games/winning-numbers", {
+            headers: { "User-Agent": "Mozilla/5.0 (compatible; LottoOracle/1.0)" },
+            timeout: 15000,
+          });
+          const html: string = resp.data;
+          const drawSection = html.includes("Draw Results")
+            ? html.substring(html.indexOf("Draw Results"), html.indexOf("Draw Results") + 12000)
+            : html.substring(0, 15000);
+
+          const extractResult = await invokeLLM({
+            messages: [
+              { role: "system", content: "You are a precise data extraction assistant. Extract ALL lottery game results from the HTML. Return ONLY valid JSON. Today is " + new Date().toISOString().split("T")[0] + "." },
+              { role: "user", content: `Extract the latest drawing results for ALL Florida Lottery games from this HTML. For each game, extract the most recent draw. Games to look for: POWERBALL (5 main 1-69 + 1 powerball 1-26), MEGA MILLIONS (5 main 1-70 + 1 mega ball 1-25), FLORIDA LOTTO (6 main 1-53), FANTASY 5 (5 main 1-36), PICK 5 (5 digits 0-9), PICK 4 (4 digits 0-9), PICK 3 (3 digits 0-9), PICK 2 (2 digits 0-9), CASH4LIFE (5 main 1-60 + 1 cash ball 1-4). For games with midday/evening draws, include both. Return JSON: { "games": [{ "gameType": "powerball|mega_millions|florida_lotto|fantasy_5|cash4life|pick_2|pick_3|pick_4|pick_5", "draws": [{ "drawDate": "YYYY-MM-DD", "mainNumbers": [numbers], "specialNumbers": [numbers or empty], "drawTime": "evening|midday" }] }] }\n\nHTML:\n${drawSection}` },
+            ],
+            response_format: {
+              type: "json_schema",
+              json_schema: {
+                name: "all_lottery_draws",
+                strict: true,
+                schema: {
+                  type: "object",
+                  properties: {
+                    games: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          gameType: { type: "string" },
+                          draws: {
+                            type: "array",
+                            items: {
+                              type: "object",
+                              properties: {
+                                drawDate: { type: "string" },
+                                mainNumbers: { type: "array", items: { type: "number" } },
+                                specialNumbers: { type: "array", items: { type: "number" } },
+                                drawTime: { type: "string" },
+                              },
+                              required: ["drawDate", "mainNumbers", "specialNumbers", "drawTime"],
+                              additionalProperties: false,
+                            },
+                          },
+                        },
+                        required: ["gameType", "draws"],
+                        additionalProperties: false,
+                      },
+                    },
+                  },
+                  required: ["games"],
+                  additionalProperties: false,
+                },
+              },
+            },
+          });
+
+          const content = extractResult.choices[0]?.message?.content;
+          const text = typeof content === "string" ? content : "";
+          const parsed = JSON.parse(text);
+
+          for (const game of parsed.games) {
+            const gt = game.gameType as GameType;
+            if (!FLORIDA_GAMES[gt]) continue;
+            let count = 0;
+            for (const draw of game.draws) {
+              try {
+                await insertDrawResult({
+                  gameType: gt,
+                  drawDate: new Date(draw.drawDate).getTime(),
+                  mainNumbers: draw.mainNumbers,
+                  specialNumbers: draw.specialNumbers,
+                  drawTime: draw.drawTime,
+                  source: "floridalottery.com",
+                });
+                count++;
+              } catch (e) {
+                console.warn(`[DataFetch] Skipping ${gt} draw:`, draw.drawDate);
+              }
+            }
+            results[gt] = { success: true, count };
+          }
+        } catch (e) {
+          console.error("[DataFetch] fetchAll failed:", e);
+        }
+
+        return { success: true, results };
       }),
   }),
 });
