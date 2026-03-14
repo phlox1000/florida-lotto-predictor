@@ -170,7 +170,7 @@ function FetchDataSection() {
   };
 
   const handleFetchHistory = () => {
-    fetchHistory.mutate({ gameType, drawCount: 50 }, {
+    fetchHistory.mutate({ gameType, drawCount: 500 }, {
       onSuccess: (data) => {
         if (data.success) {
           toast.success(`Loaded ${data.insertedCount} historical draws for ${FLORIDA_GAMES[gameType].name} (${data.skippedCount} duplicates skipped)`);
@@ -234,7 +234,7 @@ function FetchDataSection() {
             </Button>
           </div>
           <p className="text-[10px] text-muted-foreground text-center">
-            Bulk History fetches up to 50 past draws to improve prediction accuracy.
+            Bulk History fetches up to 500 past draws from official FL Lottery records.
           </p>
         </div>
       </CardContent>

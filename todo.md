@@ -57,3 +57,8 @@
 - [x] Remove budget icon completely from home page (removed feature card, icon, and Dollar import)
 - [x] Fix PWA install: split icon purposes, added manifest id/scope, bumped SW cache, network-first strategy
 - [x] Remove "20 Tickets / $75" budget button from home page hero section
+- [x] Fix bulk history and auto-fetch returning 0 draws — rewrote scraper to parse official FL Lottery HTML data files (files.floridalottery.com/exptkt/*.htm)
+- [x] New scraper: supports all 9 FL Lottery games (Fantasy 5, Powerball, Mega Millions, FL Lotto, Cash4Life, Pick 2-5)
+- [x] New scraper: fast indexOf-based HTML parser (handles 10MB+ files in <50ms)
+- [x] New scraper: vitest integration tests (24 tests, all passing)
+- [x] Bulk History now fetches 500 draws per game (up from 50)
