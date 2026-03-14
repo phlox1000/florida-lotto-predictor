@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import Navbar from "@/components/Navbar";
 import { trpc } from "@/lib/trpc";
 import { FLORIDA_GAMES, GAME_TYPES, type GameType } from "@shared/lottery";
-import { Dices, Zap, TrendingUp, DollarSign, Brain, Trophy, ArrowRight, Sparkles, Clock, Timer, AlertCircle } from "lucide-react";
+import { Dices, Zap, TrendingUp, Brain, Trophy, ArrowRight, Sparkles, Clock, Timer, AlertCircle } from "lucide-react";
 import { useState, useMemo, useEffect } from "react";
 import { useLocation } from "wouter";
 
@@ -234,11 +234,11 @@ export default function Home() {
                 >
                   {generateTickets.isPending ? (
                     <span className="flex items-center gap-2">
-                      <DollarSign className="w-4 h-4 animate-spin" /> Selecting...
+                      Selecting...
                     </span>
                   ) : (
                     <span className="flex items-center gap-2">
-                      <DollarSign className="w-4 h-4" /> 20 Tickets / $75
+                      20 Tickets / $75
                     </span>
                   )}
                 </Button>
@@ -269,7 +269,7 @@ export default function Home() {
             {[
               { icon: TrendingUp, title: "16 Statistical Models", desc: "From Poisson distributions to Markov chains, quantum-inspired algorithms, and Bayesian inference." },
               { icon: Brain, title: "AI Oracle Ensemble", desc: "Meta-model that watches all 15 siblings, auto-weights by historical accuracy, and outputs optimized consensus." },
-              { icon: DollarSign, title: "Budget-Aware Selection", desc: "Automatically selects the best 20 tickets within your $75 budget using multi-step filtering." },
+              { icon: Dices, title: "Budget-Aware Selection", desc: "Automatically selects the best 20 tickets within your $75 budget using multi-step filtering." },
               { icon: Sparkles, title: "LLM-Powered Analysis", desc: "Natural language explanations of patterns, model performance, and personalized strategy recommendations." },
             ].map((f, i) => (
               <Card key={i} className="bg-card border-border/50 hover:border-primary/30 transition-colors">

@@ -51,3 +51,6 @@
 - [x] Streak/pattern dashboard: number frequency charts (bar/line charts)
 - [x] Streak/pattern dashboard: overdue numbers analysis
 - [x] Streak/pattern dashboard: navbar link and route
+- [x] Remove budget icon from home page
+- [x] Make PDF upload option more prominent and easier to find (moved to top of Admin page)
+- [x] Ensure bulk fetch option is available in Admin panel (moved to top row alongside PDF upload)

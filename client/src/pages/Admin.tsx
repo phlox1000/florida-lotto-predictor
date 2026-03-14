@@ -620,21 +620,21 @@ export default function Admin() {
           Admin Panel
         </h1>
 
+        {/* Quick Actions: Fetch + Upload (most used) */}
+        <div className="grid lg:grid-cols-2 gap-6 mb-6">
+          <FetchDataSection />
+          <PdfUploadSection />
+        </div>
+
         {/* Data Health + Model Accuracy */}
         <div className="grid lg:grid-cols-2 gap-6 mb-6">
           <DataHealthDashboard />
           <ModelAccuracyDashboard />
         </div>
 
-        {/* Add Draw + Fetch Data */}
-        <div className="grid lg:grid-cols-2 gap-6 mb-6">
-          <AddDrawForm />
-          <FetchDataSection />
-        </div>
-
-        {/* PDF Upload */}
+        {/* Add Draw Manually */}
         <div className="grid lg:grid-cols-1 gap-6 mb-8">
-          <PdfUploadSection />
+          <AddDrawForm />
         </div>
 
         {/* All Draw Results */}
