@@ -1,0 +1,26 @@
+{
+  "name": "FL Lotto Oracle",
+  "short_name": "Lotto Oracle",
+  "description": "Quantum-inspired prediction engine combining 16 statistical models with AI ensemble analysis for Florida Lottery games.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a1628",
+  "theme_color": "#00e5ff",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "https://d2xsxph8kpxj0f.cloudfront.net/310419663031884010/6J86Kiyju8nzk4hczi9dXp/pwa-icon-192-gVgtM7zTtpdrwJRZVgEdKA.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://d2xsxph8kpxj0f.cloudfront.net/310419663031884010/6J86Kiyju8nzk4hczi9dXp/pwa-icon-512-U3kTKQ8DJaNKK78r8fMaPP.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["utilities", "entertainment"],
+  "lang": "en-US"
+}

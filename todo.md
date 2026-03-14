@@ -15,3 +15,8 @@
 - [x] Auto-fetch Florida Lottery results from official sources via Data API
 - [x] Owner notifications for accuracy thresholds and unusual pattern detection
 - [x] Vitest tests for backend logic
+- [x] PWA manifest.json with app name, icons, theme colors
+- [x] Service worker for offline caching
+- [x] Mobile-optimized meta tags (viewport, theme-color, apple-touch-icon)
+- [x] PWA install prompt component
+- [x] App icons generation (192x192, 512x512)

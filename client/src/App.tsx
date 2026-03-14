@@ -9,6 +9,7 @@ import Predictions from "./pages/Predictions";
 import History from "./pages/History";
 import Admin from "./pages/Admin";
 import Analysis from "./pages/Analysis";
+import InstallPrompt from "./components/InstallPrompt";
 
 function Router() {
   return (
@@ -31,6 +32,7 @@ function App() {
         <TooltipProvider>
           <Toaster />
           <Router />
+          <InstallPrompt />
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>
