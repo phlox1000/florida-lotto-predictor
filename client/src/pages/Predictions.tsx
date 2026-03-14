@@ -7,8 +7,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { trpc } from "@/lib/trpc";
 import { FLORIDA_GAMES, GAME_TYPES, type GameType, type PredictionResult } from "@shared/lottery";
-import { Zap, DollarSign, Dices, Target, Sparkles, Printer } from "lucide-react";
+import { Zap, DollarSign, Dices, Target, Sparkles, Printer, Heart } from "lucide-react";
 import { useState, useMemo, useCallback } from "react";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { toast } from "sonner";
 
 function LottoBall({ number, variant = "main" }: { number: number; variant?: "main" | "special" }) {
@@ -30,7 +31,7 @@ function ConfidenceMeter({ score }: { score: number }) {
   );
 }
 
-function ModelCard({ pred }: { pred: PredictionResult }) {
+function ModelCard({ pred, gameType, onFavorite }: { pred: PredictionResult; gameType?: string; onFavorite?: (pred: PredictionResult) => void }) {
   const isOracle = pred.modelName === "ai_oracle";
   return (
     <Card className={`bg-card border-border/50 ${isOracle ? "border-accent/40 glow-gold-sm" : "hover:border-primary/30"} transition-all`}>
@@ -40,9 +41,20 @@ function ModelCard({ pred }: { pred: PredictionResult }) {
             {isOracle ? <Sparkles className="w-4 h-4 text-accent" /> : <Target className="w-3.5 h-3.5 text-primary/60" />}
             <span className="text-sm font-semibold">{pred.modelName.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}</span>
           </div>
-          <Badge variant="outline" className="text-xs border-border">
-            {(pred.metadata as Record<string, unknown>)?.strategy as string || "model"}
-          </Badge>
+          <div className="flex items-center gap-1.5">
+            {onFavorite && (
+              <button
+                onClick={() => onFavorite(pred)}
+                className="p-1 rounded-md text-muted-foreground hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                title="Save to Favorites"
+              >
+                <Heart className="w-3.5 h-3.5" />
+              </button>
+            )}
+            <Badge variant="outline" className="text-xs border-border">
+              {(pred.metadata as Record<string, unknown>)?.strategy as string || "model"}
+            </Badge>
+          </div>
         </div>
         <div className="flex gap-1.5 flex-wrap">
           {pred.mainNumbers.map((n, i) => <LottoBall key={i} number={n} />)}
@@ -61,7 +73,7 @@ interface TicketEntry {
   confidence: number;
 }
 
-function TicketCard({ ticket, index }: { ticket: TicketEntry; index: number }) {
+function TicketCard({ ticket, index, onFavorite }: { ticket: TicketEntry; index: number; onFavorite?: (ticket: TicketEntry) => void }) {
   return (
     <div className="flex items-center gap-3 p-3 rounded-lg bg-secondary/30 border border-border/30">
       <div className="w-8 h-8 rounded-full bg-accent/10 flex items-center justify-center text-accent text-xs font-bold">
@@ -76,6 +88,15 @@ function TicketCard({ ticket, index }: { ticket: TicketEntry; index: number }) {
           Source: {ticket.modelSource.replace(/_/g, " ")} &middot; {Math.round(ticket.confidence * 100)}% confidence
         </p>
       </div>
+      {onFavorite && (
+        <button
+          onClick={() => onFavorite(ticket)}
+          className="p-2 rounded-md text-muted-foreground hover:text-red-400 hover:bg-red-400/10 transition-colors"
+          title="Save to Favorites"
+        >
+          <Heart className="w-4 h-4" />
+        </button>
+      )}
     </div>
   );
 }
@@ -251,8 +272,35 @@ function generatePrintableTickets(
 
 export default function Predictions() {
   const [selectedGame, setSelectedGame] = useState<GameType>("fantasy_5");
+  const { isAuthenticated } = useAuth();
   const generatePredictions = trpc.predictions.generate.useMutation();
   const generateTickets = trpc.tickets.generate.useMutation();
+  const addFavorite = trpc.favorites.add.useMutation({
+    onSuccess: () => toast.success("Saved to favorites!"),
+    onError: () => toast.error("Failed to save. Please sign in first."),
+  });
+
+  const handleFavoritePred = useCallback((pred: PredictionResult) => {
+    if (!isAuthenticated) { toast.error("Sign in to save favorites"); return; }
+    addFavorite.mutate({
+      gameType: selectedGame,
+      mainNumbers: pred.mainNumbers,
+      specialNumbers: pred.specialNumbers,
+      modelSource: pred.modelName,
+      confidence: pred.confidenceScore,
+    });
+  }, [isAuthenticated, selectedGame, addFavorite]);
+
+  const handleFavoriteTicket = useCallback((ticket: TicketEntry) => {
+    if (!isAuthenticated) { toast.error("Sign in to save favorites"); return; }
+    addFavorite.mutate({
+      gameType: selectedGame,
+      mainNumbers: ticket.mainNumbers,
+      specialNumbers: ticket.specialNumbers,
+      modelSource: ticket.modelSource,
+      confidence: ticket.confidence,
+    });
+  }, [isAuthenticated, selectedGame, addFavorite]);
 
   const gameOptions = useMemo(() =>
     GAME_TYPES.map(id => ({ id, name: FLORIDA_GAMES[id].name })),
@@ -329,11 +377,11 @@ export default function Predictions() {
                   {/* AI Oracle first */}
                   {predictions.filter(p => p.modelName === "ai_oracle").map(p => (
                     <div key={p.modelName} className="sm:col-span-2 lg:col-span-1">
-                      <ModelCard pred={p} />
+                      <ModelCard pred={p} gameType={selectedGame} onFavorite={handleFavoritePred} />
                     </div>
                   ))}
                   {predictions.filter(p => p.modelName !== "ai_oracle").map(p => (
-                    <ModelCard key={p.modelName} pred={p} />
+                    <ModelCard key={p.modelName} pred={p} gameType={selectedGame} onFavorite={handleFavoritePred} />
                   ))}
                 </div>
               </div>
@@ -370,7 +418,7 @@ export default function Predictions() {
                 </div>
                 <div className="space-y-2">
                   {ticketData.tickets.map((t, i) => (
-                    <TicketCard key={i} ticket={t as TicketEntry} index={i} />
+                    <TicketCard key={i} ticket={t as TicketEntry} index={i} onFavorite={handleFavoriteTicket} />
                   ))}
                 </div>
               </div>

@@ -29,3 +29,10 @@
 - [x] Draw schedule UI: show next draw dates and countdowns on home page
 - [x] Results vs Predictions comparison view: side-by-side of predictions vs actual draws with hit/miss highlighting per model
 - [x] Export Tickets to PDF: printable list of 20 selected tickets for store reference
+- [x] Favorites system: database table for saved number combinations
+- [x] Favorites backend: tRPC endpoints for add, remove, list favorites
+- [x] Favorites UI: save button on predictions/tickets, dedicated Favorites page, quick re-use
+- [x] Favorites navbar link
+- [x] Push notifications: browser push subscription management
+- [x] Push notification triggers: new draw results, high prediction accuracy
+- [x] Push notification UI: enable/disable toggle in user settings

@@ -6,6 +6,8 @@ import {
   predictions, InsertPrediction,
   ticketSelections, InsertTicketSelection,
   modelPerformance, InsertModelPerformance,
+  favorites, InsertFavorite,
+  pushSubscriptions, InsertPushSubscription,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -247,4 +249,91 @@ export async function evaluatePredictionsAgainstDraw(
   }
 
   return { evaluated: perfRecords.length, highAccuracy };
+}
+
+// ─── Favorites ──────────────────────────────────────────────────────────────────
+export async function addFavorite(data: InsertFavorite) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(favorites).values(data);
+  return result;
+}
+
+export async function getUserFavorites(userId: number, gameType?: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [eq(favorites.userId, userId)];
+  if (gameType) conditions.push(eq(favorites.gameType, gameType));
+  return db.select().from(favorites)
+    .where(and(...conditions))
+    .orderBy(desc(favorites.createdAt));
+}
+
+export async function removeFavorite(id: number, userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(favorites).where(and(eq(favorites.id, id), eq(favorites.userId, userId)));
+}
+
+export async function incrementFavoriteUsage(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(favorites)
+    .set({ usageCount: sql`${favorites.usageCount} + 1` })
+    .where(eq(favorites.id, id));
+}
+
+// ─── Push Subscriptions ─────────────────────────────────────────────────────────
+export async function upsertPushSubscription(data: InsertPushSubscription) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  // Check if subscription with same endpoint exists for this user
+  const existing = await db.select().from(pushSubscriptions)
+    .where(and(
+      eq(pushSubscriptions.userId, data.userId),
+    ))
+    .limit(1);
+  if (existing.length > 0) {
+    await db.update(pushSubscriptions)
+      .set({
+        endpoint: data.endpoint,
+        p256dh: data.p256dh,
+        auth: data.auth,
+        enabled: data.enabled ?? 1,
+        notifyDrawResults: data.notifyDrawResults ?? 1,
+        notifyHighAccuracy: data.notifyHighAccuracy ?? 1,
+      })
+      .where(eq(pushSubscriptions.id, existing[0].id));
+    return existing[0].id;
+  }
+  const result = await db.insert(pushSubscriptions).values(data);
+  return (result as any)[0]?.insertId;
+}
+
+export async function getUserPushSubscription(userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(pushSubscriptions)
+    .where(eq(pushSubscriptions.userId, userId))
+    .limit(1);
+  return result.length > 0 ? result[0] : null;
+}
+
+export async function updatePushPreferences(userId: number, prefs: {
+  enabled?: number;
+  notifyDrawResults?: number;
+  notifyHighAccuracy?: number;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(pushSubscriptions)
+    .set(prefs)
+    .where(eq(pushSubscriptions.userId, userId));
+}
+
+export async function getActivePushSubscriptions() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(pushSubscriptions)
+    .where(eq(pushSubscriptions.enabled, 1));
 }

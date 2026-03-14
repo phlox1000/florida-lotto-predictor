@@ -80,3 +80,37 @@ export const modelPerformance = mysqlTable("model_performance", {
 
 export type ModelPerformance = typeof modelPerformance.$inferSelect;
 export type InsertModelPerformance = typeof modelPerformance.$inferInsert;
+
+/** User favorite number combinations */
+export const favorites = mysqlTable("favorites", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  gameType: varchar("gameType", { length: 32 }).notNull(),
+  label: varchar("label", { length: 128 }),
+  mainNumbers: json("mainNumbers").notNull(), // number[]
+  specialNumbers: json("specialNumbers"), // number[] | null
+  modelSource: varchar("modelSource", { length: 64 }),
+  confidence: float("confidence"),
+  usageCount: int("usageCount").notNull().default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type Favorite = typeof favorites.$inferSelect;
+export type InsertFavorite = typeof favorites.$inferInsert;
+
+/** Push notification subscriptions */
+export const pushSubscriptions = mysqlTable("push_subscriptions", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  endpoint: text("endpoint").notNull(),
+  p256dh: text("p256dh").notNull(),
+  auth: text("auth").notNull(),
+  enabled: int("enabled").notNull().default(1),
+  notifyDrawResults: int("notifyDrawResults").notNull().default(1),
+  notifyHighAccuracy: int("notifyHighAccuracy").notNull().default(1),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type PushSubscription = typeof pushSubscriptions.$inferSelect;
+export type InsertPushSubscription = typeof pushSubscriptions.$inferInsert;

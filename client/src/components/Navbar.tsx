@@ -1,7 +1,7 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { getLoginUrl } from "@/const";
-import { Dices, History, BarChart3, Shield, Brain, GitCompareArrows, Menu, X } from "lucide-react";
+import { Dices, History, BarChart3, Shield, Brain, GitCompareArrows, Heart, Settings, Menu, X } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 
@@ -11,6 +11,7 @@ const navItems = [
   { path: "/history", label: "History", icon: History },
   { path: "/analysis", label: "AI Analysis", icon: Brain },
   { path: "/compare", label: "Compare", icon: GitCompareArrows },
+  { path: "/favorites", label: "Favorites", icon: Heart },
 ];
 
 export default function Navbar() {
@@ -62,7 +63,16 @@ export default function Navbar() {
           {loading ? (
             <div className="w-20 h-8 rounded bg-muted animate-pulse" />
           ) : user ? (
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <Link href="/settings">
+                <span className={`flex items-center gap-1 px-2 py-2 rounded-md text-sm transition-colors ${
+                  location === "/settings"
+                    ? "text-primary"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}>
+                  <Settings className="w-4 h-4" />
+                </span>
+              </Link>
               <span className="text-sm text-muted-foreground">{user.name || "User"}</span>
               <Button variant="outline" size="sm" onClick={() => logout()} className="border-border">
                 Sign Out
@@ -101,6 +111,18 @@ export default function Navbar() {
               <span className="flex items-center gap-2 px-3 py-2.5 rounded-md text-sm font-medium text-muted-foreground">
                 <Shield className="w-4 h-4" />
                 Admin
+              </span>
+            </Link>
+          )}
+          {user && (
+            <Link href="/settings" onClick={() => setMobileOpen(false)}>
+              <span className={`flex items-center gap-2 px-3 py-2.5 rounded-md text-sm font-medium ${
+                location === "/settings"
+                  ? "bg-primary/15 text-primary"
+                  : "text-muted-foreground"
+              }`}>
+                <Settings className="w-4 h-4" />
+                Settings
               </span>
             </Link>
           )}
