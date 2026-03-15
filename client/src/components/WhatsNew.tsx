@@ -15,6 +15,17 @@ interface ChangelogEntry {
  */
 const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.2.0",
+    date: "2026-03-15",
+    title: "Affinity Tags, Streak Alerts & CSV Export",
+    changes: [
+      { type: "feature", text: "Per-model Game Affinity Tags — see which games each model excels at" },
+      { type: "feature", text: "Hot Streak Alerts — models hitting 3+ numbers on consecutive draws get a fire badge" },
+      { type: "feature", text: "Export History to CSV — download draw results and predictions as spreadsheets" },
+      { type: "improvement", text: "Hot Streak banner at top of Leaderboard highlights active winning streaks" },
+    ],
+  },
+  {
     version: "4.1.0",
     date: "2026-03-15",
     title: "Offline Mode & Background Sync",

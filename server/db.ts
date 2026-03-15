@@ -557,3 +557,162 @@ export async function getModelTrends(gameType?: string, weeksBack = 12) {
     evaluationCount: Number(r.evaluationCount) || 0,
   }));
 }
+
+// ─── Model Game Affinity ──────────────────────────────────────────────────────
+/**
+ * Compute which games each model performs best on.
+ * Returns per-model affinity tags with the top game(s) and relative performance.
+ */
+export async function getModelGameAffinity() {
+  const db = await getDb();
+  if (!db) return [];
+
+  const rows = await db.select({
+    modelName: modelPerformance.modelName,
+    gameType: modelPerformance.gameType,
+    totalPredictions: sql<number>`COUNT(*)`,
+    avgMainHits: sql<number>`AVG(${modelPerformance.mainHits})`,
+    maxMainHits: sql<number>`MAX(${modelPerformance.mainHits})`,
+  }).from(modelPerformance)
+    .groupBy(modelPerformance.modelName, modelPerformance.gameType);
+
+  // Group by model
+  const modelMap: Record<string, Array<{
+    gameType: string;
+    total: number;
+    avgHits: number;
+    maxHits: number;
+  }>> = {};
+
+  for (const row of rows) {
+    if (!modelMap[row.modelName]) modelMap[row.modelName] = [];
+    modelMap[row.modelName].push({
+      gameType: row.gameType,
+      total: Number(row.totalPredictions) || 0,
+      avgHits: Number(Number(row.avgMainHits).toFixed(3)),
+      maxHits: Number(row.maxMainHits) || 0,
+    });
+  }
+
+  // For each model, find the best game(s)
+  const result: Array<{
+    modelName: string;
+    bestGame: string;
+    bestGameAvgHits: number;
+    affinityTags: Array<{ gameType: string; avgHits: number; label: string }>;
+  }> = [];
+
+  for (const [modelName, games] of Object.entries(modelMap)) {
+    // Only consider games with at least 3 evaluations
+    const qualified = games.filter(g => g.total >= 3);
+    if (qualified.length === 0) {
+      result.push({ modelName, bestGame: "", bestGameAvgHits: 0, affinityTags: [] });
+      continue;
+    }
+
+    // Sort by avgHits descending
+    qualified.sort((a, b) => b.avgHits - a.avgHits);
+    const best = qualified[0];
+    const overallAvg = qualified.reduce((s, g) => s + g.avgHits * g.total, 0) / qualified.reduce((s, g) => s + g.total, 0);
+
+    // Tag games where model performs significantly above its own average
+    const tags = qualified
+      .filter(g => g.avgHits >= overallAvg * 1.05) // at least 5% above average
+      .map(g => ({
+        gameType: g.gameType,
+        avgHits: g.avgHits,
+        label: g.gameType === best.gameType ? "Best" : "Strong",
+      }));
+
+    result.push({
+      modelName,
+      bestGame: best.gameType,
+      bestGameAvgHits: best.avgHits,
+      affinityTags: tags,
+    });
+  }
+
+  return result;
+}
+
+// ─── Prediction Streak Detection ──────────────────────────────────────────────
+/**
+ * Detect models that have consecutive draws with 3+ main number hits.
+ * Returns streak data for each model across games.
+ */
+export async function getModelStreaks(minHits = 3) {
+  const db = await getDb();
+  if (!db) return [];
+
+  // Get recent performance records ordered by draw date
+  const rows = await db.select({
+    modelName: modelPerformance.modelName,
+    gameType: modelPerformance.gameType,
+    mainHits: modelPerformance.mainHits,
+    drawResultId: modelPerformance.drawResultId,
+    createdAt: modelPerformance.createdAt,
+  }).from(modelPerformance)
+    .orderBy(desc(modelPerformance.createdAt));
+
+  // Group by model+game, compute streaks
+  const modelGameMap: Record<string, Array<{ mainHits: number; drawResultId: number | null; createdAt: Date }>> = {};
+
+  for (const row of rows) {
+    const key = `${row.modelName}::${row.gameType}`;
+    if (!modelGameMap[key]) modelGameMap[key] = [];
+    modelGameMap[key].push({
+      mainHits: row.mainHits,
+      drawResultId: row.drawResultId,
+      createdAt: row.createdAt,
+    });
+  }
+
+  const streaks: Array<{
+    modelName: string;
+    gameType: string;
+    currentStreak: number;
+    maxStreak: number;
+    isHot: boolean;
+    lastHitCount: number;
+  }> = [];
+
+  for (const [key, records] of Object.entries(modelGameMap)) {
+    const [modelName, gameType] = key.split("::");
+    // Records are newest-first
+    let currentStreak = 0;
+    let maxStreak = 0;
+    let tempStreak = 0;
+
+    // Current streak: count from most recent
+    for (const rec of records) {
+      if (rec.mainHits >= minHits) currentStreak++;
+      else break;
+    }
+
+    // Max streak: scan all records (oldest to newest)
+    const chronological = [...records].reverse();
+    for (const rec of chronological) {
+      if (rec.mainHits >= minHits) {
+        tempStreak++;
+        maxStreak = Math.max(maxStreak, tempStreak);
+      } else {
+        tempStreak = 0;
+      }
+    }
+
+    if (currentStreak > 0 || maxStreak > 0) {
+      streaks.push({
+        modelName,
+        gameType,
+        currentStreak,
+        maxStreak,
+        isHot: currentStreak >= 3,
+        lastHitCount: records[0]?.mainHits || 0,
+      });
+    }
+  }
+
+  // Sort by current streak descending
+  streaks.sort((a, b) => b.currentStreak - a.currentStreak);
+  return streaks;
+}

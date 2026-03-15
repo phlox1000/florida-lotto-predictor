@@ -5,7 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import Navbar from "@/components/Navbar";
 import { trpc } from "@/lib/trpc";
 import { FLORIDA_GAMES, GAME_TYPES, type GameType, MODEL_NAMES } from "@shared/lottery";
-import { Trophy, Medal, TrendingUp, Target, Zap, BarChart3, ChevronDown, ChevronUp, Crown, Award, Star, LineChart as LineChartIcon, Eye, EyeOff } from "lucide-react";
+import { Trophy, Medal, TrendingUp, Target, Zap, BarChart3, ChevronDown, ChevronUp, Crown, Award, Star, LineChart as LineChartIcon, Eye, EyeOff, Flame, Gamepad2 } from "lucide-react";
 import { useState, useMemo, useCallback } from "react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from "recharts";
 import { Button } from "@/components/ui/button";
@@ -276,6 +276,31 @@ function ModelTrendsChart() {
   );
 }
 
+function HotStreakBanner({ hotStreaks }: { hotStreaks: Array<{ modelName: string; gameType: string; currentStreak: number }> }) {
+  if (hotStreaks.length === 0) return null;
+  return (
+    <Card className="bg-gradient-to-r from-orange-500/10 to-red-500/10 border-orange-500/30 mb-6">
+      <CardContent className="p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Flame className="w-5 h-5 text-orange-400 animate-pulse" />
+          <span className="font-semibold text-orange-400">Hot Streaks Active</span>
+          <Badge className="bg-orange-500/20 text-orange-400 text-[10px]">{hotStreaks.length} model{hotStreaks.length > 1 ? "s" : ""}</Badge>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {hotStreaks.map((s, i) => (
+            <div key={i} className="flex items-center gap-1.5 bg-orange-500/10 rounded-lg px-3 py-1.5 border border-orange-500/20">
+              <Flame className="w-3.5 h-3.5 text-orange-400" />
+              <span className="text-xs font-medium text-foreground">{MODEL_DISPLAY_NAMES[s.modelName] || s.modelName}</span>
+              <span className="text-[10px] text-muted-foreground">on {FLORIDA_GAMES[s.gameType as GameType]?.name || s.gameType}</span>
+              <Badge className="bg-red-500/20 text-red-400 text-[10px] ml-1">{s.currentStreak} in a row</Badge>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Leaderboard() {
   const [viewMode, setViewMode] = useState<"all" | "game">("all");
   const [selectedGame, setSelectedGame] = useState<GameType>("fantasy_5");
@@ -285,6 +310,34 @@ export default function Leaderboard() {
   const { user } = useAuth();
   const isOwner = user?.role === "admin";
   const utils = trpc.useUtils();
+
+  // Fetch affinity tags and streaks
+  const { data: affinityData } = trpc.leaderboard.affinity.useQuery();
+  const { data: streakData } = trpc.leaderboard.streaks.useQuery({ minHits: 3 });
+
+  // Build lookup maps
+  const affinityMap = useMemo(() => {
+    const map: Record<string, Array<{ gameType: string; label: string }>> = {};
+    if (affinityData?.models) {
+      for (const m of affinityData.models) {
+        map[m.modelName] = m.affinityTags;
+      }
+    }
+    return map;
+  }, [affinityData]);
+
+  const streakMap = useMemo(() => {
+    const map: Record<string, { currentStreak: number; gameType: string; isHot: boolean }> = {};
+    if (streakData?.allStreaks) {
+      for (const s of streakData.allStreaks) {
+        // Keep the best current streak per model
+        if (!map[s.modelName] || s.currentStreak > map[s.modelName].currentStreak) {
+          map[s.modelName] = { currentStreak: s.currentStreak, gameType: s.gameType, isHot: s.isHot };
+        }
+      }
+    }
+    return map;
+  }, [streakData]);
 
   const backfillMutation = trpc.leaderboard.backfill.useMutation();
   const [isBackfilling, setIsBackfilling] = useState(false);
@@ -420,6 +473,11 @@ export default function Leaderboard() {
           </div>
         </div>
 
+        {/* Hot Streak Banner */}
+        {streakData?.hotStreaks && streakData.hotStreaks.length > 0 && (
+          <HotStreakBanner hotStreaks={streakData.hotStreaks} />
+        )}
+
         {/* Backfill Status */}
         {backfillStatus && (
           <div className="mb-4 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-sm">
@@ -528,6 +586,20 @@ export default function Leaderboard() {
                           {model.modelName === "cdm" || model.modelName === "chi_square" ? (
                             <Badge className="bg-blue-500/20 text-blue-400 text-[10px] px-1.5 py-0">NEW</Badge>
                           ) : null}
+                          {/* Game Affinity Tags */}
+                          {affinityMap[model.modelName]?.map((tag, ti) => (
+                            <Badge key={ti} className={`text-[10px] px-1.5 py-0 ${tag.label === "Best" ? "bg-emerald-500/20 text-emerald-400" : "bg-sky-500/20 text-sky-400"}`}>
+                              <Gamepad2 className="w-2.5 h-2.5 mr-0.5" />
+                              {tag.label}: {FLORIDA_GAMES[tag.gameType as GameType]?.name || tag.gameType}
+                            </Badge>
+                          ))}
+                          {/* Streak Badge */}
+                          {streakMap[model.modelName]?.isHot && (
+                            <Badge className="bg-orange-500/20 text-orange-400 text-[10px] px-1.5 py-0 animate-pulse">
+                              <Flame className="w-2.5 h-2.5 mr-0.5" />
+                              {streakMap[model.modelName].currentStreak} Streak
+                            </Badge>
+                          )}
                         </div>
                         <div className="flex items-center gap-4 mt-1 text-xs text-muted-foreground">
                           <span>{model.totalEvaluated} evaluations</span>

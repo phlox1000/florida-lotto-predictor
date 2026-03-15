@@ -113,3 +113,13 @@
 - [x] Background Sync for predictions: auto-submit queued requests when connectivity returns
 - [x] Reference doc: master feature list (standalone download, not in app)
 - [x] Reference doc: prediction models comparison (standalone download, not in app)
+- [x] Per-Model Game Affinity Tags: backend endpoint computing which games each model performs best on
+- [x] Per-Model Game Affinity Tags: badges on prediction model cards showing "Best for Fantasy 5" etc.
+- [x] Per-Model Game Affinity Tags: affinity data shown on Leaderboard page
+- [x] Prediction Streak Alerts: backend tracking consecutive draws where a model hits 3+ numbers
+- [x] Prediction Streak Alerts: "Hot Streak" badge on Leaderboard for models in a winning phase
+- [x] Prediction Streak Alerts: Hot Streak banner at top of Leaderboard highlighting active streaks
+- [x] Export History to CSV: download button on History page for draw results export
+- [x] Export History to CSV: include prediction history in CSV export
+- [x] Export History to CSV: filterable by game before export with Export CSV tab
+- [x] Reference doc: updated master feature list v4.2 (standalone download, not in app)

@@ -5,10 +5,25 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { trpc } from "@/lib/trpc";
-import { FLORIDA_GAMES, type GameType } from "@shared/lottery";
+import { FLORIDA_GAMES, GAME_TYPES, type GameType } from "@shared/lottery";
 import { getLoginUrl } from "@/const";
-import { History as HistoryIcon, Ticket, Clock, LogIn } from "lucide-react";
+import { History as HistoryIcon, Ticket, Clock, LogIn, Download, FileSpreadsheet } from "lucide-react";
+import { useState, useCallback } from "react";
+import { toast } from "sonner";
+
+function downloadCSV(csv: string, filename: string) {
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
 function LottoBall({ number, variant = "main" }: { number: number; variant?: "main" | "special" }) {
   return (
@@ -135,6 +150,123 @@ function TicketHistory() {
   );
 }
 
+function ExportPanel() {
+  const [exportGame, setExportGame] = useState<string>("all");
+  const [isExporting, setIsExporting] = useState(false);
+
+  const gameFilter = exportGame === "all" ? undefined : exportGame;
+  const activeGames = GAME_TYPES.filter(g => !FLORIDA_GAMES[g].schedule.ended);
+
+  const { data: drawCsvData, refetch: refetchDraws } = trpc.csvExport.drawResults.useQuery(
+    { gameType: gameFilter as GameType | undefined, limit: 5000 },
+    { enabled: false }
+  );
+
+  const { data: predCsvData, refetch: refetchPreds } = trpc.csvExport.predictions.useQuery(
+    { gameType: gameFilter as GameType | undefined, limit: 5000 },
+    { enabled: false }
+  );
+
+  const exportDrawResults = useCallback(async () => {
+    setIsExporting(true);
+    try {
+      const result = await refetchDraws();
+      if (result.data?.csv) {
+        const gameSuffix = exportGame === "all" ? "all_games" : exportGame;
+        downloadCSV(result.data.csv, `fl_lotto_draw_results_${gameSuffix}_${new Date().toISOString().slice(0, 10)}.csv`);
+        toast.success(`Exported ${result.data.count} draw results`);
+      } else {
+        toast.error("No data to export");
+      }
+    } catch (err) {
+      toast.error("Export failed");
+    }
+    setIsExporting(false);
+  }, [refetchDraws, exportGame]);
+
+  const exportPredictions = useCallback(async () => {
+    setIsExporting(true);
+    try {
+      const result = await refetchPreds();
+      if (result.data?.csv) {
+        const gameSuffix = exportGame === "all" ? "all_games" : exportGame;
+        downloadCSV(result.data.csv, `fl_lotto_predictions_${gameSuffix}_${new Date().toISOString().slice(0, 10)}.csv`);
+        toast.success(`Exported ${result.data.count} predictions`);
+      } else {
+        toast.error("No prediction data to export");
+      }
+    } catch (err) {
+      toast.error("Export failed");
+    }
+    setIsExporting(false);
+  }, [refetchPreds, exportGame]);
+
+  return (
+    <Card className="bg-card border-border/50">
+      <CardContent className="p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-xl bg-green-500/20 flex items-center justify-center">
+            <FileSpreadsheet className="w-5 h-5 text-green-400" />
+          </div>
+          <div>
+            <h3 className="font-semibold text-foreground">Export to CSV</h3>
+            <p className="text-xs text-muted-foreground">Download draw results and prediction history as spreadsheet files</p>
+          </div>
+        </div>
+
+        {/* Game Filter */}
+        <div className="flex items-center gap-3 mb-5">
+          <span className="text-sm text-muted-foreground">Filter by game:</span>
+          <Select value={exportGame} onValueChange={setExportGame}>
+            <SelectTrigger className="w-[180px] bg-card h-9">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Games</SelectItem>
+              {activeGames.map(g => (
+                <SelectItem key={g} value={g}>{FLORIDA_GAMES[g].name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Export Buttons */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Button
+            variant="outline"
+            onClick={exportDrawResults}
+            disabled={isExporting}
+            className="h-auto py-4 flex flex-col items-center gap-2 border-green-500/30 hover:bg-green-500/10"
+          >
+            <Download className="w-5 h-5 text-green-400" />
+            <div className="text-center">
+              <p className="text-sm font-medium">Draw Results</p>
+              <p className="text-[10px] text-muted-foreground">Historical winning numbers</p>
+            </div>
+          </Button>
+
+          <Button
+            variant="outline"
+            onClick={exportPredictions}
+            disabled={isExporting}
+            className="h-auto py-4 flex flex-col items-center gap-2 border-primary/30 hover:bg-primary/10"
+          >
+            <Download className="w-5 h-5 text-primary" />
+            <div className="text-center">
+              <p className="text-sm font-medium">My Predictions</p>
+              <p className="text-[10px] text-muted-foreground">Your prediction history with models</p>
+            </div>
+          </Button>
+        </div>
+
+        <p className="text-[10px] text-muted-foreground mt-3 text-center">
+          CSV files can be opened in Excel, Google Sheets, or any spreadsheet application
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function History() {
   const { user, loading } = useAuth();
 
@@ -172,12 +304,18 @@ export default function History() {
     <div className="min-h-screen bg-background">
       <Navbar />
       <div className="container py-8">
-        <h1 className="text-2xl font-bold mb-6">Your History</h1>
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-2xl font-bold">Your History</h1>
+        </div>
 
         <Tabs defaultValue="predictions" className="space-y-6">
           <TabsList className="bg-secondary">
             <TabsTrigger value="predictions">Predictions</TabsTrigger>
             <TabsTrigger value="tickets">Ticket Selections</TabsTrigger>
+            <TabsTrigger value="export">
+              <FileSpreadsheet className="w-3.5 h-3.5 mr-1.5" />
+              Export CSV
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="predictions">
@@ -186,6 +324,10 @@ export default function History() {
 
           <TabsContent value="tickets">
             <TicketHistory />
+          </TabsContent>
+
+          <TabsContent value="export">
+            <ExportPanel />
           </TabsContent>
         </Tabs>
       </div>
