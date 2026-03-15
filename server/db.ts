@@ -506,3 +506,54 @@ export async function getROIByGame(userId: number) {
     .where(eq(purchasedTickets.userId, userId))
     .groupBy(purchasedTickets.gameType);
 }
+
+// ─── Model Confidence Trends ──────────────────────────────────────────────────
+/**
+ * Get model performance over time, grouped by week.
+ * Returns weekly average main hits for each model, suitable for trend charts.
+ */
+export async function getModelTrends(gameType?: string, weeksBack = 12) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const cutoff = new Date(Date.now() - weeksBack * 7 * 24 * 60 * 60 * 1000);
+
+  // Build parameterized SQL using Drizzle's sql template to avoid only_full_group_by issues
+  // Note: column names use camelCase in the actual DB schema (modelName, gameType, mainHits, etc.)
+  const rawQuery = gameType
+    ? sql`
+        SELECT
+          modelName,
+          DATE_FORMAT(DATE_SUB(createdAt, INTERVAL WEEKDAY(createdAt) DAY), '%Y-%m-%d') AS weekStart,
+          AVG(mainHits) AS avgMainHits,
+          AVG(specialHits) AS avgSpecialHits,
+          COUNT(*) AS evaluationCount
+        FROM model_performance
+        WHERE createdAt >= ${cutoff} AND gameType = ${gameType}
+        GROUP BY modelName, DATE_FORMAT(DATE_SUB(createdAt, INTERVAL WEEKDAY(createdAt) DAY), '%Y-%m-%d')
+        ORDER BY weekStart ASC
+      `
+    : sql`
+        SELECT
+          modelName,
+          DATE_FORMAT(DATE_SUB(createdAt, INTERVAL WEEKDAY(createdAt) DAY), '%Y-%m-%d') AS weekStart,
+          AVG(mainHits) AS avgMainHits,
+          AVG(specialHits) AS avgSpecialHits,
+          COUNT(*) AS evaluationCount
+        FROM model_performance
+        WHERE createdAt >= ${cutoff}
+        GROUP BY modelName, DATE_FORMAT(DATE_SUB(createdAt, INTERVAL WEEKDAY(createdAt) DAY), '%Y-%m-%d')
+        ORDER BY weekStart ASC
+      `;
+
+  const result = await db.execute(rawQuery);
+  // db.execute returns [rows, fields] for mysql2
+  const rows = (Array.isArray(result) && Array.isArray(result[0])) ? result[0] : result;
+  return (rows as any[]).map(r => ({
+    modelName: r.modelName as string,
+    weekStart: r.weekStart as string,
+    avgMainHits: Number(r.avgMainHits) || 0,
+    avgSpecialHits: Number(r.avgSpecialHits) || 0,
+    evaluationCount: Number(r.evaluationCount) || 0,
+  }));
+}

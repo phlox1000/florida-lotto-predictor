@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { trpc } from "@/lib/trpc";
 import { FLORIDA_GAMES, GAME_TYPES, type GameType, type PredictionResult } from "@shared/lottery";
-import { Zap, DollarSign, Dices, Target, Sparkles, Printer, Heart, ShoppingCart, Filter, Info } from "lucide-react";
+import { Zap, DollarSign, Dices, Target, Sparkles, Printer, Heart, ShoppingCart, Filter, Info, Shuffle, ArrowLeftRight } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -310,6 +310,7 @@ export default function Predictions() {
   const { isAuthenticated } = useAuth();
   const generatePredictions = trpc.predictions.generate.useMutation();
   const generateTickets = trpc.tickets.generate.useMutation();
+  const generateQuickPick = trpc.predictions.quickPick.useMutation();
   const addFavorite = trpc.favorites.add.useMutation({
     onSuccess: () => toast.success("Saved to favorites!"),
     onError: () => toast.error("Failed to save. Please sign in first."),
@@ -452,6 +453,7 @@ export default function Predictions() {
           <TabsList className="bg-secondary">
             <TabsTrigger value="models">18 Model Outputs</TabsTrigger>
             <TabsTrigger value="tickets">Budget Tickets</TabsTrigger>
+            <TabsTrigger value="quickpick">vs Quick Pick</TabsTrigger>
           </TabsList>
 
           <TabsContent value="models">
@@ -526,8 +528,185 @@ export default function Predictions() {
               </div>
             )}
           </TabsContent>
+
+          <TabsContent value="quickpick">
+            <QuickPickComparison
+              selectedGame={selectedGame}
+              modelPredictions={predictions || null}
+              quickPickData={generateQuickPick.data || null}
+              onRunModels={() => generatePredictions.mutate({ gameType: selectedGame, sumRangeFilter })}
+              onGenerateQuickPick={() => generateQuickPick.mutate({ gameType: selectedGame, count: 5 })}
+              isRunningModels={generatePredictions.isPending}
+              isGeneratingQP={generateQuickPick.isPending}
+            />
+          </TabsContent>
         </Tabs>
       </div>
+    </div>
+  );
+}
+
+function QuickPickComparison({
+  selectedGame,
+  modelPredictions,
+  quickPickData,
+  onRunModels,
+  onGenerateQuickPick,
+  isRunningModels,
+  isGeneratingQP,
+}: {
+  selectedGame: GameType;
+  modelPredictions: PredictionResult[] | null;
+  quickPickData: { picks: Array<{ mainNumbers: number[]; specialNumbers: number[] }>; gameName: string } | null;
+  onRunModels: () => void;
+  onGenerateQuickPick: () => void;
+  isRunningModels: boolean;
+  isGeneratingQP: boolean;
+}) {
+  const gameCfg = FLORIDA_GAMES[selectedGame];
+
+  // Get top 5 model predictions by confidence
+  const topModels = useMemo(() => {
+    if (!modelPredictions) return [];
+    return [...modelPredictions]
+      .sort((a, b) => b.confidenceScore - a.confidenceScore)
+      .slice(0, 5);
+  }, [modelPredictions]);
+
+  const handleRunBoth = () => {
+    onRunModels();
+    onGenerateQuickPick();
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h3 className="text-lg font-semibold flex items-center gap-2">
+            <ArrowLeftRight className="w-5 h-5 text-primary" />
+            Formula Picks vs Quick Pick
+          </h3>
+          <p className="text-xs text-muted-foreground mt-1">
+            Compare our 18-model formula predictions against pure random Quick Pick numbers.
+          </p>
+        </div>
+        <Button onClick={handleRunBoth} disabled={isRunningModels || isGeneratingQP} className="bg-primary text-primary-foreground">
+          <Shuffle className="w-4 h-4 mr-1" />
+          {isRunningModels || isGeneratingQP ? "Generating..." : "Generate Both"}
+        </Button>
+      </div>
+
+      {!topModels.length && !quickPickData ? (
+        <div className="text-center py-16 text-muted-foreground">
+          <ArrowLeftRight className="w-12 h-12 mx-auto mb-3 opacity-30" />
+          <p>Click "Generate Both" to compare formula predictions against random Quick Picks</p>
+          <p className="text-xs mt-2">Or run models first from the "18 Model Outputs" tab, then come back here.</p>
+        </div>
+      ) : (
+        <div className="grid md:grid-cols-2 gap-6">
+          {/* Formula Picks (Left) */}
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
+                <Zap className="w-4 h-4 text-primary" />
+              </div>
+              <div>
+                <h4 className="font-semibold text-sm text-primary">Formula Picks</h4>
+                <p className="text-[10px] text-muted-foreground">Top 5 from 18 AI models</p>
+              </div>
+            </div>
+            {topModels.length > 0 ? (
+              <div className="space-y-2">
+                {topModels.map((pred, i) => (
+                  <div key={pred.modelName} className="flex items-center gap-3 p-3 rounded-lg bg-primary/5 border border-primary/20">
+                    <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center text-primary text-xs font-bold">
+                      #{i + 1}
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex gap-1.5 flex-wrap mb-1">
+                        {pred.mainNumbers.map((n, j) => <LottoBall key={j} number={n} />)}
+                        {pred.specialNumbers.map((n, j) => <LottoBall key={`s-${j}`} number={n} variant="special" />)}
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">
+                        {pred.modelName.replace(/_/g, " ")} · {Math.round(pred.confidenceScore * 100)}% confidence
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-muted-foreground bg-secondary/20 rounded-lg border border-border/30">
+                <Zap className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                <p className="text-xs">Run models first to see formula picks</p>
+                <Button size="sm" variant="outline" onClick={onRunModels} disabled={isRunningModels} className="mt-2">
+                  {isRunningModels ? "Running..." : "Run Models"}
+                </Button>
+              </div>
+            )}
+          </div>
+
+          {/* Quick Picks (Right) */}
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-lg bg-orange-500/20 flex items-center justify-center">
+                <Shuffle className="w-4 h-4 text-orange-400" />
+              </div>
+              <div>
+                <h4 className="font-semibold text-sm text-orange-400">Quick Picks</h4>
+                <p className="text-[10px] text-muted-foreground">Pure random selection</p>
+              </div>
+            </div>
+            {quickPickData ? (
+              <div className="space-y-2">
+                {quickPickData.picks.map((pick, i) => (
+                  <div key={i} className="flex items-center gap-3 p-3 rounded-lg bg-orange-500/5 border border-orange-500/20">
+                    <div className="w-7 h-7 rounded-full bg-orange-500/20 flex items-center justify-center text-orange-400 text-xs font-bold">
+                      #{i + 1}
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex gap-1.5 flex-wrap mb-1">
+                        {pick.mainNumbers.map((n, j) => (
+                          <span key={j} className="lotto-ball" style={{ background: "linear-gradient(135deg, #f97316, #ea580c)", color: "#000" }}>{n}</span>
+                        ))}
+                        {pick.specialNumbers.map((n, j) => (
+                          <span key={`s-${j}`} className="lotto-ball lotto-ball-special">{n}</span>
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">Random Quick Pick</p>
+                    </div>
+                  </div>
+                ))}
+                <Button size="sm" variant="outline" onClick={onGenerateQuickPick} disabled={isGeneratingQP}
+                  className="w-full mt-2 border-orange-500/30 text-orange-400 hover:bg-orange-500/10">
+                  <Shuffle className="w-3.5 h-3.5 mr-1" />
+                  {isGeneratingQP ? "Generating..." : "Re-Roll Quick Picks"}
+                </Button>
+              </div>
+            ) : (
+              <div className="text-center py-8 text-muted-foreground bg-secondary/20 rounded-lg border border-border/30">
+                <Shuffle className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                <p className="text-xs">Generate random Quick Picks to compare</p>
+                <Button size="sm" variant="outline" onClick={onGenerateQuickPick} disabled={isGeneratingQP} className="mt-2">
+                  {isGeneratingQP ? "Generating..." : "Generate Quick Picks"}
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Comparison Note */}
+      {(topModels.length > 0 || quickPickData) && (
+        <div className="p-3 rounded-lg bg-secondary/30 border border-border/30 text-xs text-muted-foreground">
+          <p className="font-medium text-foreground mb-1">How to compare</p>
+          <p>
+            After the next draw, check the <a href="/compare" className="text-primary underline">Results page</a> to see how many numbers each set matched.
+            Formula picks use historical pattern analysis, while Quick Picks are purely random.
+            Over time, the <a href="/leaderboard" className="text-primary underline">Leaderboard</a> tracks which approach performs better.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { publicProcedure, protectedProcedure, adminProcedure, router } from "./_
 import { invokeLLM } from "./_core/llm";
 import { notifyOwner } from "./_core/notification";
 import { fetchHistoricalDraws } from "./lib/fl-lottery-scraper";
+import { getLastAutoFetchResult, isAutoFetchActive, getAutoFetchRunning, runAutoFetch } from "./cron";
 import { fetchRecentDraws, fetchAllGamesRecent } from "./lib/lotteryusa-scraper";
 import { runAllModels, selectBudgetTickets, applySumRangeFilter } from "./predictions";
 import {
@@ -19,6 +20,7 @@ import {
   getUserPdfUploads,
   insertPurchasedTicket, getUserPurchasedTickets, updatePurchasedTicketOutcome,
   deletePurchasedTicket, getUserROIStats, getROIByGame,
+  getModelTrends,
 } from "./db";
 
 const gameTypeSchema = z.enum(GAME_TYPES);
@@ -88,6 +90,54 @@ export const appRouter = router({
       .input(z.object({ limit: z.number().min(1).max(200).default(50) }))
       .query(async ({ ctx, input }) => {
         return getUserPredictions(ctx.user.id, input.limit);
+      }),
+
+    /** Generate Quick Pick random numbers for comparison against model predictions */
+    quickPick: publicProcedure
+      .input(z.object({
+        gameType: gameTypeSchema,
+        count: z.number().min(1).max(20).default(5),
+      }))
+      .mutation(({ input }) => {
+        const cfg = FLORIDA_GAMES[input.gameType];
+        const picks: Array<{ mainNumbers: number[]; specialNumbers: number[] }> = [];
+
+        for (let i = 0; i < input.count; i++) {
+          let mainNumbers: number[];
+          if (cfg.isDigitGame) {
+            // Digit games: each position is 0-9 independently
+            mainNumbers = Array.from({ length: cfg.mainCount }, () => Math.floor(Math.random() * 10));
+          } else {
+            // Standard games: unique random numbers from pool
+            const pool = Array.from({ length: cfg.mainMax }, (_, i) => i + 1);
+            mainNumbers = [];
+            for (let j = 0; j < cfg.mainCount; j++) {
+              const idx = Math.floor(Math.random() * pool.length);
+              mainNumbers.push(pool[idx]);
+              pool.splice(idx, 1);
+            }
+            mainNumbers.sort((a, b) => a - b);
+          }
+
+          let specialNumbers: number[] = [];
+          if (cfg.specialCount > 0) {
+            const specPool = Array.from({ length: cfg.specialMax }, (_, i) => i + 1);
+            for (let j = 0; j < cfg.specialCount; j++) {
+              const idx = Math.floor(Math.random() * specPool.length);
+              specialNumbers.push(specPool[idx]);
+              specPool.splice(idx, 1);
+            }
+            specialNumbers.sort((a, b) => a - b);
+          }
+
+          picks.push({ mainNumbers, specialNumbers });
+        }
+
+        return {
+          picks,
+          gameType: input.gameType,
+          gameName: cfg.name,
+        };
       }),
 
     /** Get recent predictions for a game (public) */
@@ -393,6 +443,35 @@ export const appRouter = router({
         }
 
         return { evaluated: totalEvaluated, skipped: totalSkipped };
+      }),
+
+    /** Get model accuracy trends over time (weekly rolling average) */
+    trends: publicProcedure
+      .input(z.object({
+        gameType: gameTypeSchema.optional(),
+        weeksBack: z.number().min(4).max(52).default(12),
+      }))
+      .query(async ({ input }) => {
+        const rows = await getModelTrends(input.gameType, input.weeksBack);
+        if (rows.length === 0) return { weeks: [], models: {} as Record<string, Array<{ week: string; avgHits: number; count: number }>> };
+
+        // Collect unique weeks and organize by model
+        const weekSet = new Set<string>();
+        const modelMap: Record<string, Array<{ week: string; avgHits: number; count: number }>> = {};
+
+        for (const row of rows) {
+          const week = row.weekStart;
+          weekSet.add(week);
+          if (!modelMap[row.modelName]) modelMap[row.modelName] = [];
+          modelMap[row.modelName].push({
+            week,
+            avgHits: Number(Number(row.avgMainHits).toFixed(3)),
+            count: Number(row.evaluationCount) || 0,
+          });
+        }
+
+        const weeks = [...weekSet].sort();
+        return { weeks, models: modelMap };
       }),
 
     /** Get leaderboard for a specific game */
@@ -883,6 +962,30 @@ export const appRouter = router({
 
   // ─── Data Fetch (auto-fetch lottery results from official FL Lottery files) ──
   dataFetch: router({
+    /** Get auto-fetch cron status */
+    autoFetchStatus: publicProcedure.query(() => {
+      const lastResult = getLastAutoFetchResult();
+      return {
+        isScheduleActive: isAutoFetchActive(),
+        isRunning: getAutoFetchRunning(),
+        lastRun: lastResult ? {
+          timestamp: lastResult.timestamp,
+          gamesProcessed: lastResult.gamesProcessed,
+          totalNewDraws: lastResult.totalNewDraws,
+          totalEvaluations: lastResult.totalEvaluations,
+          highAccuracyAlerts: lastResult.highAccuracyAlerts,
+          gameResults: lastResult.gameResults,
+          errors: lastResult.errors,
+        } : null,
+      };
+    }),
+
+    /** Manually trigger auto-fetch (admin only) */
+    triggerAutoFetch: adminProcedure.mutation(async () => {
+      const result = await runAutoFetch();
+      return result;
+    }),
+
     /** Fetch latest results for a single game from lotteryusa.com */
     fetchLatest: adminProcedure
       .input(z.object({ gameType: gameTypeSchema }))

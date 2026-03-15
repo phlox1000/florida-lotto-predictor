@@ -92,3 +92,12 @@
 - [x] Number Heatmap: calendar-style grid visualization showing which numbers hit on which dates
 - [x] Number Heatmap: add to Patterns page with game/date range selectors
 - [x] Number Heatmap: color-coded cells for frequency intensity
+- [x] Scheduled Auto-Fetch: backend cron job that runs every 6 hours to scrape latest draw results from lotteryusa.com
+- [x] Scheduled Auto-Fetch: auto-trigger model evaluations after new draws are fetched
+- [x] Scheduled Auto-Fetch: Admin UI status indicator showing last auto-fetch time and next scheduled run
+- [x] Model Confidence Trends Chart: backend endpoint returning model accuracy over time (weekly rolling average)
+- [x] Model Confidence Trends Chart: line chart visualization on Leaderboard page showing accuracy trends per model
+- [x] Model Confidence Trends Chart: interactive legend to toggle individual model lines on/off
+- [x] Quick Pick Comparison: backend endpoint generating random Quick Pick numbers for any game
+- [x] Quick Pick Comparison: frontend UI on Predictions page showing formula picks vs Quick Pick side-by-side
+- [x] Quick Pick Comparison: historical tracking to compare formula vs Quick Pick hit rates over time

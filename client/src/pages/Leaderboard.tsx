@@ -5,8 +5,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import Navbar from "@/components/Navbar";
 import { trpc } from "@/lib/trpc";
 import { FLORIDA_GAMES, GAME_TYPES, type GameType, MODEL_NAMES } from "@shared/lottery";
-import { Trophy, Medal, TrendingUp, Target, Zap, BarChart3, ChevronDown, ChevronUp, Crown, Award, Star } from "lucide-react";
-import { useState, useMemo } from "react";
+import { Trophy, Medal, TrendingUp, Target, Zap, BarChart3, ChevronDown, ChevronUp, Crown, Award, Star, LineChart as LineChartIcon, Eye, EyeOff } from "lucide-react";
+import { useState, useMemo, useCallback } from "react";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from "recharts";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { RefreshCw } from "lucide-react";
@@ -87,6 +88,191 @@ function ScoreBar({ value, max, color = "bg-primary" }: { value: number; max: nu
     <div className="w-full h-2 rounded-full bg-muted/30 overflow-hidden">
       <div className={`h-full rounded-full transition-all duration-500 ${color}`} style={{ width: `${pct}%` }} />
     </div>
+  );
+}
+
+// Color palette for trend lines (18 distinct colors)
+const MODEL_COLORS: Record<string, string> = {
+  random: "#6366f1",
+  poisson_standard: "#8b5cf6",
+  poisson_short: "#a78bfa",
+  poisson_long: "#7c3aed",
+  hot_cold_70: "#22c55e",
+  hot_cold_50: "#4ade80",
+  balanced_hot_cold: "#16a34a",
+  gap_analysis: "#84cc16",
+  cooccurrence: "#f97316",
+  delta: "#eab308",
+  temporal_echo: "#06b6d4",
+  monte_carlo: "#ef4444",
+  markov_chain: "#ec4899",
+  bayesian: "#d946ef",
+  quantum_entanglement: "#f59e0b",
+  cdm: "#14b8a6",
+  chi_square: "#3b82f6",
+  ai_oracle: "#fbbf24",
+};
+
+function ModelTrendsChart() {
+  const [selectedGame, setSelectedGame] = useState<string>("all");
+  const [weeksBack, setWeeksBack] = useState(12);
+  const [hiddenModels, setHiddenModels] = useState<Set<string>>(new Set());
+
+  const gameType = selectedGame === "all" ? undefined : selectedGame;
+  const { data: trendsData, isLoading } = trpc.leaderboard.trends.useQuery(
+    { gameType: gameType as GameType | undefined, weeksBack },
+    { placeholderData: (prev) => prev }
+  );
+
+  const toggleModel = useCallback((modelName: string) => {
+    setHiddenModels(prev => {
+      const next = new Set(prev);
+      if (next.has(modelName)) next.delete(modelName);
+      else next.add(modelName);
+      return next;
+    });
+  }, []);
+
+  const toggleAll = useCallback(() => {
+    if (!trendsData) return;
+    const allModels = Object.keys(trendsData.models);
+    setHiddenModels(prev => {
+      if (prev.size === allModels.length) return new Set();
+      return new Set(allModels);
+    });
+  }, [trendsData]);
+
+  // Transform data for Recharts: each week is a data point with model names as keys
+  const chartData = useMemo(() => {
+    if (!trendsData || trendsData.weeks.length === 0) return [];
+    return trendsData.weeks.map(week => {
+      const point: Record<string, string | number> = { week: new Date(week).toLocaleDateString("en-US", { month: "short", day: "numeric" }) };
+      for (const [model, dataPoints] of Object.entries(trendsData.models)) {
+        const match = dataPoints.find(d => d.week === week);
+        if (match) point[model] = match.avgHits;
+      }
+      return point;
+    });
+  }, [trendsData]);
+
+  const visibleModels = useMemo(() => {
+    if (!trendsData) return [];
+    return Object.keys(trendsData.models).filter(m => !hiddenModels.has(m));
+  }, [trendsData, hiddenModels]);
+
+  const gameOptions = GAME_TYPES.filter(g => !FLORIDA_GAMES[g].schedule.ended);
+
+  return (
+    <Card className="bg-card border-border/50 mt-8">
+      <CardHeader>
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <CardTitle className="text-lg flex items-center gap-2">
+            <LineChartIcon className="w-5 h-5 text-primary" />
+            Model Accuracy Trends
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            <Select value={selectedGame} onValueChange={setSelectedGame}>
+              <SelectTrigger className="w-[140px] bg-card h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Games</SelectItem>
+                {gameOptions.map(g => (
+                  <SelectItem key={g} value={g}>{FLORIDA_GAMES[g].name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={String(weeksBack)} onValueChange={(v) => setWeeksBack(Number(v))}>
+              <SelectTrigger className="w-[110px] bg-card h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="4">4 Weeks</SelectItem>
+                <SelectItem value="8">8 Weeks</SelectItem>
+                <SelectItem value="12">12 Weeks</SelectItem>
+                <SelectItem value="24">24 Weeks</SelectItem>
+                <SelectItem value="52">52 Weeks</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <Skeleton className="h-64 w-full" />
+        ) : chartData.length === 0 ? (
+          <div className="text-center py-12 text-muted-foreground">
+            <TrendingUp className="w-10 h-10 mx-auto mb-3 opacity-30" />
+            <p className="text-sm">No trend data yet. Run predictions and backfill evaluations to see accuracy trends.</p>
+          </div>
+        ) : (
+          <>
+            <div className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+                  <XAxis dataKey="week" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
+                  <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} domain={[0, 'auto']} />
+                  <RechartsTooltip
+                    contentStyle={{
+                      backgroundColor: "hsl(var(--card))",
+                      border: "1px solid hsl(var(--border))",
+                      borderRadius: "8px",
+                      fontSize: 11,
+                    }}
+                    labelStyle={{ color: "hsl(var(--foreground))", fontWeight: 600 }}
+                    itemStyle={{ padding: "1px 0" }}
+                  />
+                  {visibleModels.map(model => (
+                    <Line
+                      key={model}
+                      type="monotone"
+                      dataKey={model}
+                      name={MODEL_DISPLAY_NAMES[model] || model}
+                      stroke={MODEL_COLORS[model] || "#888"}
+                      strokeWidth={model === "ai_oracle" ? 3 : 1.5}
+                      dot={false}
+                      connectNulls
+                    />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Interactive Legend */}
+            <div className="mt-4 pt-3 border-t border-border/30">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-medium text-muted-foreground">Toggle Models</p>
+                <Button variant="ghost" size="sm" onClick={toggleAll} className="h-6 text-xs px-2">
+                  {hiddenModels.size === Object.keys(trendsData?.models || {}).length ? "Show All" : "Hide All"}
+                </Button>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {Object.keys(trendsData?.models || {}).map(model => {
+                  const isHidden = hiddenModels.has(model);
+                  const color = MODEL_COLORS[model] || "#888";
+                  return (
+                    <button
+                      key={model}
+                      onClick={() => toggleModel(model)}
+                      className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-medium transition-all border ${
+                        isHidden
+                          ? "opacity-40 border-border/30 bg-transparent text-muted-foreground"
+                          : "border-border/50 bg-secondary/30"
+                      }`}
+                    >
+                      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: isHidden ? "transparent" : color, border: `1.5px solid ${color}` }} />
+                      {MODEL_DISPLAY_NAMES[model] || model}
+                      {isHidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -432,6 +618,9 @@ export default function Leaderboard() {
             })}
           </div>
         )}
+
+        {/* Model Confidence Trends Chart */}
+        <ModelTrendsChart />
 
         {/* Legend */}
         <Card className="bg-card border-border/50 mt-8">

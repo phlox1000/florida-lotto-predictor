@@ -11,7 +11,7 @@ import { Progress } from "@/components/ui/progress";
 import { trpc } from "@/lib/trpc";
 import { FLORIDA_GAMES, GAME_TYPES, type GameType } from "@shared/lottery";
 import { getLoginUrl } from "@/const";
-import { Shield, Plus, Download, Database, Trophy, LogIn, RefreshCw, History, BarChart3, Activity, Upload, FileText, CheckCircle, XCircle, Loader2 } from "lucide-react";
+import { Shield, Plus, Download, Database, Trophy, LogIn, RefreshCw, History, BarChart3, Activity, Upload, FileText, CheckCircle, XCircle, Loader2, Clock, Zap, Timer } from "lucide-react";
 import { useState, useMemo, useRef } from "react";
 import { toast } from "sonner";
 
@@ -575,6 +575,80 @@ function AllDrawResults() {
   );
 }
 
+function AutoFetchStatusCard() {
+  const { data: status, isLoading } = trpc.dataFetch.autoFetchStatus.useQuery(undefined, {
+    refetchInterval: 30_000, // refresh every 30s
+  });
+  const triggerFetch = trpc.dataFetch.triggerAutoFetch.useMutation();
+  const utils = trpc.useUtils();
+
+  const handleTrigger = () => {
+    triggerFetch.mutate(undefined, {
+      onSuccess: (result) => {
+        toast.success(`Auto-fetch complete: ${result.totalNewDraws} new draws, ${result.totalEvaluations} evaluations`);
+        utils.dataFetch.autoFetchStatus.invalidate();
+        utils.draws.latest.invalidate();
+        utils.draws.all.invalidate();
+      },
+      onError: (err) => toast.error(err.message),
+    });
+  };
+
+  if (isLoading) return <Skeleton className="h-24 w-full mb-6" />;
+
+  const lastRun = status?.lastRun;
+  const isRunning = status?.isRunning || triggerFetch.isPending;
+  const timeSinceLastRun = lastRun ? Math.round((Date.now() - lastRun.timestamp) / 60000) : null;
+
+  return (
+    <Card className="bg-card border-green-500/20 mb-6">
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-green-500/20 flex items-center justify-center">
+              <Timer className="w-5 h-5 text-green-400" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-semibold text-sm">Auto-Fetch Schedule</h3>
+                <Badge variant="outline" className={status?.isScheduleActive ? "text-green-400 border-green-500/30 bg-green-500/10" : "text-muted-foreground"}>
+                  {status?.isScheduleActive ? "Active" : "Inactive"}
+                </Badge>
+                {isRunning && (
+                  <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30">
+                    <Loader2 className="w-3 h-3 mr-1 animate-spin" /> Running
+                  </Badge>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Automatically fetches latest draws every 6 hours and evaluates all models.
+                {lastRun && timeSinceLastRun !== null && (
+                  <> Last run: <span className="text-foreground">{timeSinceLastRun < 1 ? "just now" : `${timeSinceLastRun}m ago`}</span>
+                  {lastRun.totalNewDraws > 0 && <> — <span className="text-green-400">{lastRun.totalNewDraws} new draws</span></>}
+                  {lastRun.totalEvaluations > 0 && <>, <span className="text-primary">{lastRun.totalEvaluations} evaluations</span></>}
+                  {lastRun.errors.length > 0 && <>, <span className="text-red-400">{lastRun.errors.length} error(s)</span></>}
+                  </>
+                )}
+                {!lastRun && " Waiting for first run..."}
+              </p>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleTrigger}
+            disabled={isRunning}
+            className="border-green-500/30 text-green-400 hover:bg-green-500/10"
+          >
+            <Zap className={`w-4 h-4 mr-1 ${isRunning ? "animate-pulse" : ""}`} />
+            {isRunning ? "Fetching..." : "Run Now"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Admin() {
   const { user, loading } = useAuth();
 
@@ -619,6 +693,9 @@ export default function Admin() {
           <Shield className="w-6 h-6 text-accent" />
           Admin Panel
         </h1>
+
+        {/* Auto-Fetch Status */}
+        <AutoFetchStatusCard />
 
         {/* Quick Actions: Fetch + Upload (most used) */}
         <div className="grid lg:grid-cols-2 gap-6 mb-6">
