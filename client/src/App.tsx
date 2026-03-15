@@ -14,6 +14,8 @@ import Favorites from "./pages/Favorites";
 import Settings from "./pages/Settings";
 import Tracker from "./pages/Tracker";
 import Patterns from "./pages/Patterns";
+import Leaderboard from "./pages/Leaderboard";
+import Wheel from "./pages/Wheel";
 import InstallPrompt from "./components/InstallPrompt";
 
 function Router() {
@@ -29,6 +31,8 @@ function Router() {
       <Route path="/settings" component={Settings} />
       <Route path="/tracker" component={Tracker} />
       <Route path="/patterns" component={Patterns} />
+      <Route path="/leaderboard" component={Leaderboard} />
+      <Route path="/wheel" component={Wheel} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

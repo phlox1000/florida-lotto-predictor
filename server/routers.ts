@@ -233,6 +233,166 @@ export const appRouter = router({
       }),
   }),
 
+  // ─── Model Leaderboard ─────────────────────────────────────────────────────
+  leaderboard: router({
+    /** Get comprehensive leaderboard data across all games */
+    all: publicProcedure.query(async () => {
+      const { getDb } = await import("./db");
+      const { modelPerformance } = await import("../drizzle/schema");
+      const { sql } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return { models: [], totalEvaluations: 0 };
+
+      // Aggregate stats per model across ALL games
+      const rows = await db.select({
+        modelName: modelPerformance.modelName,
+        totalPredictions: sql<number>`COUNT(*)`,
+        avgMainHits: sql<number>`AVG(${modelPerformance.mainHits})`,
+        avgSpecialHits: sql<number>`AVG(${modelPerformance.specialHits})`,
+        maxMainHits: sql<number>`MAX(${modelPerformance.mainHits})`,
+        totalMainHits: sql<number>`SUM(${modelPerformance.mainHits})`,
+        totalSpecialHits: sql<number>`SUM(${modelPerformance.specialHits})`,
+        perfectMatches: sql<number>`SUM(CASE WHEN ${modelPerformance.mainHits} >= 4 THEN 1 ELSE 0 END)`,
+        zeroMatches: sql<number>`SUM(CASE WHEN ${modelPerformance.mainHits} = 0 THEN 1 ELSE 0 END)`,
+      }).from(modelPerformance)
+        .groupBy(modelPerformance.modelName);
+
+      // Per-game breakdown
+      const perGame = await db.select({
+        modelName: modelPerformance.modelName,
+        gameType: modelPerformance.gameType,
+        totalPredictions: sql<number>`COUNT(*)`,
+        avgMainHits: sql<number>`AVG(${modelPerformance.mainHits})`,
+        maxMainHits: sql<number>`MAX(${modelPerformance.mainHits})`,
+      }).from(modelPerformance)
+        .groupBy(modelPerformance.modelName, modelPerformance.gameType);
+
+      // Build per-game map
+      const gameBreakdown: Record<string, Array<{ gameType: string; total: number; avgHits: number; maxHits: number }>> = {};
+      for (const row of perGame) {
+        if (!gameBreakdown[row.modelName]) gameBreakdown[row.modelName] = [];
+        gameBreakdown[row.modelName].push({
+          gameType: row.gameType,
+          total: Number(row.totalPredictions) || 0,
+          avgHits: Number(Number(row.avgMainHits).toFixed(3)),
+          maxHits: Number(row.maxMainHits) || 0,
+        });
+      }
+
+      const totalEvaluations = rows.reduce((s, r) => s + (Number(r.totalPredictions) || 0), 0);
+
+      const models = rows.map(r => {
+        const total = Number(r.totalPredictions) || 0;
+        const avgHits = Number(Number(r.avgMainHits).toFixed(3));
+        const maxHits = Number(r.maxMainHits) || 0;
+        const totalHits = Number(r.totalMainHits) || 0;
+        const perfect = Number(r.perfectMatches) || 0;
+        const zeros = Number(r.zeroMatches) || 0;
+        const hitRate = total > 0 ? (totalHits / total) : 0;
+        const consistency = total > 0 ? (1 - (zeros / total)) : 0;
+
+        return {
+          modelName: r.modelName,
+          totalEvaluated: total,
+          avgMainHits: avgHits,
+          avgSpecialHits: Number(Number(r.avgSpecialHits).toFixed(3)),
+          maxMainHits: maxHits,
+          totalMainHits: totalHits,
+          totalSpecialHits: Number(r.totalSpecialHits) || 0,
+          perfectMatches: perfect,
+          zeroMatches: zeros,
+          hitRate: Number(hitRate.toFixed(3)),
+          consistency: Number(consistency.toFixed(3)),
+          // Composite score: weighted combination of avg hits, consistency, and max performance
+          compositeScore: Number((avgHits * 0.5 + consistency * 0.3 + (maxHits / 6) * 0.2).toFixed(3)),
+          gameBreakdown: gameBreakdown[r.modelName] || [],
+        };
+      }).sort((a, b) => b.compositeScore - a.compositeScore);
+
+      return { models, totalEvaluations };
+    }),
+
+    /** Get leaderboard for a specific game */
+    byGame: publicProcedure
+      .input(z.object({ gameType: gameTypeSchema }))
+      .query(async ({ input }) => {
+        const stats = await getModelPerformanceStats(input.gameType);
+        const models = stats.map(s => {
+          const total = Number(s.totalPredictions) || 0;
+          const avgHits = Number(Number(s.avgMainHits).toFixed(3));
+          return {
+            modelName: s.modelName,
+            totalEvaluated: total,
+            avgMainHits: avgHits,
+            avgSpecialHits: Number(Number(s.avgSpecialHits).toFixed(3)),
+            maxMainHits: Number(s.maxMainHits) || 0,
+          };
+        }).sort((a, b) => b.avgMainHits - a.avgMainHits);
+        return { models, gameType: input.gameType };
+      }),
+  }),
+
+  // ─── Number Wheel Generator ──────────────────────────────────────────────────
+  wheel: router({
+    /** Generate wheeling combinations from selected numbers */
+    generate: publicProcedure
+      .input(z.object({
+        gameType: gameTypeSchema,
+        selectedNumbers: z.array(z.number()).min(5).max(20),
+        wheelType: z.enum(["full", "abbreviated", "key"]),
+        keyNumber: z.number().optional(),
+        maxTickets: z.number().min(1).max(100).default(50),
+      }))
+      .mutation(({ input }) => {
+        const cfg = FLORIDA_GAMES[input.gameType];
+        if (cfg.isDigitGame) {
+          return { tickets: [], totalCost: 0, coverage: 0, error: "Wheeling is not available for digit games." };
+        }
+
+        const nums = [...input.selectedNumbers].sort((a, b) => a - b);
+        const pick = cfg.mainCount;
+        let combos: number[][] = [];
+
+        if (input.wheelType === "full") {
+          // Full wheel: every possible combination of pick from selected numbers
+          combos = generateCombinations(nums, pick);
+        } else if (input.wheelType === "abbreviated") {
+          // Abbreviated wheel: balanced coverage with fewer tickets
+          combos = generateAbbreviatedWheel(nums, pick);
+        } else if (input.wheelType === "key") {
+          // Key number wheel: one number appears in every combination
+          const key = input.keyNumber ?? nums[0];
+          const remaining = nums.filter(n => n !== key);
+          const subCombos = generateCombinations(remaining, pick - 1);
+          combos = subCombos.map(c => [key, ...c].sort((a, b) => a - b));
+        }
+
+        // Limit to maxTickets
+        if (combos.length > input.maxTickets) {
+          combos = combos.slice(0, input.maxTickets);
+        }
+
+        // Calculate coverage: what % of possible combinations from the selected pool are covered
+        const totalPossible = nCr(nums.length, pick);
+        const coverage = totalPossible > 0 ? (combos.length / totalPossible) * 100 : 0;
+
+        // Generate special numbers for each ticket from historical frequency
+        const tickets = combos.map((main, i) => ({
+          mainNumbers: main,
+          specialNumbers: [] as number[], // User can add their own
+          ticketNumber: i + 1,
+        }));
+
+        return {
+          tickets,
+          totalCost: combos.length * cfg.ticketPrice,
+          coverage: Number(coverage.toFixed(1)),
+          totalPossibleCombos: totalPossible,
+          wheelType: input.wheelType,
+        };
+      }),
+  }),
+
   // ─── Draw Schedule & Countdown ─────────────────────────────────────────────
   schedule: router({
     /** Get draw schedule and next draw info for all games */
@@ -936,6 +1096,81 @@ export const appRouter = router({
 
 function range(start: number, end: number): number[] {
   return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+}
+
+/** Generate all combinations of size k from array */
+function generateCombinations(arr: number[], k: number): number[][] {
+  const result: number[][] = [];
+  function backtrack(start: number, current: number[]) {
+    if (current.length === k) {
+      result.push([...current]);
+      return;
+    }
+    for (let i = start; i < arr.length; i++) {
+      current.push(arr[i]);
+      backtrack(i + 1, current);
+      current.pop();
+    }
+  }
+  backtrack(0, []);
+  return result;
+}
+
+/** Generate abbreviated wheel: balanced coverage with fewer tickets.
+ *  Uses a round-robin approach to ensure each number appears roughly equally. */
+function generateAbbreviatedWheel(nums: number[], pick: number): number[][] {
+  const n = nums.length;
+  if (n <= pick) return [nums.slice(0, pick)];
+
+  const result: number[][] = [];
+  const usageCount = new Map<number, number>();
+  for (const num of nums) usageCount.set(num, 0);
+
+  // Target: each number appears in roughly the same number of tickets
+  // Generate tickets by picking the least-used numbers first
+  const maxTickets = Math.min(nCr(n, pick), n * 3); // cap at 3x the number pool
+  const seen = new Set<string>();
+
+  for (let t = 0; t < maxTickets; t++) {
+    // Sort numbers by usage (least used first), break ties by number value
+    const sorted = [...nums].sort((a, b) => {
+      const diff = (usageCount.get(a) || 0) - (usageCount.get(b) || 0);
+      return diff !== 0 ? diff : a - b;
+    });
+
+    // Take the first 'pick' least-used numbers
+    const ticket = sorted.slice(0, pick).sort((a, b) => a - b);
+    const key = ticket.join(",");
+
+    if (seen.has(key)) {
+      // Try shifting to avoid duplicates
+      const shifted = sorted.slice(1, pick + 1).sort((a, b) => a - b);
+      const shiftedKey = shifted.join(",");
+      if (!seen.has(shiftedKey) && shifted.length === pick) {
+        seen.add(shiftedKey);
+        result.push(shifted);
+        for (const num of shifted) usageCount.set(num, (usageCount.get(num) || 0) + 1);
+      }
+      continue;
+    }
+
+    seen.add(key);
+    result.push(ticket);
+    for (const num of ticket) usageCount.set(num, (usageCount.get(num) || 0) + 1);
+  }
+
+  return result;
+}
+
+/** Calculate n choose r (combinations) */
+function nCr(n: number, r: number): number {
+  if (r > n) return 0;
+  if (r === 0 || r === n) return 1;
+  let result = 1;
+  for (let i = 0; i < r; i++) {
+    result = result * (n - i) / (i + 1);
+  }
+  return Math.round(result);
 }
 
 export type AppRouter = typeof appRouter;

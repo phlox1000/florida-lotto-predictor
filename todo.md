@@ -76,3 +76,10 @@
 - [x] Update AI Oracle ensemble to include new models 17 & 18
 - [x] Update frontend UI to show toggle for Sum/Range filter
 - [x] Write tests for new models and filter (18 new tests, all passing)
+- [x] Model Leaderboard page: backend endpoint to aggregate model accuracy stats across all games
+- [x] Model Leaderboard page: frontend with ranked table, accuracy %, hit rates, trend indicators
+- [x] Model Leaderboard page: navbar link and route
+- [x] Number Wheel generator: backend logic for systematic wheeling combinations
+- [x] Number Wheel generator: frontend UI with number input, wheel type selection, budget constraint
+- [x] Number Wheel generator: navbar link and route
+- [x] Write tests for leaderboard and wheel features (all passing)
