@@ -124,3 +124,6 @@
 - [x] Export History to CSV: filterable by game before export with Export CSV tab
 - [x] Reference doc: updated master feature list v4.2 (standalone download, not in app)
 - [x] Fix: service worker CACHE_VERSION not updating — bump to 4.2.0 so Settings shows correct version
+- [x] Auto-version sync: derive SW version from WhatsNew changelog so they can never get out of sync
+- [x] Force-refresh on major updates: auto-refresh app without user tapping "Update Now" for critical/major version bumps
+- [x] Update history log: show list of past update timestamps in Settings so user can verify when each version was applied

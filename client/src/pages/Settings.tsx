@@ -7,10 +7,11 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { trpc } from "@/lib/trpc";
-import { Bell, BellOff, Trophy, Newspaper, Settings as SettingsIcon, Loader2, Info, RefreshCw } from "lucide-react";
+import { Bell, BellOff, Trophy, Newspaper, Settings as SettingsIcon, Loader2, Info, RefreshCw, History, Clock, Zap, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { getLoginUrl } from "@/const";
+import { APP_VERSION, getUpdateHistory, type UpdateHistoryEntry } from "@/lib/version";
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -75,13 +76,9 @@ export default function Settings() {
 
       const registration = await navigator.serviceWorker.ready;
 
-      // Generate VAPID keys on the fly for this demo
-      // In production, these would come from the server
       let subscription = await registration.pushManager.getSubscription();
 
       if (!subscription) {
-        // Use a placeholder VAPID key - in production this comes from server
-        // For now, we'll store the subscription info for in-app notifications
         subscription = await registration.pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey: urlBase64ToUint8Array(
@@ -99,7 +96,6 @@ export default function Settings() {
           auth: authBuf ? btoa(String.fromCharCode(...Array.from(new Uint8Array(authBuf as ArrayBuffer)))) : "placeholder",
         });
       } else {
-        // Fallback: store subscription intent without actual push endpoint
         subscribeMutation.mutate({
           endpoint: "in-app-notification",
           p256dh: "in-app",
@@ -109,7 +105,6 @@ export default function Settings() {
       }
     } catch (err) {
       console.error("Push subscription error:", err);
-      // Fallback to in-app notifications
       subscribeMutation.mutate({
         endpoint: "in-app-notification",
         p256dh: "in-app",
@@ -291,6 +286,9 @@ export default function Settings() {
 
         {/* App Version Card */}
         <AppVersionCard />
+
+        {/* Update History Card */}
+        <UpdateHistoryCard />
       </div>
     </div>
   );
@@ -345,6 +343,13 @@ function AppVersionCard() {
       <CardContent className="space-y-4">
         <div className="space-y-3 text-sm">
           <div className="flex justify-between items-center">
+            <span className="text-muted-foreground">App Version</span>
+            <Badge variant="outline" className="text-xs font-mono">
+              {APP_VERSION}
+            </Badge>
+          </div>
+          <Separator />
+          <div className="flex justify-between items-center">
             <span className="text-muted-foreground">Service Worker</span>
             <Badge variant="outline" className="text-xs font-mono">
               {swVersion || 'Loading...'}
@@ -364,6 +369,13 @@ function AppVersionCard() {
               Enabled (every 5 min)
             </Badge>
           </div>
+          <Separator />
+          <div className="flex justify-between items-center">
+            <span className="text-muted-foreground">Force-refresh</span>
+            <Badge className="text-xs bg-amber-500/20 text-amber-400 border-amber-500/30">
+              On major updates
+            </Badge>
+          </div>
         </div>
         <Button
           variant="outline"
@@ -379,6 +391,116 @@ function AppVersionCard() {
           )}
           Check for Updates
         </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+function UpdateHistoryCard() {
+  const [history, setHistory] = useState<UpdateHistoryEntry[]>([]);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    setHistory(getUpdateHistory());
+  }, []);
+
+  const methodIcon = (method: string) => {
+    switch (method) {
+      case "force":
+        return <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />;
+      case "auto":
+        return <Zap className="w-3.5 h-3.5 text-cyan-400" />;
+      case "manual":
+      default:
+        return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />;
+    }
+  };
+
+  const methodLabel = (method: string) => {
+    switch (method) {
+      case "force":
+        return "Auto (major)";
+      case "auto":
+        return "Auto";
+      case "manual":
+      default:
+        return "Manual";
+    }
+  };
+
+  const formatDate = (iso: string) => {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+    } catch {
+      return iso;
+    }
+  };
+
+  const visibleHistory = expanded ? history : history.slice(0, 5);
+
+  return (
+    <Card className="bg-card border-border/50 mt-6">
+      <CardHeader>
+        <CardTitle className="text-lg flex items-center gap-2">
+          <History className="w-5 h-5 text-primary" />
+          Update History
+        </CardTitle>
+        <CardDescription>
+          Log of when each version was applied to your device
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {history.length === 0 ? (
+          <div className="text-center py-6">
+            <Clock className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
+            <p className="text-sm text-muted-foreground">
+              No update history yet. Updates will be logged here as they are applied.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {visibleHistory.map((entry, i) => (
+              <div
+                key={`${entry.version}-${entry.appliedAt}`}
+                className={`flex items-center justify-between rounded-lg px-3 py-2.5 text-sm ${
+                  i === 0 ? "bg-cyan-500/5 border border-cyan-500/15" : "bg-secondary/30"
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  {methodIcon(entry.method)}
+                  <div>
+                    <span className="font-mono font-medium text-foreground">v{entry.version}</span>
+                    {i === 0 && (
+                      <Badge className="ml-2 text-[10px] bg-cyan-500/15 text-cyan-400 border-cyan-500/20 px-1.5 py-0">
+                        Current
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                  <span>{methodLabel(entry.method)}</span>
+                  <span>{formatDate(entry.appliedAt)}</span>
+                </div>
+              </div>
+            ))}
+
+            {history.length > 5 && !expanded && (
+              <button
+                onClick={() => setExpanded(true)}
+                className="w-full rounded-lg border border-border/50 py-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+              >
+                Show all {history.length} updates
+              </button>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

@@ -1,99 +1,6 @@
 import { useEffect, useState } from "react";
 import { X, Sparkles, Zap, Bug, Star } from "lucide-react";
-
-interface ChangelogEntry {
-  version: string;
-  date: string;
-  title: string;
-  changes: { type: "feature" | "improvement" | "fix"; text: string }[];
-}
-
-/**
- * Changelog data — add new entries at the TOP of this array.
- * The component compares the latest version here against what's stored
- * in localStorage to decide whether to show the modal.
- */
-const CHANGELOG: ChangelogEntry[] = [
-  {
-    version: "4.2.0",
-    date: "2026-03-15",
-    title: "Affinity Tags, Streak Alerts & CSV Export",
-    changes: [
-      { type: "feature", text: "Per-model Game Affinity Tags — see which games each model excels at" },
-      { type: "feature", text: "Hot Streak Alerts — models hitting 3+ numbers on consecutive draws get a fire badge" },
-      { type: "feature", text: "Export History to CSV — download draw results and predictions as spreadsheets" },
-      { type: "improvement", text: "Hot Streak banner at top of Leaderboard highlights active winning streaks" },
-    ],
-  },
-  {
-    version: "4.1.0",
-    date: "2026-03-15",
-    title: "Offline Mode & Background Sync",
-    changes: [
-      { type: "feature", text: "Offline mode indicator shows when you lose connectivity" },
-      { type: "feature", text: "Background sync queues predictions made offline and auto-submits when back online" },
-      { type: "feature", text: "What's New changelog modal after every update" },
-      { type: "improvement", text: "Service worker checks for updates every 5 minutes" },
-    ],
-  },
-  {
-    version: "4.0.0",
-    date: "2026-03-15",
-    title: "Seamless PWA Auto-Updates",
-    changes: [
-      { type: "feature", text: "One-click 'Update Now' banner when new version is available" },
-      { type: "feature", text: "App Version card in Settings with manual update check" },
-      { type: "improvement", text: "Network-first caching ensures you always get latest content" },
-      { type: "fix", text: "No more uninstalling/reinstalling the PWA to get updates" },
-    ],
-  },
-  {
-    version: "3.5.0",
-    date: "2026-03-14",
-    title: "Auto-Fetch, Trends & Quick Pick",
-    changes: [
-      { type: "feature", text: "Scheduled auto-fetch scrapes draws every 6 hours and evaluates models" },
-      { type: "feature", text: "Model Confidence Trends chart on Leaderboard with weekly rolling averages" },
-      { type: "feature", text: "Quick Pick Comparison on Predictions page — formula vs random side-by-side" },
-      { type: "improvement", text: "Admin status card shows auto-fetch schedule and last run time" },
-    ],
-  },
-  {
-    version: "3.0.0",
-    date: "2026-03-14",
-    title: "Heatmap & Historical Backfill",
-    changes: [
-      { type: "feature", text: "Number Heatmap on Patterns page — color-coded grid showing which numbers hit on which dates" },
-      { type: "feature", text: "Historical win tracking with automatic backfill of past predictions" },
-      { type: "feature", text: "Leaderboard populated with real model performance data" },
-      { type: "improvement", text: "Hottest Numbers summary with hit counts" },
-    ],
-  },
-  {
-    version: "2.0.0",
-    date: "2026-03-13",
-    title: "Full Feature Launch",
-    changes: [
-      { type: "feature", text: "18 prediction models including AI Oracle ensemble" },
-      { type: "feature", text: "9 Florida Lottery games supported" },
-      { type: "feature", text: "AI Analysis page with deep LLM-powered insights" },
-      { type: "feature", text: "Pattern analysis with frequency, gap, and pair charts" },
-      { type: "feature", text: "Favorites, Tracker, Compare, and Wheel pages" },
-      { type: "feature", text: "Push notifications for draw results and high accuracy alerts" },
-      { type: "feature", text: "Printable ticket sheets with budget optimizer" },
-    ],
-  },
-  {
-    version: "1.0.0",
-    date: "2026-03-12",
-    title: "Initial Release",
-    changes: [
-      { type: "feature", text: "Core prediction engine with statistical models" },
-      { type: "feature", text: "Draw history with scraping from LotteryUSA" },
-      { type: "feature", text: "PWA with installable home screen app" },
-    ],
-  },
-];
+import { CHANGELOG, APP_VERSION, recordUpdate } from "@/lib/version";
 
 const STORAGE_KEY = "fl-lotto-oracle-last-seen-version";
 
@@ -115,8 +22,7 @@ export default function WhatsNew() {
 
   useEffect(() => {
     const lastSeen = localStorage.getItem(STORAGE_KEY);
-    const currentVersion = CHANGELOG[0]?.version;
-    if (currentVersion && lastSeen !== currentVersion) {
+    if (APP_VERSION && lastSeen !== APP_VERSION) {
       // Small delay so the page loads first
       const timer = setTimeout(() => setOpen(true), 1200);
       return () => clearTimeout(timer);
@@ -124,7 +30,8 @@ export default function WhatsNew() {
   }, []);
 
   const dismiss = () => {
-    localStorage.setItem(STORAGE_KEY, CHANGELOG[0]?.version || "");
+    localStorage.setItem(STORAGE_KEY, APP_VERSION);
+    recordUpdate(APP_VERSION, "manual");
     setOpen(false);
   };
 
@@ -174,7 +81,7 @@ export default function WhatsNew() {
                 {entry.changes.map((change, i) => (
                   <li key={i} className="flex items-start gap-2 text-sm">
                     {typeIcon[change.type]}
-                    <span className={`${typeLabel[change.type]} text-xs font-medium uppercase w-20 shrink-0`}>
+                    <span className={`${typeLabel[change.type]} text-xs font-medium uppercase w-28 shrink-0`}>
                       {change.type}
                     </span>
                     <span className="text-gray-300">{change.text}</span>

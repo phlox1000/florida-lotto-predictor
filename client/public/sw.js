@@ -1,12 +1,15 @@
 // ─── Version & Cache ────────────────────────────────────────────────────────
-// Bump this on every deploy so the SW lifecycle triggers an update.
-const APP_VERSION = '4.2.0';
+// IMPORTANT: This version MUST match the APP_VERSION in client/src/lib/version.ts
+// When adding a new changelog entry, update this version to match.
+// The app will display whichever is newer (SW version or bundle version).
+const APP_VERSION = '4.3.0';
 const CACHE_NAME = `fl-lotto-oracle-v${APP_VERSION}`;
 const STATIC_ASSETS = ['/', '/manifest.json'];
 
 // ─── Install ────────────────────────────────────────────────────────────────
 // Cache shell assets but do NOT skipWaiting automatically.
 // We wait for the client to send a SKIP_WAITING message after user confirms.
+// For major updates, the client auto-sends SKIP_WAITING after a countdown.
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
@@ -36,6 +39,7 @@ self.addEventListener('activate', (event) => {
 
 // ─── Message handler ────────────────────────────────────────────────────────
 // Listen for SKIP_WAITING from the client when user clicks "Update Now"
+// or when a major update triggers auto-refresh
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
