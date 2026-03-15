@@ -86,3 +86,9 @@
 - [x] Smart Wheel: backend endpoint to get consensus numbers from all 18 models
 - [x] Smart Wheel: frontend button on Wheel page to auto-populate with consensus numbers
 - [x] Full audit: verified zero Math.random(), zero hardcoded numbers, zero fake data in entire prediction engine
+- [x] Historical win tracking: auto-generate daily predictions and evaluate against results to populate Leaderboard
+- [x] Historical win tracking: backend endpoint to batch-evaluate past predictions against stored draw results
+- [x] Historical win tracking: trigger auto-evaluation when new draw results are fetched
+- [x] Number Heatmap: calendar-style grid visualization showing which numbers hit on which dates
+- [x] Number Heatmap: add to Patterns page with game/date range selectors
+- [x] Number Heatmap: color-coded cells for frequency intensity

@@ -312,6 +312,89 @@ export const appRouter = router({
       return { models, totalEvaluations };
     }),
 
+    /** Backfill evaluations: run all stored predictions against all stored draws to populate the leaderboard */
+    backfill: adminProcedure
+      .input(z.object({ gameType: gameTypeSchema.optional(), sampleSize: z.number().min(5).max(200).optional() }))
+      .mutation(async ({ input }) => {
+        const { getDb } = await import("./db");
+        const { drawResults: drawsTable, modelPerformance: perfTable } = await import("../drizzle/schema");
+        const { eq, and, desc: descOp } = await import("drizzle-orm");
+        const { runAllModels } = await import("./predictions");
+        const db = await getDb();
+        if (!db) return { evaluated: 0, skipped: 0, error: "Database not available" };
+
+        const gamesToProcess = input.gameType ? [input.gameType] : GAME_TYPES;
+        const sampleSize = input.sampleSize || 10; // evaluate last N draws (keep small for performance)
+        let totalEvaluated = 0;
+        let totalSkipped = 0;
+
+        for (const gt of gamesToProcess) {
+          const gameCfg = FLORIDA_GAMES[gt];
+          if (!gameCfg) continue;
+
+          // Get all draws for this game, oldest first
+          const allDraws = await db.select().from(drawsTable)
+            .where(eq(drawsTable.gameType, gt))
+            .orderBy(descOp(drawsTable.drawDate));
+
+          if (allDraws.length < 30) continue; // need minimum history
+
+          // Reverse to chronological order (oldest first)
+          allDraws.reverse();
+
+          // Take the last `sampleSize` draws as test targets
+          const minTrainingSize = 20;
+          const testStart = Math.max(minTrainingSize, allDraws.length - sampleSize);
+
+          for (let i = testStart; i < allDraws.length; i++) {
+            const targetDraw = allDraws[i];
+            // Use all draws before this one as training data
+            const trainingDraws = allDraws.slice(0, i).map(d => ({
+              mainNumbers: d.mainNumbers as number[],
+              specialNumbers: (d.specialNumbers as number[]) || [],
+              drawDate: new Date(d.drawDate).getTime(),
+            }));
+
+            // Check if we already evaluated this draw
+            const existing = await db.select({ id: perfTable.id }).from(perfTable)
+              .where(and(
+                eq(perfTable.drawResultId, targetDraw.id),
+                eq(perfTable.gameType, gt)
+              )).limit(1);
+
+            if (existing.length > 0) {
+              totalSkipped++;
+              continue;
+            }
+
+            // Run all 18 models on the training data
+            const predictions = runAllModels(gameCfg, trainingDraws);
+
+            const resultMainSet = new Set(targetDraw.mainNumbers as number[]);
+            const resultSpecialSet = new Set((targetDraw.specialNumbers as number[]) || []);
+
+            // Evaluate each model's prediction against the actual result
+            for (const pred of predictions) {
+              if (pred.mainNumbers.length === 0) continue;
+              const mainHits = pred.mainNumbers.filter((n: number) => resultMainSet.has(n)).length;
+              const specialHits = (pred.specialNumbers || []).filter((n: number) => resultSpecialSet.has(n)).length;
+
+              await db.insert(perfTable).values({
+                modelName: pred.modelName,
+                gameType: gt,
+                drawResultId: targetDraw.id,
+                predictionId: null,
+                mainHits,
+                specialHits,
+              });
+              totalEvaluated++;
+            }
+          }
+        }
+
+        return { evaluated: totalEvaluated, skipped: totalSkipped };
+      }),
+
     /** Get leaderboard for a specific game */
     byGame: publicProcedure
       .input(z.object({ gameType: gameTypeSchema }))
@@ -1156,6 +1239,58 @@ export const appRouter = router({
         }
 
         return { frequency, streaks, overdue, pairs, specialFrequency, drawCount: draws.length };
+      }),
+
+    /** Heatmap: returns a grid of which numbers appeared on which dates */
+    heatmap: publicProcedure
+      .input(z.object({ gameType: gameTypeSchema, lookback: z.number().min(10).max(500).default(100) }))
+      .query(async ({ input }) => {
+        const draws = await getDrawResults(input.gameType, input.lookback);
+        const cfg = FLORIDA_GAMES[input.gameType];
+        if (draws.length === 0) return { grid: [], numbers: [], dates: [], drawCount: 0 };
+
+        // Build date -> numbers map
+        const dateMap: Array<{ date: string; numbers: number[]; specialNumbers: number[] }> = [];
+        for (const draw of draws) {
+          const dateStr = new Date(draw.drawDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" });
+          const drawTime = draw.drawTime || "evening";
+          const label = draws.some(d => d.drawDate === draw.drawDate && d.id !== draw.id)
+            ? `${dateStr} (${drawTime})`
+            : dateStr;
+          dateMap.push({
+            date: label,
+            numbers: draw.mainNumbers as number[],
+            specialNumbers: (draw.specialNumbers as number[]) || [],
+          });
+        }
+
+        // Limit to most recent 50 dates for readability
+        const recentDates = dateMap.slice(0, 50);
+        const dates = recentDates.map(d => d.date);
+
+        // Build number pool
+        const pool = range(1, cfg.mainMax);
+
+        // Build grid: for each number, for each date, was it drawn?
+        const grid = pool.map(num => ({
+          number: num,
+          hits: recentDates.map(d => d.numbers.includes(num)),
+          totalHits: recentDates.filter(d => d.numbers.includes(num)).length,
+        }));
+
+        // Also compute "hot zones" - clusters of consecutive appearances
+        const hotNumbers = grid
+          .map(g => {
+            let maxConsecutive = 0, current = 0;
+            for (const hit of g.hits) {
+              if (hit) { current++; maxConsecutive = Math.max(maxConsecutive, current); }
+              else current = 0;
+            }
+            return { number: g.number, totalHits: g.totalHits, maxConsecutive };
+          })
+          .sort((a, b) => b.totalHits - a.totalHits);
+
+        return { grid, dates, numbers: pool, hotNumbers, drawCount: draws.length, dateCount: recentDates.length };
       }),
   }),
 });

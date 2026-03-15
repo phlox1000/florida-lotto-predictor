@@ -7,6 +7,9 @@ import { trpc } from "@/lib/trpc";
 import { FLORIDA_GAMES, GAME_TYPES, type GameType, MODEL_NAMES } from "@shared/lottery";
 import { Trophy, Medal, TrendingUp, Target, Zap, BarChart3, ChevronDown, ChevronUp, Crown, Award, Star } from "lucide-react";
 import { useState, useMemo } from "react";
+import { Button } from "@/components/ui/button";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { RefreshCw } from "lucide-react";
 
 const MODEL_DISPLAY_NAMES: Record<string, string> = {
   random: "Frequency Baseline",
@@ -92,6 +95,36 @@ export default function Leaderboard() {
   const [selectedGame, setSelectedGame] = useState<GameType>("fantasy_5");
   const [expandedModel, setExpandedModel] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<"composite" | "avgHits" | "consistency" | "maxHits">("composite");
+  const [backfillStatus, setBackfillStatus] = useState<string | null>(null);
+  const { user } = useAuth();
+  const isOwner = user?.role === "admin";
+  const utils = trpc.useUtils();
+
+  const backfillMutation = trpc.leaderboard.backfill.useMutation();
+  const [isBackfilling, setIsBackfilling] = useState(false);
+
+  const runBackfill = async () => {
+    setIsBackfilling(true);
+    let totalEval = 0;
+    let totalSkip = 0;
+    const games = GAME_TYPES.filter(g => !FLORIDA_GAMES[g].schedule.ended);
+    for (let i = 0; i < games.length; i++) {
+      const g = games[i];
+      setBackfillStatus(`Processing ${FLORIDA_GAMES[g].name} (${i + 1}/${games.length})...`);
+      try {
+        const result = await backfillMutation.mutateAsync({ gameType: g as GameType, sampleSize: 10 });
+        totalEval += result.evaluated;
+        totalSkip += result.skipped;
+      } catch (err: any) {
+        console.error(`Backfill error for ${g}:`, err);
+      }
+    }
+    setBackfillStatus(`Done! Evaluated ${totalEval} predictions (${totalSkip} already existed)`);
+    utils.leaderboard.all.invalidate();
+    utils.leaderboard.byGame.invalidate();
+    setIsBackfilling(false);
+    setTimeout(() => setBackfillStatus(null), 8000);
+  };
 
   const { data: allData, isLoading: allLoading } = trpc.leaderboard.all.useQuery(undefined, {
     enabled: viewMode === "all",
@@ -149,7 +182,19 @@ export default function Leaderboard() {
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            {isOwner && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={runBackfill}
+                disabled={isBackfilling}
+                className="border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/10"
+              >
+                <RefreshCw className={`w-4 h-4 mr-2 ${isBackfilling ? "animate-spin" : ""}`} />
+                {isBackfilling ? "Evaluating..." : "Backfill Evaluations"}
+              </Button>
+            )}
             <Select value={viewMode} onValueChange={(v) => setViewMode(v as "all" | "game")}>
               <SelectTrigger className="w-[140px] bg-card">
                 <SelectValue />
@@ -188,6 +233,13 @@ export default function Leaderboard() {
             )}
           </div>
         </div>
+
+        {/* Backfill Status */}
+        {backfillStatus && (
+          <div className="mb-4 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-sm">
+            {backfillStatus}
+          </div>
+        )}
 
         {/* Summary Stats */}
         {viewMode === "all" && allData && (
@@ -242,6 +294,17 @@ export default function Leaderboard() {
                 Generate predictions first, then fetch the latest draw results. The system will automatically
                 evaluate each model's accuracy and populate the leaderboard.
               </p>
+              {isOwner && (
+                <Button
+                  variant="outline"
+                  className="mt-4 border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/10"
+                  onClick={runBackfill}
+                  disabled={isBackfilling}
+                >
+                  <RefreshCw className={`w-4 h-4 mr-2 ${isBackfilling ? "animate-spin" : ""}`} />
+                  {isBackfilling ? "Evaluating..." : "Backfill All Evaluations"}
+                </Button>
+              )}
             </CardContent>
           </Card>
         )}

@@ -5,18 +5,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { BarChart3, Flame, Snowflake, Clock, Link2, TrendingUp, TrendingDown, AlertTriangle } from "lucide-react";
+import { BarChart3, Flame, Snowflake, Clock, Link2, TrendingUp, TrendingDown, AlertTriangle, Grid3X3 } from "lucide-react";
 
 const GAMES = [
-  { value: "fantasy5", label: "Fantasy 5" },
+  { value: "fantasy_5", label: "Fantasy 5" },
   { value: "powerball", label: "Powerball" },
-  { value: "megamillions", label: "Mega Millions" },
+  { value: "mega_millions", label: "Mega Millions" },
   { value: "florida_lotto", label: "Florida Lotto" },
   { value: "cash4life", label: "Cash4Life" },
-  { value: "pick2", label: "Pick 2" },
-  { value: "pick3", label: "Pick 3" },
-  { value: "pick4", label: "Pick 4" },
-  { value: "pick5", label: "Pick 5" },
+  { value: "pick_2", label: "Pick 2" },
+  { value: "pick_3", label: "Pick 3" },
+  { value: "pick_4", label: "Pick 4" },
+  { value: "pick_5", label: "Pick 5" },
 ];
 
 const LOOKBACKS = [
@@ -28,7 +28,7 @@ const LOOKBACKS = [
 ];
 
 export default function Patterns() {
-  const [gameType, setGameType] = useState("fantasy5");
+  const [gameType, setGameType] = useState("fantasy_5");
   const [lookback, setLookback] = useState("100");
 
   const { data, isLoading, error } = trpc.patterns.analyze.useQuery(
@@ -114,6 +114,9 @@ export default function Patterns() {
                 </TabsTrigger>
                 <TabsTrigger value="pairs" className="data-[state=active]:bg-cyan-500/20 data-[state=active]:text-cyan-400">
                   <Link2 className="h-4 w-4 mr-2" /> Pairs
+                </TabsTrigger>
+                <TabsTrigger value="heatmap" className="data-[state=active]:bg-cyan-500/20 data-[state=active]:text-cyan-400">
+                  <Grid3X3 className="h-4 w-4 mr-2" /> Heatmap
                 </TabsTrigger>
               </TabsList>
 
@@ -314,6 +317,11 @@ export default function Patterns() {
                 </Card>
               </TabsContent>
 
+              {/* ─── Heatmap Tab ─── */}
+              <TabsContent value="heatmap" className="space-y-4">
+                <HeatmapTab gameType={gameType} lookback={parseInt(lookback)} />
+              </TabsContent>
+
               {/* ─── Pairs Tab ─── */}
               <TabsContent value="pairs" className="space-y-4">
                 <Card className="border-purple-500/20 bg-card/80">
@@ -431,6 +439,168 @@ function StreakRow({ streak }: { streak: { number: number; currentStreak: number
           Record: {streak.maxHotStreak} hot / {streak.maxColdStreak} cold
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Heatmap Tab ─────────────────────────────────────────────────────────────
+
+function HeatmapTab({ gameType, lookback }: { gameType: string; lookback: number }) {
+  const { data, isLoading, error } = trpc.patterns.heatmap.useQuery(
+    { gameType: gameType as any, lookback },
+    { enabled: !!gameType }
+  );
+
+  if (isLoading) return (
+    <div className="flex items-center justify-center py-20">
+      <div className="animate-spin h-8 w-8 border-2 border-cyan-400 border-t-transparent rounded-full" />
+    </div>
+  );
+
+  if (error) return (
+    <Card className="border-red-500/30">
+      <CardContent className="p-6 text-red-400">Failed to load heatmap data.</CardContent>
+    </Card>
+  );
+
+  if (!data || data.drawCount === 0) return (
+    <Card className="border-yellow-500/30">
+      <CardContent className="p-6 flex items-center gap-3 text-yellow-400">
+        <AlertTriangle className="h-5 w-5" />
+        No draw data available for the heatmap.
+      </CardContent>
+    </Card>
+  );
+
+  const { grid, dates, hotNumbers = [], dateCount = 0 } = data;
+
+  // Color scale: 0 hits = dark, more hits = brighter cyan
+  const maxHits = Math.max(...grid.map(g => g.totalHits), 1);
+
+  return (
+    <div className="space-y-6">
+      {/* Hot Numbers Summary */}
+      <Card className="border-cyan-500/20 bg-card/80">
+        <CardHeader>
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Grid3X3 className="h-5 w-5 text-cyan-400" /> Hottest Numbers (Last {dateCount} Draws)
+          </CardTitle>
+          <CardDescription>Numbers ranked by total appearances across the visible date range</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap gap-3">
+            {hotNumbers.slice(0, 15).map((hn, i) => (
+              <Tooltip key={hn.number}>
+                <TooltipTrigger>
+                  <div className="flex flex-col items-center gap-1">
+                    <div
+                      className="w-11 h-11 rounded-full flex items-center justify-center text-sm font-bold border-2 transition-all"
+                      style={{
+                        borderColor: `oklch(0.75 0.18 ${180 - (i / 15) * 120})`,
+                        background: `oklch(0.35 0.08 ${180 - (i / 15) * 120} / 0.3)`,
+                        color: `oklch(0.9 0.12 ${180 - (i / 15) * 120})`,
+                      }}
+                    >
+                      {hn.number}
+                    </div>
+                    <span className="text-[10px] text-muted-foreground">{hn.totalHits}x</span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <div className="text-xs space-y-1">
+                    <div className="font-bold">Number {hn.number}</div>
+                    <div>{hn.totalHits} hits in {dateCount} draws</div>
+                    <div>Max consecutive: {hn.maxConsecutive}</div>
+                    <div>Hit rate: {((hn.totalHits / dateCount) * 100).toFixed(1)}%</div>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Calendar Heatmap Grid */}
+      <Card className="border-cyan-500/20 bg-card/80">
+        <CardHeader>
+          <CardTitle className="text-lg">Number x Date Heatmap</CardTitle>
+          <CardDescription>
+            Each cell shows whether a number was drawn on a specific date. Brighter = drawn, dark = not drawn.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <div className="min-w-[800px]">
+              {/* Date headers */}
+              <div className="flex">
+                <div className="w-12 shrink-0" /> {/* spacer for number labels */}
+                {dates.map((d, i) => (
+                  <div
+                    key={i}
+                    className="flex-1 min-w-[18px] text-center"
+                    title={d}
+                  >
+                    <span className="text-[8px] text-muted-foreground/60 writing-mode-vertical" style={{ writingMode: "vertical-lr", transform: "rotate(180deg)", display: "inline-block", height: "60px", lineHeight: "18px" }}>
+                      {d}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Grid rows */}
+              {grid.map(row => (
+                <div key={row.number} className="flex items-center group">
+                  <div className="w-12 shrink-0 text-right pr-2 text-xs text-muted-foreground font-mono group-hover:text-cyan-400 transition-colors">
+                    {row.number}
+                  </div>
+                  {row.hits.map((hit, i) => (
+                    <Tooltip key={i}>
+                      <TooltipTrigger asChild>
+                        <div
+                          className="flex-1 min-w-[18px] aspect-square m-[1px] rounded-sm cursor-pointer transition-all hover:scale-125 hover:z-10"
+                          style={{
+                            background: hit
+                              ? `oklch(0.7 0.15 180 / ${0.5 + (row.totalHits / maxHits) * 0.5})`
+                              : "oklch(0.2 0.01 240 / 0.3)",
+                            boxShadow: hit ? "0 0 4px oklch(0.7 0.15 180 / 0.3)" : "none",
+                          }}
+                        />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <div className="text-xs">
+                          <div className="font-bold">Number {row.number} — {dates[i]}</div>
+                          <div>{hit ? "\u2705 Drawn" : "\u274c Not drawn"}</div>
+                          <div>Total hits: {row.totalHits}/{dateCount}</div>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  ))}
+                  <div className="w-10 shrink-0 text-left pl-2 text-[10px] text-muted-foreground">
+                    {row.totalHits}
+                  </div>
+                </div>
+              ))}
+
+              {/* Legend */}
+              <div className="flex items-center gap-4 mt-4 pt-4 border-t border-border/30">
+                <span className="text-xs text-muted-foreground">Legend:</span>
+                <div className="flex items-center gap-1">
+                  <div className="w-4 h-4 rounded-sm" style={{ background: "oklch(0.2 0.01 240 / 0.3)" }} />
+                  <span className="text-xs text-muted-foreground">Not drawn</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <div className="w-4 h-4 rounded-sm" style={{ background: "oklch(0.7 0.15 180 / 0.5)" }} />
+                  <span className="text-xs text-muted-foreground">Drawn (low freq)</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <div className="w-4 h-4 rounded-sm" style={{ background: "oklch(0.7 0.15 180 / 1.0)", boxShadow: "0 0 4px oklch(0.7 0.15 180 / 0.3)" }} />
+                  <span className="text-xs text-muted-foreground">Drawn (high freq)</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
