@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { trpc } from "@/lib/trpc";
-import { Bell, BellOff, Trophy, Newspaper, Settings as SettingsIcon, Loader2 } from "lucide-react";
+import { Bell, BellOff, Trophy, Newspaper, Settings as SettingsIcon, Loader2, Info, RefreshCw } from "lucide-react";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { getLoginUrl } from "@/const";
@@ -288,7 +288,98 @@ export default function Settings() {
             </div>
           </CardContent>
         </Card>
+
+        {/* App Version Card */}
+        <AppVersionCard />
       </div>
     </div>
+  );
+}
+
+function AppVersionCard() {
+  const [swVersion, setSwVersion] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+
+  useEffect(() => {
+    // Ask the SW for its version
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      const handler = (event: MessageEvent) => {
+        if (event.data?.type === 'SW_VERSION') {
+          setSwVersion(event.data.version);
+        }
+      };
+      navigator.serviceWorker.addEventListener('message', handler);
+      navigator.serviceWorker.controller.postMessage({ type: 'GET_VERSION' });
+      return () => navigator.serviceWorker.removeEventListener('message', handler);
+    }
+  }, []);
+
+  const checkForUpdate = async () => {
+    setChecking(true);
+    try {
+      const reg = window.__swRegistration;
+      if (reg) {
+        await reg.update();
+        toast.success('Checked for updates');
+      } else {
+        toast.info('Service worker not available');
+      }
+    } catch {
+      toast.error('Failed to check for updates');
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  return (
+    <Card className="bg-card border-border/50 mt-6">
+      <CardHeader>
+        <CardTitle className="text-lg flex items-center gap-2">
+          <Info className="w-5 h-5 text-primary" />
+          App Version
+        </CardTitle>
+        <CardDescription>
+          Current app version and update status
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-3 text-sm">
+          <div className="flex justify-between items-center">
+            <span className="text-muted-foreground">Service Worker</span>
+            <Badge variant="outline" className="text-xs font-mono">
+              {swVersion || 'Loading...'}
+            </Badge>
+          </div>
+          <Separator />
+          <div className="flex justify-between items-center">
+            <span className="text-muted-foreground">Build</span>
+            <Badge variant="outline" className="text-xs font-mono">
+              {new Date().toISOString().slice(0, 10)}
+            </Badge>
+          </div>
+          <Separator />
+          <div className="flex justify-between items-center">
+            <span className="text-muted-foreground">Auto-update</span>
+            <Badge className="text-xs bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
+              Enabled (every 5 min)
+            </Badge>
+          </div>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full mt-2"
+          onClick={checkForUpdate}
+          disabled={checking}
+        >
+          {checking ? (
+            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+          ) : (
+            <RefreshCw className="w-4 h-4 mr-2" />
+          )}
+          Check for Updates
+        </Button>
+      </CardContent>
+    </Card>
   );
 }

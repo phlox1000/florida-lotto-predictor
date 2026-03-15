@@ -1,27 +1,51 @@
-const CACHE_NAME = 'fl-lotto-oracle-v3';
-const STATIC_ASSETS = [
-  '/',
-  '/manifest.json',
-];
+// ─── Version & Cache ────────────────────────────────────────────────────────
+// Bump this on every deploy so the SW lifecycle triggers an update.
+const APP_VERSION = '4.0.0';
+const CACHE_NAME = `fl-lotto-oracle-v${APP_VERSION}`;
+const STATIC_ASSETS = ['/', '/manifest.json'];
 
-// Install: cache shell assets and immediately activate
+// ─── Install ────────────────────────────────────────────────────────────────
+// Cache shell assets but do NOT skipWaiting automatically.
+// We wait for the client to send a SKIP_WAITING message after user confirms.
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
   );
-  self.skipWaiting();
+  // Do NOT call self.skipWaiting() here — let the update prompt control it
 });
 
-// Activate: clean old caches and claim all clients
+// ─── Activate ───────────────────────────────────────────────────────────────
+// Clean old caches and claim all clients immediately
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
-    ).then(() => self.clients.claim())
+    caches.keys()
+      .then((keys) =>
+        Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+      )
+      .then(() => self.clients.claim())
+      .then(() => {
+        // Notify all clients that the new version is now active
+        return self.clients.matchAll({ type: 'window' }).then((clients) => {
+          clients.forEach((client) => {
+            client.postMessage({ type: 'SW_ACTIVATED', version: APP_VERSION });
+          });
+        });
+      })
   );
 });
 
-// Push notification handler
+// ─── Message handler ────────────────────────────────────────────────────────
+// Listen for SKIP_WAITING from the client when user clicks "Update Now"
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+  if (event.data && event.data.type === 'GET_VERSION') {
+    event.source.postMessage({ type: 'SW_VERSION', version: APP_VERSION });
+  }
+});
+
+// ─── Push notifications ─────────────────────────────────────────────────────
 self.addEventListener('push', (event) => {
   const iconUrl = 'https://d2xsxph8kpxj0f.cloudfront.net/310419663031884010/6J86Kiyju8nzk4hczi9dXp/pwa-icon-192-gVgtM7zTtpdrwJRZVgEdKA.png';
   let data = { title: 'FL Lotto Oracle', body: 'New update available', icon: iconUrl };
@@ -52,7 +76,7 @@ self.addEventListener('push', (event) => {
   );
 });
 
-// Notification click handler
+// ─── Notification click ─────────────────────────────────────────────────────
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
@@ -73,27 +97,32 @@ self.addEventListener('notificationclick', (event) => {
   );
 });
 
-// Fetch: network-first strategy for all requests
+// ─── Fetch: Network-first for everything ────────────────────────────────────
+// HTML navigations and API calls always go to network first.
+// Static assets (JS/CSS/images) also use network-first with cache fallback.
+// This ensures users always get the latest content.
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Skip non-GET and API/trpc requests (always go to network)
-  if (request.method !== 'GET' || url.pathname.startsWith('/api/')) {
-    return;
-  }
+  // Skip non-GET requests entirely (POST, PUT, etc.)
+  if (request.method !== 'GET') return;
 
-  // Network-first: try network, fall back to cache
-  event.respondWith(
-    fetch(request)
-      .then((response) => {
-        // Cache successful same-origin responses
-        if (response.ok && url.origin === self.location.origin) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-        }
-        return response;
-      })
-      .catch(() => caches.match(request))
-  );
+  // Skip API/tRPC requests — let them go straight to network with no caching
+  if (url.pathname.startsWith('/api/')) return;
+
+  // Network-first for all same-origin GET requests
+  if (url.origin === self.location.origin) {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+          }
+          return response;
+        })
+        .catch(() => caches.match(request))
+    );
+  }
 });

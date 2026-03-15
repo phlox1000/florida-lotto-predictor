@@ -101,3 +101,7 @@
 - [x] Quick Pick Comparison: backend endpoint generating random Quick Pick numbers for any game
 - [x] Quick Pick Comparison: frontend UI on Predictions page showing formula picks vs Quick Pick side-by-side
 - [x] Quick Pick Comparison: historical tracking to compare formula vs Quick Pick hit rates over time
+- [x] PWA seamless updates: service worker with network-first strategy for HTML and API calls
+- [x] PWA seamless updates: "Update Available" toast/banner prompt when new version detected
+- [x] PWA seamless updates: auto-skip-waiting so new service worker activates immediately on prompt
+- [x] PWA seamless updates: version indicator in app footer/settings showing current build version

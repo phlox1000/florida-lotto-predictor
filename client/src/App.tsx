@@ -17,6 +17,7 @@ import Patterns from "./pages/Patterns";
 import Leaderboard from "./pages/Leaderboard";
 import Wheel from "./pages/Wheel";
 import InstallPrompt from "./components/InstallPrompt";
+import UpdatePrompt from "./components/UpdatePrompt";
 
 function Router() {
   return (
@@ -47,6 +48,7 @@ function App() {
           <Toaster />
           <Router />
           <InstallPrompt />
+          <UpdatePrompt />
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>

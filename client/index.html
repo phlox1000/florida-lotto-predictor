@@ -29,8 +29,42 @@
         window.addEventListener('load', () => {
           navigator.serviceWorker.register('/sw.js', { scope: '/' })
             .then((reg) => {
-              // Check for updates periodically
-              setInterval(() => reg.update(), 60 * 60 * 1000);
+              // Store registration globally so React components can access it
+              window.__swRegistration = reg;
+
+              // Check for updates every 5 minutes (not just hourly)
+              setInterval(() => reg.update(), 5 * 60 * 1000);
+
+              // Detect when a new SW is waiting
+              function onNewSW() {
+                window.dispatchEvent(new CustomEvent('sw-update-available'));
+              }
+
+              // If there's already a waiting worker (e.g. from a previous visit)
+              if (reg.waiting) {
+                onNewSW();
+              }
+
+              // Listen for new service workers that finish installing
+              reg.addEventListener('updatefound', () => {
+                const newWorker = reg.installing;
+                if (!newWorker) return;
+                newWorker.addEventListener('statechange', () => {
+                  if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                    // New SW installed while old one is still controlling — update available
+                    onNewSW();
+                  }
+                });
+              });
+
+              // When the new SW takes over, reload the page to get fresh content
+              let refreshing = false;
+              navigator.serviceWorker.addEventListener('controllerchange', () => {
+                if (!refreshing) {
+                  refreshing = true;
+                  window.location.reload();
+                }
+              });
             })
             .catch(() => {});
         });
