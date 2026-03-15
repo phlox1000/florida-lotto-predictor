@@ -14,6 +14,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { useState, useMemo, useCallback } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { toast } from "sonner";
+import { useBackgroundSync } from "@/hooks/useBackgroundSync";
 
 function LottoBall({ number, variant = "main" }: { number: number; variant?: "main" | "special" }) {
   return (
@@ -311,6 +312,19 @@ export default function Predictions() {
   const generatePredictions = trpc.predictions.generate.useMutation();
   const generateTickets = trpc.tickets.generate.useMutation();
   const generateQuickPick = trpc.predictions.quickPick.useMutation();
+
+  // Background sync: queue predictions when offline, auto-submit when back online
+  const { queuePrediction } = useBackgroundSync(
+    useCallback(async (gameType: string) => {
+      await generatePredictions.mutateAsync({ gameType: gameType as GameType, sumRangeFilter });
+    }, [generatePredictions, sumRangeFilter])
+  );
+
+  const handleRunModels = useCallback(() => {
+    // If offline, queue the request instead
+    if (queuePrediction(selectedGame)) return;
+    generatePredictions.mutate({ gameType: selectedGame, sumRangeFilter });
+  }, [selectedGame, sumRangeFilter, queuePrediction, generatePredictions]);
   const addFavorite = trpc.favorites.add.useMutation({
     onSuccess: () => toast.success("Saved to favorites!"),
     onError: () => toast.error("Failed to save. Please sign in first."),
@@ -399,7 +413,7 @@ export default function Predictions() {
               </SelectContent>
             </Select>
             <Button
-              onClick={() => generatePredictions.mutate({ gameType: selectedGame, sumRangeFilter })}
+              onClick={handleRunModels}
               disabled={generatePredictions.isPending}
               className="bg-primary text-primary-foreground"
             >

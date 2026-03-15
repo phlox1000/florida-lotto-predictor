@@ -18,6 +18,8 @@ import Leaderboard from "./pages/Leaderboard";
 import Wheel from "./pages/Wheel";
 import InstallPrompt from "./components/InstallPrompt";
 import UpdatePrompt from "./components/UpdatePrompt";
+import WhatsNew from "./components/WhatsNew";
+import OfflineIndicator from "./components/OfflineIndicator";
 
 function Router() {
   return (
@@ -49,6 +51,8 @@ function App() {
           <Router />
           <InstallPrompt />
           <UpdatePrompt />
+          <WhatsNew />
+          <OfflineIndicator />
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>

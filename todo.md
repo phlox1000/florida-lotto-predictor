@@ -105,3 +105,11 @@
 - [x] PWA seamless updates: "Update Available" toast/banner prompt when new version detected
 - [x] PWA seamless updates: auto-skip-waiting so new service worker activates immediately on prompt
 - [x] PWA seamless updates: version indicator in app footer/settings showing current build version
+- [x] Changelog/What's New modal: show version changelog popup after SW update completes
+- [x] Changelog/What's New modal: maintain changelog data structure with version history
+- [x] Offline Mode indicator: banner/icon when device goes offline, reassuring cached content available
+- [x] Offline Mode indicator: auto-dismiss when connectivity returns
+- [x] Background Sync for predictions: queue prediction requests made while offline
+- [x] Background Sync for predictions: auto-submit queued requests when connectivity returns
+- [x] Reference doc: master feature list (standalone download, not in app)
+- [x] Reference doc: prediction models comparison (standalone download, not in app)
