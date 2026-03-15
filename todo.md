@@ -66,3 +66,7 @@
 - [x] Fix: Mega Millions special ball color (yellow, not red) and Cash4Life (green, not red)
 - [x] Fix: midday URL slugs for Fantasy 5, Pick 2, Pick 5 on lotteryusa.com
 - [x] New lotteryusa scraper: 18 vitest tests, all passing
+- [x] Fix duplicate draw entries: add deduplication logic to prevent same draw being inserted multiple times
+- [x] Clean existing duplicate entries from database
+- [x] Bulk-load historical data for all 9 games (500+ draws each: Fantasy 5 520, PB 510, MM 510, FL Lotto 510, C4L 510, Pick 2-5 520 each)
+- [ ] Push latest code to GitHub

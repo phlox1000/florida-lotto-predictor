@@ -1,0 +1,9 @@
+{
+  "query": "DELETE d1 FROM draw_results d1\nINNER JOIN draw_results d2\nON d1.gameType = d2.gameType\n  AND DATE(FROM_UNIXTIME(d1.drawDate/1000)) = DATE(FROM_UNIXTIME(d2.drawDate/1000))\n  AND COALESCE(d1.drawTime, 'none') = COALESCE(d2.drawTime, 'none')\n  AND CAST(d1.mainNumbers AS CHAR) = CAST(d2.mainNumbers AS CHAR)\n  AND d1.id > d2.id;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway03.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 4TyHE3rVc6QyPw4.ad97ac670d8e --database 6J86Kiyju8nzk4hczi9dXp --execute DELETE d1 FROM draw_results d1\nINNER JOIN draw_results d2\nON d1.gameType = d2.gameType\n  AND DATE(FROM_UNIXTIME(d1.drawDate/1000)) = DATE(FROM_UNIXTIME(d2.drawDate/1000))\n  AND COALESCE(d1.drawTime, 'none') = COALESCE(d2.drawTime, 'none')\n  AND CAST(d1.mainNumbers AS CHAR) = CAST(d2.mainNumbers AS CHAR)\n  AND d1.id > d2.id;",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 388
+}

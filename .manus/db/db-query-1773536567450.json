@@ -1,0 +1,46 @@
+{
+  "query": "SELECT gameType, COUNT(*) as cnt FROM draw_results GROUP BY gameType ORDER BY cnt DESC;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway03.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 4TyHE3rVc6QyPw4.ad97ac670d8e --database 6J86Kiyju8nzk4hczi9dXp --execute SELECT gameType, COUNT(*) as cnt FROM draw_results GROUP BY gameType ORDER BY cnt DESC;",
+  "rows": [
+    {
+      "gameType": "fantasy_5",
+      "cnt": "520"
+    },
+    {
+      "gameType": "pick_4",
+      "cnt": "25"
+    },
+    {
+      "gameType": "pick_2",
+      "cnt": "25"
+    },
+    {
+      "gameType": "pick_3",
+      "cnt": "25"
+    },
+    {
+      "gameType": "pick_5",
+      "cnt": "25"
+    },
+    {
+      "gameType": "mega_millions",
+      "cnt": "15"
+    },
+    {
+      "gameType": "cash4life",
+      "cnt": "15"
+    },
+    {
+      "gameType": "powerball",
+      "cnt": "15"
+    },
+    {
+      "gameType": "florida_lotto",
+      "cnt": "15"
+    }
+  ],
+  "messages": [],
+  "stdout": "gameType\tcnt\nfantasy_5\t520\npick_4\t25\npick_2\t25\npick_3\t25\npick_5\t25\nmega_millions\t15\ncash4life\t15\npowerball\t15\nflorida_lotto\t15\n",
+  "stderr": "",
+  "execution_time_ms": 343
+}

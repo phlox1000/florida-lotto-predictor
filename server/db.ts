@@ -62,9 +62,60 @@ export async function getUserByOpenId(openId: string) {
 }
 
 // ─── Draw Results ───────────────────────────────────────────────────────────────
+
+/** Check if a draw result already exists (same game, date, numbers, and draw time) */
+export async function drawResultExists(
+  gameType: string,
+  drawDate: number,
+  mainNumbers: number[],
+  drawTime?: string | null
+): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  
+  // Allow a 24-hour window for date matching (timestamps may differ slightly)
+  const dayStart = drawDate - (drawDate % 86400000);
+  const dayEnd = dayStart + 86400000;
+  
+  const conditions = [
+    eq(drawResults.gameType, gameType),
+    gte(drawResults.drawDate, dayStart),
+    sql`${drawResults.drawDate} < ${dayEnd}`,
+  ];
+  
+  if (drawTime) {
+    conditions.push(eq(drawResults.drawTime, drawTime));
+  }
+  
+  const existing = await db.select({ id: drawResults.id, mainNumbers: drawResults.mainNumbers })
+    .from(drawResults)
+    .where(and(...conditions))
+    .limit(10);
+  
+  // Check if any existing row has the same main numbers
+  const sortedNew = [...mainNumbers].sort((a, b) => a - b).join(",");
+  return existing.some(row => {
+    const rowNums = row.mainNumbers as number[];
+    return [...rowNums].sort((a, b) => a - b).join(",") === sortedNew;
+  });
+}
+
 export async function insertDrawResult(data: InsertDrawResult) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  
+  // Check for duplicates before inserting
+  const exists = await drawResultExists(
+    data.gameType,
+    data.drawDate as number,
+    data.mainNumbers as number[],
+    data.drawTime
+  );
+  
+  if (exists) {
+    return [{ insertId: 0 }]; // Return 0 to indicate skipped duplicate
+  }
+  
   const result = await db.insert(drawResults).values(data);
   return result;
 }
