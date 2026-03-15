@@ -146,6 +146,8 @@ export const MODEL_NAMES = [
   "markov_chain",
   "bayesian",
   "quantum_entanglement",
+  "cdm",
+  "chi_square",
   "ai_oracle",
 ] as const;
 

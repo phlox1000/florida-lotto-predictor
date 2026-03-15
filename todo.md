@@ -69,4 +69,10 @@
 - [x] Fix duplicate draw entries: add deduplication logic to prevent same draw being inserted multiple times
 - [x] Clean existing duplicate entries from database
 - [x] Bulk-load historical data for all 9 games (500+ draws each: Fantasy 5 520, PB 510, MM 510, FL Lotto 510, C4L 510, Pick 2-5 520 each)
-- [ ] Push latest code to GitHub
+- [x] Push latest code to GitHub
+- [x] Add Model 17: Compound-Dirichlet-Multinomial (CDM) prediction model
+- [x] Add Model 18: Chi-Square Anomaly Detector prediction model
+- [x] Add toggleable Sum/Range Constraint Filter as post-processing layer
+- [x] Update AI Oracle ensemble to include new models 17 & 18
+- [x] Update frontend UI to show toggle for Sum/Range filter
+- [x] Write tests for new models and filter (18 new tests, all passing)

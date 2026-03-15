@@ -39,27 +39,27 @@ describe("Prediction Engine", () => {
   }
 
   describe("runAllModels", () => {
-    it("returns exactly 16 predictions for Fantasy 5", () => {
+    it("returns exactly 18 predictions for Fantasy 5", () => {
       const history = mockHistory(fantasy5, 200);
       const results = runAllModels(fantasy5, history);
-      expect(results).toHaveLength(16);
+      expect(results).toHaveLength(18);
     });
 
-    it("returns exactly 16 predictions for Powerball", () => {
+    it("returns exactly 18 predictions for Powerball", () => {
       const history = mockHistory(powerball, 200);
       const results = runAllModels(powerball, history);
-      expect(results).toHaveLength(16);
+      expect(results).toHaveLength(18);
     });
 
-    it("returns exactly 16 predictions for Pick 3 (digit game)", () => {
+    it("returns exactly 18 predictions for Pick 3 (digit game)", () => {
       const history = mockHistory(pick3, 200);
       const results = runAllModels(pick3, history);
-      expect(results).toHaveLength(16);
+      expect(results).toHaveLength(18);
     });
 
-    it("returns 16 predictions even with empty history", () => {
+    it("returns 18 predictions even with empty history", () => {
       const results = runAllModels(fantasy5, []);
-      expect(results).toHaveLength(16);
+      expect(results).toHaveLength(18);
     });
 
     it("each prediction has correct number of main numbers OR is marked insufficient", () => {
@@ -120,7 +120,7 @@ describe("Prediction Engine", () => {
       }
     });
 
-    it("all 16 model names are present (frequency_baseline replaces random)", () => {
+    it("all 18 model names are present (frequency_baseline replaces random)", () => {
       const history = mockHistory(fantasy5, 200);
       const results = runAllModels(fantasy5, history);
       const names = results.map(r => r.modelName);
@@ -139,6 +139,8 @@ describe("Prediction Engine", () => {
       expect(names).toContain("markov_chain");
       expect(names).toContain("bayesian");
       expect(names).toContain("quantum_entanglement");
+      expect(names).toContain("cdm");
+      expect(names).toContain("chi_square");
       expect(names).toContain("ai_oracle");
     });
 

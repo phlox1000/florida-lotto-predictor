@@ -7,7 +7,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { trpc } from "@/lib/trpc";
 import { FLORIDA_GAMES, GAME_TYPES, type GameType, type PredictionResult } from "@shared/lottery";
-import { Zap, DollarSign, Dices, Target, Sparkles, Printer, Heart, ShoppingCart } from "lucide-react";
+import { Zap, DollarSign, Dices, Target, Sparkles, Printer, Heart, ShoppingCart, Filter, Info } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useState, useMemo, useCallback } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { toast } from "sonner";
@@ -33,17 +36,40 @@ function ConfidenceMeter({ score }: { score: number }) {
 
 function ModelCard({ pred, gameType, onFavorite }: { pred: PredictionResult; gameType?: string; onFavorite?: (pred: PredictionResult) => void }) {
   const isOracle = pred.modelName === "ai_oracle";
+  const isCdm = pred.modelName === "cdm";
+  const isChiSquare = pred.modelName === "chi_square";
+  const isNew = isCdm || isChiSquare;
   const meta = pred.metadata as Record<string, unknown>;
   const isInsufficient = meta?.insufficient_data === true;
+  const sumFilter = meta?.sumRangeFilter as Record<string, unknown> | undefined;
+  const wasAdjusted = sumFilter?.wasAdjusted === true;
   return (
-    <Card className={`bg-card border-border/50 ${isInsufficient ? "opacity-60 border-yellow-500/20" : isOracle ? "border-accent/40 glow-gold-sm" : "hover:border-primary/30"} transition-all`}>
+    <Card className={`bg-card border-border/50 ${isInsufficient ? "opacity-60 border-yellow-500/20" : isOracle ? "border-accent/40 glow-gold-sm" : isNew ? "border-blue-500/30 hover:border-blue-500/50" : "hover:border-primary/30"} transition-all`}>
       <CardContent className="p-4 space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            {isOracle ? <Sparkles className="w-4 h-4 text-accent" /> : <Target className="w-3.5 h-3.5 text-primary/60" />}
-            <span className="text-sm font-semibold">{pred.modelName.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}</span>
+            {isOracle ? <Sparkles className="w-4 h-4 text-accent" /> : isNew ? <Sparkles className="w-3.5 h-3.5 text-blue-400" /> : <Target className="w-3.5 h-3.5 text-primary/60" />}
+            <span className="text-sm font-semibold">{pred.modelName === "cdm" ? "CDM" : pred.modelName === "chi_square" ? "Chi-Square" : pred.modelName.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}</span>
+            {isNew && <Badge className="text-[10px] px-1.5 py-0 bg-blue-500/20 text-blue-300 border-blue-500/30">NEW</Badge>}
           </div>
           <div className="flex items-center gap-1.5">
+            {wasAdjusted && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="p-1 rounded-md text-amber-400">
+                      <Filter className="w-3.5 h-3.5" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-xs text-xs">
+                    <p className="font-semibold mb-1">Sum/Range Filter Applied</p>
+                    <p>Original sum: {String(sumFilter?.originalSum)} → Adjusted: {String(sumFilter?.adjustedSum)}</p>
+                    <p>Acceptable range: [{String((sumFilter?.acceptableRange as number[])?.[0])}-{String((sumFilter?.acceptableRange as number[])?.[1])}]</p>
+                    {(sumFilter?.notes as string[])?.map((n, i) => <p key={i} className="text-amber-300">{n}</p>)}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
             {!isInsufficient && onFavorite && (
               <button
                 onClick={() => onFavorite(pred)}
@@ -280,6 +306,7 @@ function generatePrintableTickets(
 
 export default function Predictions() {
   const [selectedGame, setSelectedGame] = useState<GameType>("fantasy_5");
+  const [sumRangeFilter, setSumRangeFilter] = useState(false);
   const { isAuthenticated } = useAuth();
   const generatePredictions = trpc.predictions.generate.useMutation();
   const generateTickets = trpc.tickets.generate.useMutation();
@@ -357,7 +384,7 @@ export default function Predictions() {
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-bold">Prediction Engine</h1>
-            <p className="text-sm text-muted-foreground mt-1">Run all 16 models or generate budget-optimized tickets</p>
+            <p className="text-sm text-muted-foreground mt-1">Run all 18 models or generate budget-optimized tickets</p>
           </div>
           <div className="flex items-center gap-3 w-full sm:w-auto flex-wrap">
             <Select value={selectedGame} onValueChange={(v) => setSelectedGame(v as GameType)}>
@@ -371,7 +398,7 @@ export default function Predictions() {
               </SelectContent>
             </Select>
             <Button
-              onClick={() => generatePredictions.mutate({ gameType: selectedGame })}
+              onClick={() => generatePredictions.mutate({ gameType: selectedGame, sumRangeFilter })}
               disabled={generatePredictions.isPending}
               className="bg-primary text-primary-foreground"
             >
@@ -390,9 +417,40 @@ export default function Predictions() {
           </div>
         </div>
 
+        {/* Sum/Range Constraint Filter Toggle */}
+        <div className="flex items-center gap-3 mb-6 p-3 rounded-lg bg-secondary/30 border border-border/30">
+          <Filter className="w-4 h-4 text-amber-400" />
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <Label htmlFor="sum-filter" className="text-sm font-medium cursor-pointer">Sum/Range Constraint Filter</Label>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Info className="w-3.5 h-3.5 text-muted-foreground cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="max-w-sm text-xs">
+                    <p className="font-semibold mb-1">What does this filter do?</p>
+                    <p>Validates predictions against historically observed sum ranges (10th-90th percentile). Predictions whose number sums fall outside the common range are adjusted. Also flags odd/even and high/low imbalances.</p>
+                    <p className="mt-1 text-amber-300">Toggle off to see raw model output; toggle on to see filtered results.</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">Adjust predictions to match historical sum ranges and balance patterns</p>
+          </div>
+          <Switch id="sum-filter" checked={sumRangeFilter} onCheckedChange={setSumRangeFilter} />
+        </div>
+
+        {generatePredictions.data?.sumRangeFilterApplied && (
+          <div className="mb-4 p-2 rounded-md bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 flex items-center gap-2">
+            <Filter className="w-3.5 h-3.5" />
+            Sum/Range Constraint Filter was applied. Models with adjusted numbers show a <Filter className="w-3 h-3 inline" /> icon.
+          </div>
+        )}
+
         <Tabs defaultValue="models" className="space-y-6">
           <TabsList className="bg-secondary">
-            <TabsTrigger value="models">16 Model Outputs</TabsTrigger>
+            <TabsTrigger value="models">18 Model Outputs</TabsTrigger>
             <TabsTrigger value="tickets">Budget Tickets</TabsTrigger>
           </TabsList>
 
@@ -400,7 +458,7 @@ export default function Predictions() {
             {predictions ? (
               <div>
                 <p className="text-sm text-muted-foreground mb-4">
-                  Showing predictions for <span className="text-primary font-medium">{generatePredictions.data?.gameName}</span> from all 16 models
+                  Showing predictions for <span className="text-primary font-medium">{generatePredictions.data?.gameName}</span> from all 18 models
                 </p>
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                   {/* AI Oracle first */}

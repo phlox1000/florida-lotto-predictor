@@ -8,7 +8,7 @@ import { invokeLLM } from "./_core/llm";
 import { notifyOwner } from "./_core/notification";
 import { fetchHistoricalDraws } from "./lib/fl-lottery-scraper";
 import { fetchRecentDraws, fetchAllGamesRecent } from "./lib/lotteryusa-scraper";
-import { runAllModels, selectBudgetTickets } from "./predictions";
+import { runAllModels, selectBudgetTickets, applySumRangeFilter } from "./predictions";
 import {
   getDrawResults, insertDrawResult, getLatestDrawResults, getAllDrawResults, getDrawResultCount,
   insertPredictions, getUserPredictions, getRecentPredictions,
@@ -36,9 +36,9 @@ export const appRouter = router({
 
   // ─── Predictions ────────────────────────────────────────────────────────────
   predictions: router({
-    /** Run all 16 models for a game type, using accuracy-based weights when available */
+    /** Run all 18 models for a game type, using accuracy-based weights when available */
     generate: publicProcedure
-      .input(z.object({ gameType: gameTypeSchema }))
+      .input(z.object({ gameType: gameTypeSchema, sumRangeFilter: z.boolean().default(false) }))
       .mutation(async ({ input, ctx }) => {
         const cfg = FLORIDA_GAMES[input.gameType];
         const historyRows = await getDrawResults(input.gameType, 200);
@@ -50,7 +50,12 @@ export const appRouter = router({
 
         // Fetch model weights from historical accuracy tracking
         const modelWeights = await getModelWeights(input.gameType);
-        const allPredictions = runAllModels(cfg, history, Object.keys(modelWeights).length > 0 ? modelWeights : undefined);
+        let allPredictions = runAllModels(cfg, history, Object.keys(modelWeights).length > 0 ? modelWeights : undefined);
+
+        // Apply Sum/Range Constraint Filter if toggled on
+        if (input.sumRangeFilter) {
+          allPredictions = applySumRangeFilter(allPredictions, cfg, history);
+        }
 
         // Persist predictions if user is logged in
         if (ctx.user) {
@@ -74,6 +79,7 @@ export const appRouter = router({
           gameType: input.gameType,
           gameName: cfg.name,
           weightsUsed: Object.keys(modelWeights).length > 0,
+          sumRangeFilterApplied: input.sumRangeFilter,
         };
       }),
 

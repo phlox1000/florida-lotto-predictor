@@ -56,10 +56,10 @@ describe("Prediction Engine Audit", () => {
     }
   });
 
-  it("all 16 models produce valid results with sufficient history", () => {
+  it("all 18 models produce valid results with sufficient history", () => {
     const history = makeHistory(150, fantasy5);
     const results = runAllModels(fantasy5, history);
-    expect(results.length).toBe(16);
+    expect(results.length).toBe(18);
     
     const validModels = results.filter(r => r.mainNumbers.length > 0);
     // With 150 draws, most models should produce valid results

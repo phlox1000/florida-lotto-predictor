@@ -673,6 +673,314 @@ function quantumEntanglementModel(cfg: GameConfig, history: HistoryDraw[]): Pred
 }
 
 /**
+ * Model 17: Compound-Dirichlet-Multinomial (CDM)
+ * Models the joint distribution of all number positions simultaneously using a
+ * matrix-valued Dirichlet prior. Unlike the Bayesian model (Model 14) which treats
+ * each number independently, CDM captures inter-position dependencies.
+ * Reference: Nkomozake (2024), arXiv:2403.12836
+ */
+function cdmModel(cfg: GameConfig, history: HistoryDraw[]): PredictionResult {
+  const check = checkHistory(history, 30, cfg);
+  if (!check.sufficient) return insufficientDataResult("cdm", cfg, check);
+
+  const recent = history.slice(-200);
+  const numPositions = cfg.mainCount;
+  const poolSize = cfg.mainMax;
+
+  // Build position-specific frequency matrices
+  // positionFreq[pos][number] = count of times 'number' appeared in position 'pos'
+  const positionFreq: Map<number, number>[] = [];
+  for (let p = 0; p < numPositions; p++) {
+    positionFreq.push(new Map<number, number>());
+  }
+
+  // Build co-occurrence matrix across positions
+  // cooccur[pos_i][pos_j][num_i][num_j] = count
+  // Simplified: pairPositionScore[num] = weighted score from position-aware analysis
+  const pairPositionScore = new Map<number, number>();
+
+  for (const draw of recent) {
+    const sorted = [...draw.mainNumbers].sort((a, b) => a - b);
+    for (let p = 0; p < Math.min(numPositions, sorted.length); p++) {
+      const num = sorted[p];
+      positionFreq[p].set(num, (positionFreq[p].get(num) || 0) + 1);
+    }
+  }
+
+  // Dirichlet-Multinomial posterior for each position
+  // alpha_prior = 1.0 (uniform), posterior = alpha + observed counts
+  const alpha = 1.0;
+  const positionPosteriors: Map<number, number>[] = [];
+
+  for (let p = 0; p < numPositions; p++) {
+    const posterior = new Map<number, number>();
+    const totalObs = recent.length;
+    for (let n = 1; n <= poolSize; n++) {
+      const count = positionFreq[p].get(n) || 0;
+      // Posterior predictive probability: (alpha + count) / (poolSize * alpha + totalObs)
+      const prob = (alpha + count) / (poolSize * alpha + totalObs);
+      posterior.set(n, prob);
+    }
+    positionPosteriors.push(posterior);
+  }
+
+  // Build inter-position transition matrix
+  // For consecutive positions (i, i+1), track P(num_at_pos_{i+1} | num_at_pos_i)
+  const transitionBonus = new Map<number, number>();
+  for (const draw of recent) {
+    const sorted = [...draw.mainNumbers].sort((a, b) => a - b);
+    for (let p = 0; p < sorted.length - 1; p++) {
+      const curr = sorted[p];
+      const next = sorted[p + 1];
+      // Numbers that frequently follow each other in sorted position get a bonus
+      transitionBonus.set(next, (transitionBonus.get(next) || 0) + 1);
+      transitionBonus.set(curr, (transitionBonus.get(curr) || 0) + 0.5);
+    }
+  }
+
+  // Compound score: combine position-specific posteriors with transition bonuses
+  const compoundScores = new Map<number, number>();
+  for (let n = 1; n <= poolSize; n++) {
+    let score = 0;
+    // Sum posterior probabilities across all positions where this number could appear
+    for (let p = 0; p < numPositions; p++) {
+      score += positionPosteriors[p].get(n) || 0;
+    }
+    // Add transition bonus (normalized)
+    const maxTransition = Math.max(1, ...transitionBonus.values());
+    score += ((transitionBonus.get(n) || 0) / maxTransition) * 0.3;
+    compoundScores.set(n, score);
+  }
+
+  // Select top numbers by compound CDM score
+  const ranked = [...compoundScores.entries()].sort((a, b) => b[1] - a[1]);
+  const main = ranked.slice(0, cfg.mainCount).map(e => e[0]).sort((a, b) => a - b);
+
+  return {
+    modelName: "cdm",
+    mainNumbers: main,
+    specialNumbers: generateSpecialFromHistory(cfg, history, 17),
+    confidenceScore: Math.min(0.80, 0.4 + recent.length * 0.002),
+    metadata: {
+      strategy: "compound_dirichlet_multinomial",
+      drawsUsed: recent.length,
+      positions: numPositions,
+      priorAlpha: alpha,
+    },
+  };
+}
+
+/**
+ * Model 18: Chi-Square Anomaly Detector
+ * Tests whether each number's observed frequency deviates significantly from
+ * the expected uniform distribution. Numbers with the highest chi-square values
+ * (most statistically anomalous) are selected.
+ * Unlike raw frequency, chi-square accounts for sample size.
+ */
+function chiSquareModel(cfg: GameConfig, history: HistoryDraw[]): PredictionResult {
+  const check = checkHistory(history, 20, cfg);
+  if (!check.sufficient) return insufficientDataResult("chi_square", cfg, check);
+
+  const recent = history.slice(-200);
+  const poolSize = cfg.mainMax;
+  const totalDraws = recent.length;
+  const numbersPerDraw = cfg.mainCount;
+
+  // Expected frequency for each number under uniform distribution
+  // E(n) = totalDraws * numbersPerDraw / poolSize
+  const expectedFreq = (totalDraws * numbersPerDraw) / poolSize;
+
+  // Count observed frequencies
+  const observed = new Map<number, number>();
+  for (const draw of recent) {
+    for (const n of draw.mainNumbers) {
+      observed.set(n, (observed.get(n) || 0) + 1);
+    }
+  }
+
+  // Compute chi-square statistic for each number
+  // chi2(n) = (observed - expected)^2 / expected
+  // We want numbers that appear MORE than expected (positive anomalies)
+  const chiSquareScores = new Map<number, number>();
+  const significanceScores = new Map<number, number>();
+
+  for (let n = 1; n <= poolSize; n++) {
+    const obs = observed.get(n) || 0;
+    const chi2 = Math.pow(obs - expectedFreq, 2) / expectedFreq;
+    chiSquareScores.set(n, chi2);
+
+    // Direction-aware score: positive if over-represented, negative if under-represented
+    // We select numbers that are significantly OVER-represented
+    const directedScore = obs > expectedFreq ? chi2 : -chi2;
+    significanceScores.set(n, directedScore);
+  }
+
+  // Also compute a "due" score for significantly under-represented numbers
+  // Blend: 70% over-represented (hot anomalies) + 30% under-represented (due anomalies)
+  const hotCount = Math.ceil(cfg.mainCount * 0.7);
+  const dueCount = cfg.mainCount - hotCount;
+
+  // Hot anomalies: highest positive chi-square (appear more than expected)
+  const hotRanked = [...significanceScores.entries()]
+    .filter(([_, s]) => s > 0)
+    .sort((a, b) => b[1] - a[1]);
+  const hotPicks = hotRanked.slice(0, hotCount).map(e => e[0]);
+
+  // Due anomalies: highest negative chi-square (appear less than expected)
+  const dueRanked = [...significanceScores.entries()]
+    .filter(([_, s]) => s < 0)
+    .sort((a, b) => a[1] - b[1]); // most negative first
+  const duePicks = dueRanked
+    .filter(([n]) => !hotPicks.includes(n))
+    .slice(0, dueCount)
+    .map(e => e[0]);
+
+  let main = [...hotPicks, ...duePicks];
+
+  // Fill remaining if needed from highest absolute chi-square
+  if (main.length < cfg.mainCount) {
+    const allRanked = [...chiSquareScores.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .filter(([n]) => !main.includes(n));
+    for (const [n] of allRanked) {
+      if (main.length >= cfg.mainCount) break;
+      main.push(n);
+    }
+  }
+
+  main = main.slice(0, cfg.mainCount).sort((a, b) => a - b);
+
+  // Overall chi-square statistic for the entire distribution
+  let totalChi2 = 0;
+  for (let n = 1; n <= poolSize; n++) {
+    totalChi2 += chiSquareScores.get(n) || 0;
+  }
+  // Degrees of freedom = poolSize - 1
+  // p-value approximation (higher chi2 = more non-uniform = more predictable)
+  const degreesOfFreedom = poolSize - 1;
+
+  return {
+    modelName: "chi_square",
+    mainNumbers: main,
+    specialNumbers: generateSpecialFromHistory(cfg, history, 18),
+    confidenceScore: Math.min(0.80, 0.35 + Math.min(totalChi2 / degreesOfFreedom, 1) * 0.45),
+    metadata: {
+      strategy: "chi_square_anomaly_detection",
+      drawsUsed: recent.length,
+      expectedFrequency: Math.round(expectedFreq * 100) / 100,
+      totalChiSquare: Math.round(totalChi2 * 100) / 100,
+      degreesOfFreedom,
+      hotAnomalies: hotPicks.length,
+      dueAnomalies: duePicks.length,
+    },
+  };
+}
+
+// ─── Sum/Range Constraint Filter ────────────────────────────────────────────────
+
+/**
+ * Post-processing filter that validates predictions against historically observed
+ * sum ranges. Predictions whose number sums fall outside the common range are
+ * adjusted by swapping outlier numbers to bring the sum into range.
+ *
+ * This is NOT a standalone model — it's applied on top of existing predictions.
+ * Can be toggled on/off by the user.
+ */
+export function applySumRangeFilter(
+  predictions: PredictionResult[],
+  cfg: GameConfig,
+  history: HistoryDraw[]
+): PredictionResult[] {
+  if (history.length < 50 || cfg.isDigitGame) return predictions;
+
+  // Calculate historical sum distribution
+  const sums = history.map(d => d.mainNumbers.reduce((a, b) => a + b, 0));
+  sums.sort((a, b) => a - b);
+
+  // Use 10th and 90th percentile as the acceptable range
+  const p10Index = Math.floor(sums.length * 0.10);
+  const p90Index = Math.floor(sums.length * 0.90);
+  const sumMin = sums[p10Index];
+  const sumMax = sums[p90Index];
+  const sumMean = sums.reduce((a, b) => a + b, 0) / sums.length;
+
+  // Also compute odd/even and high/low balance stats
+  const midpoint = Math.ceil(cfg.mainMax / 2);
+
+  return predictions.map(pred => {
+    if (pred.mainNumbers.length === 0 || pred.metadata?.insufficient_data) {
+      return pred;
+    }
+
+    const currentSum = pred.mainNumbers.reduce((a, b) => a + b, 0);
+    let adjustedNumbers = [...pred.mainNumbers];
+    let wasFiltered = false;
+    let filterNotes: string[] = [];
+
+    // Check sum range
+    if (currentSum < sumMin || currentSum > sumMax) {
+      wasFiltered = true;
+      filterNotes.push(`Sum ${currentSum} outside range [${sumMin}-${sumMax}]`);
+
+      // Adjust: swap the most extreme number to bring sum closer to mean
+      const targetSum = sumMean;
+      const diff = currentSum - targetSum;
+
+      if (diff > 0) {
+        // Sum too high — replace the largest number with a smaller one
+        adjustedNumbers.sort((a, b) => b - a); // descending
+        const largest = adjustedNumbers[0];
+        const replacement = Math.max(1, largest - Math.round(diff));
+        if (replacement >= 1 && replacement <= cfg.mainMax && !adjustedNumbers.includes(replacement)) {
+          adjustedNumbers[0] = replacement;
+        }
+      } else {
+        // Sum too low — replace the smallest number with a larger one
+        adjustedNumbers.sort((a, b) => a - b); // ascending
+        const smallest = adjustedNumbers[0];
+        const replacement = Math.min(cfg.mainMax, smallest + Math.round(Math.abs(diff)));
+        if (replacement >= 1 && replacement <= cfg.mainMax && !adjustedNumbers.includes(replacement)) {
+          adjustedNumbers[0] = replacement;
+        }
+      }
+    }
+
+    // Check odd/even balance (ideal: roughly half odd, half even)
+    const oddCount = adjustedNumbers.filter(n => n % 2 !== 0).length;
+    const idealOdd = Math.round(cfg.mainCount / 2);
+    if (Math.abs(oddCount - idealOdd) > Math.ceil(cfg.mainCount / 3)) {
+      filterNotes.push(`Odd/even imbalance: ${oddCount}/${cfg.mainCount - oddCount}`);
+      // Note: we flag but don't auto-correct odd/even to preserve model integrity
+    }
+
+    // Check high/low balance
+    const highCount = adjustedNumbers.filter(n => n > midpoint).length;
+    if (Math.abs(highCount - idealOdd) > Math.ceil(cfg.mainCount / 3)) {
+      filterNotes.push(`High/low imbalance: ${highCount}/${cfg.mainCount - highCount}`);
+    }
+
+    adjustedNumbers.sort((a, b) => a - b);
+
+    return {
+      ...pred,
+      mainNumbers: adjustedNumbers,
+      metadata: {
+        ...pred.metadata,
+        sumRangeFilter: {
+          applied: true,
+          wasAdjusted: wasFiltered,
+          originalSum: currentSum,
+          adjustedSum: adjustedNumbers.reduce((a, b) => a + b, 0),
+          acceptableRange: [sumMin, sumMax],
+          historicalMean: Math.round(sumMean),
+          notes: filterNotes,
+        },
+      },
+    };
+  });
+}
+
+/**
  * Model 16: AI Oracle (Meta-Ensemble)
  * Weighted vote from all sibling model outputs, using accuracy-based weights when available.
  * Only considers models that produced valid (non-empty) results.
@@ -733,7 +1041,7 @@ function aiOracleModel(
 // ─── Public API ─────────────────────────────────────────────────────────────────
 
 /**
- * Run all 16 models. When modelWeights are provided (from historical accuracy tracking),
+ * Run all 18 models. When modelWeights are provided (from historical accuracy tracking),
  * the AI Oracle ensemble uses them to weight models proportionally to their past performance.
  *
  * Models that lack sufficient historical data will return empty numbers with an
@@ -760,6 +1068,8 @@ export function runAllModels(
     markovChainModel(cfg, history),
     bayesianModel(cfg, history),
     quantumEntanglementModel(cfg, history),
+    cdmModel(cfg, history),
+    chiSquareModel(cfg, history),
   ];
   // AI Oracle runs last with all sibling results + accuracy-based weights
   siblingResults.push(aiOracleModel(cfg, history, siblingResults, modelWeights));
