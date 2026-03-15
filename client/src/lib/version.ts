@@ -18,6 +18,17 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.4.0",
+    date: "2026-03-15",
+    title: "Head-to-Head & Consensus Strength",
+    changes: [
+      { type: "feature", text: "Head-to-Head Matchups — compare any two models side-by-side across all games" },
+      { type: "feature", text: "Consensus Strength Score — see how many models agree on each number (14/18 = strong signal)" },
+      { type: "improvement", text: "New H2H page accessible from navigation with per-game breakdown and overall winner" },
+      { type: "improvement", text: "Consensus panel shows top picks, strength tiers, and agreement bar chart" },
+    ],
+  },
+  {
     version: "4.3.0",
     date: "2026-03-15",
     title: "Smart Versioning & Update History",

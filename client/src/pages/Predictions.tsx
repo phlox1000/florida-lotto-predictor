@@ -15,6 +15,7 @@ import { useState, useMemo, useCallback } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { toast } from "sonner";
 import { useBackgroundSync } from "@/hooks/useBackgroundSync";
+import ConsensusPanel from "@/components/ConsensusPanel";
 
 function LottoBall({ number, variant = "main" }: { number: number; variant?: "main" | "special" }) {
   return (
@@ -476,6 +477,7 @@ export default function Predictions() {
                 <p className="text-sm text-muted-foreground mb-4">
                   Showing predictions for <span className="text-primary font-medium">{generatePredictions.data?.gameName}</span> from all 18 models
                 </p>
+                <ConsensusPanel predictions={predictions} />
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                   {/* AI Oracle first */}
                   {predictions.filter(p => p.modelName === "ai_oracle").map(p => (

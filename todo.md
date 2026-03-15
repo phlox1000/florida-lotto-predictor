@@ -127,3 +127,9 @@
 - [x] Auto-version sync: derive SW version from WhatsNew changelog so they can never get out of sync
 - [x] Force-refresh on major updates: auto-refresh app without user tapping "Update Now" for critical/major version bumps
 - [x] Update history log: show list of past update timestamps in Settings so user can verify when each version was applied
+- [x] Model Head-to-Head Matchups: new page to select two models and compare side-by-side across all games
+- [x] Model Head-to-Head Matchups: backend endpoint returning per-game stats for any two models
+- [x] Model Head-to-Head Matchups: route and nav link added
+- [x] Consensus Strength Score: show how many models agree on each number in predictions
+- [x] Consensus Strength Score: frontend ConsensusPanel component computing consensus across all 18 models
+- [x] Consensus Strength Score: visual indicator (color/bar) showing agreement strength
