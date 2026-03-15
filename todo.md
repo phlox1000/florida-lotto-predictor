@@ -123,3 +123,4 @@
 - [x] Export History to CSV: include prediction history in CSV export
 - [x] Export History to CSV: filterable by game before export with Export CSV tab
 - [x] Reference doc: updated master feature list v4.2 (standalone download, not in app)
+- [x] Fix: service worker CACHE_VERSION not updating — bump to 4.2.0 so Settings shows correct version

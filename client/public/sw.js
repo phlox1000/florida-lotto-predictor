@@ -1,6 +1,6 @@
 // ─── Version & Cache ────────────────────────────────────────────────────────
 // Bump this on every deploy so the SW lifecycle triggers an update.
-const APP_VERSION = '4.0.0';
+const APP_VERSION = '4.2.0';
 const CACHE_NAME = `fl-lotto-oracle-v${APP_VERSION}`;
 const STATIC_ASSETS = ['/', '/manifest.json'];
 
