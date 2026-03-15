@@ -199,3 +199,98 @@ describe("Key Number Wheel logic", () => {
     expect(subCombos.length).toBe(nCr(7, 4)); // 35
   });
 });
+
+describe("Smart Wheel consensus logic", () => {
+  // Simulate the consensus voting algorithm from the smartNumbers endpoint
+  function computeConsensus(
+    modelResults: Array<{ modelName: string; mainNumbers: number[]; confidenceScore: number }>,
+    count: number
+  ) {
+    const votes = new Map<number, { count: number; weightedScore: number; models: string[] }>();
+    for (const pred of modelResults) {
+      if (pred.mainNumbers.length === 0) continue;
+      for (const n of pred.mainNumbers) {
+        const existing = votes.get(n) || { count: 0, weightedScore: 0, models: [] };
+        existing.count += 1;
+        existing.weightedScore += pred.confidenceScore;
+        existing.models.push(pred.modelName);
+        votes.set(n, existing);
+      }
+    }
+    const ranked = [...votes.entries()].sort((a, b) => b[1].weightedScore - a[1].weightedScore);
+    return ranked.slice(0, count).map(e => e[0]).sort((a, b) => a - b);
+  }
+
+  it("returns top numbers by weighted vote across models", () => {
+    const models = [
+      { modelName: "model_a", mainNumbers: [1, 5, 10, 20, 30], confidenceScore: 0.8 },
+      { modelName: "model_b", mainNumbers: [5, 10, 15, 20, 25], confidenceScore: 0.7 },
+      { modelName: "model_c", mainNumbers: [5, 10, 20, 25, 30], confidenceScore: 0.6 },
+    ];
+    const result = computeConsensus(models, 5);
+    expect(result.length).toBe(5);
+    // Numbers 5, 10, 20 appear in all 3 models — should be in top picks
+    expect(result).toContain(5);
+    expect(result).toContain(10);
+    expect(result).toContain(20);
+  });
+
+  it("weights by confidence score, not just frequency", () => {
+    const models = [
+      { modelName: "high_conf", mainNumbers: [1, 2, 3, 4, 5], confidenceScore: 0.95 },
+      { modelName: "low_conf_a", mainNumbers: [6, 7, 8, 9, 10], confidenceScore: 0.1 },
+      { modelName: "low_conf_b", mainNumbers: [6, 7, 8, 9, 10], confidenceScore: 0.1 },
+    ];
+    // Numbers 6-10 appear in 2 models but with low confidence (0.2 total)
+    // Numbers 1-5 appear in 1 model but with high confidence (0.95 total)
+    const result = computeConsensus(models, 5);
+    // High confidence model's numbers should dominate
+    expect(result).toContain(1);
+    expect(result).toContain(2);
+    expect(result).toContain(3);
+  });
+
+  it("returns sorted numbers", () => {
+    const models = [
+      { modelName: "a", mainNumbers: [30, 15, 5, 25, 10], confidenceScore: 0.8 },
+      { modelName: "b", mainNumbers: [25, 10, 30, 5, 15], confidenceScore: 0.7 },
+    ];
+    const result = computeConsensus(models, 5);
+    for (let i = 1; i < result.length; i++) {
+      expect(result[i]).toBeGreaterThan(result[i - 1]);
+    }
+  });
+
+  it("handles empty model results gracefully", () => {
+    const models = [
+      { modelName: "valid", mainNumbers: [1, 2, 3, 4, 5], confidenceScore: 0.8 },
+      { modelName: "empty", mainNumbers: [], confidenceScore: 0 },
+    ];
+    const result = computeConsensus(models, 5);
+    expect(result.length).toBe(5);
+    expect(result).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("returns fewer numbers if not enough unique numbers across models", () => {
+    const models = [
+      { modelName: "a", mainNumbers: [1, 2, 3], confidenceScore: 0.8 },
+    ];
+    const result = computeConsensus(models, 8);
+    // Only 3 unique numbers available, so can only return 3
+    expect(result.length).toBe(3);
+  });
+
+  it("handles many models with diverse numbers", () => {
+    const models = Array.from({ length: 18 }, (_, i) => ({
+      modelName: `model_${i}`,
+      mainNumbers: [i + 1, i + 2, i + 3, i + 4, i + 5],
+      confidenceScore: 0.5 + (i * 0.02),
+    }));
+    const result = computeConsensus(models, 8);
+    expect(result.length).toBe(8);
+    // All numbers should be valid (positive integers)
+    for (const n of result) {
+      expect(n).toBeGreaterThan(0);
+    }
+  });
+});

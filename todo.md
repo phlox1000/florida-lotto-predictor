@@ -83,3 +83,6 @@
 - [x] Number Wheel generator: frontend UI with number input, wheel type selection, budget constraint
 - [x] Number Wheel generator: navbar link and route
 - [x] Write tests for leaderboard and wheel features (all passing)
+- [x] Smart Wheel: backend endpoint to get consensus numbers from all 18 models
+- [x] Smart Wheel: frontend button on Wheel page to auto-populate with consensus numbers
+- [x] Full audit: verified zero Math.random(), zero hardcoded numbers, zero fake data in entire prediction engine

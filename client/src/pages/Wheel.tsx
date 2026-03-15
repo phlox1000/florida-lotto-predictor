@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import Navbar from "@/components/Navbar";
 import { trpc } from "@/lib/trpc";
 import { FLORIDA_GAMES, GAME_TYPES, type GameType } from "@shared/lottery";
-import { Cog, Ticket, DollarSign, Target, Percent, Trash2, Plus, Info, AlertCircle } from "lucide-react";
+import { Cog, Ticket, DollarSign, Target, Percent, Trash2, Plus, Info, AlertCircle, Sparkles, Brain } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
 
@@ -101,6 +101,26 @@ export default function Wheel() {
   const generateMutation = trpc.wheel.generate.useMutation({
     onError: (err) => toast.error(err.message),
   });
+
+  const smartMutation = trpc.wheel.smartNumbers.useMutation({
+    onSuccess: (data) => {
+      if (data.error) {
+        toast.error(data.error);
+        return;
+      }
+      if (data.numbers.length === 0) {
+        toast.error("No consensus numbers found. Ensure historical data is loaded.");
+        return;
+      }
+      // Auto-populate the number grid with consensus numbers
+      setSelectedNumbers(new Set(data.numbers));
+      setKeyNumber(null);
+      toast.success(`Smart Wheel loaded ${data.numbers.length} consensus numbers from ${data.totalModelsUsed} models`);
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const [smartCount, setSmartCount] = useState(8);
 
   const toggleNumber = (n: number) => {
     setSelectedNumbers(prev => {
@@ -266,10 +286,12 @@ export default function Wheel() {
                       {selectedNumbers.size} / {cfg.mainMax} selected
                     </Badge>
                   </CardTitle>
-                  <Button variant="ghost" size="sm" onClick={clearAll} className="text-muted-foreground">
-                    <Trash2 className="w-4 h-4 mr-1" />
-                    Clear
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button variant="ghost" size="sm" onClick={clearAll} className="text-muted-foreground">
+                      <Trash2 className="w-4 h-4 mr-1" />
+                      Clear
+                    </Button>
+                  </div>
                 </div>
                 <p className="text-xs text-muted-foreground">
                   Pick {cfg.mainCount}+ numbers from 1-{cfg.mainMax}. More numbers = more combinations.
@@ -285,6 +307,89 @@ export default function Wheel() {
                   onKeyToggle={toggleKey}
                   showKey={wheelType === "key"}
                 />
+              </CardContent>
+            </Card>
+
+            {/* Smart Wheel */}
+            <Card className="bg-card border-primary/30 glow-cyan-sm">
+              <CardContent className="p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Brain className="w-5 h-5 text-primary" />
+                  <span className="font-semibold text-sm">Smart Wheel</span>
+                  <Badge className="bg-primary/20 text-primary text-[10px]">AI-Powered</Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Auto-select the top consensus numbers from all 18 prediction models. Numbers are ranked by how many models picked them, weighted by each model's confidence score.
+                </p>
+                <div className="flex items-center gap-3">
+                  <div className="flex-1">
+                    <Label className="text-xs text-muted-foreground mb-1 block">How many numbers</Label>
+                    <Select value={String(smartCount)} onValueChange={(v) => setSmartCount(Number(v))}>
+                      <SelectTrigger className="bg-background h-9">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {[6, 7, 8, 9, 10, 12, 15].map(n => (
+                          <SelectItem key={n} value={String(n)}>{n} numbers</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex-1">
+                    <Label className="text-xs text-muted-foreground mb-1 block">&nbsp;</Label>
+                    <Button
+                      onClick={() => smartMutation.mutate({ gameType: selectedGame, count: smartCount })}
+                      disabled={smartMutation.isPending || isDigitGame}
+                      className="w-full h-9 bg-gradient-to-r from-primary to-cyan-400 hover:from-primary/90 hover:to-cyan-400/90 text-black font-semibold"
+                    >
+                      {smartMutation.isPending ? (
+                        <span className="flex items-center gap-1.5">
+                          <Sparkles className="w-4 h-4 animate-pulse" />
+                          Analyzing...
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1.5">
+                          <Sparkles className="w-4 h-4" />
+                          Smart Fill
+                        </span>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Smart Wheel Results Detail */}
+                {smartMutation.data && !smartMutation.data.error && smartMutation.data.numbers.length > 0 && (
+                  <div className="bg-muted/10 rounded-lg p-3 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">
+                        {smartMutation.data.totalModelsUsed}/{smartMutation.data.totalModels} models used &bull; {smartMutation.data.historyUsed} draws analyzed
+                      </span>
+                    </div>
+                    <div className="space-y-1">
+                      {smartMutation.data.numbers.map(n => {
+                        const vote = smartMutation.data!.modelVotes[n];
+                        if (!vote) return null;
+                        return (
+                          <div key={n} className="flex items-center gap-2 text-xs">
+                            <span className="w-7 h-7 rounded-full bg-primary/20 text-primary font-bold flex items-center justify-center text-xs">{n}</span>
+                            <div className="flex-1">
+                              <div className="flex items-center justify-between">
+                                <span className="text-muted-foreground">{vote.count} models</span>
+                                <span className="text-primary font-medium">score: {vote.weightedScore}</span>
+                              </div>
+                              <div className="w-full bg-muted/20 rounded-full h-1 mt-0.5">
+                                <div
+                                  className="bg-primary rounded-full h-1 transition-all"
+                                  style={{ width: `${Math.min(100, (vote.count / (smartMutation.data?.totalModelsUsed || 1)) * 100)}%` }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
