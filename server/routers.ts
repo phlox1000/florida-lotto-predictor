@@ -6,7 +6,8 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, adminProcedure, router } from "./_core/trpc";
 import { invokeLLM } from "./_core/llm";
 import { notifyOwner } from "./_core/notification";
-import { fetchHistoricalDraws, fetchLatestDraws, fetchAllGamesLatest } from "./lib/fl-lottery-scraper";
+import { fetchHistoricalDraws } from "./lib/fl-lottery-scraper";
+import { fetchRecentDraws, fetchAllGamesRecent } from "./lib/lotteryusa-scraper";
 import { runAllModels, selectBudgetTickets } from "./predictions";
 import {
   getDrawResults, insertDrawResult, getLatestDrawResults, getAllDrawResults, getDrawResultCount,
@@ -567,12 +568,12 @@ export const appRouter = router({
 
   // ─── Data Fetch (auto-fetch lottery results from official FL Lottery files) ──
   dataFetch: router({
-    /** Fetch latest results for a single game from files.floridalottery.com */
+    /** Fetch latest results for a single game from lotteryusa.com */
     fetchLatest: adminProcedure
       .input(z.object({ gameType: gameTypeSchema }))
       .mutation(async ({ input }) => {
         try {
-          const draws = await fetchLatestDraws(input.gameType as GameType, 10);
+          const draws = await fetchRecentDraws(input.gameType as GameType);
           let insertedCount = 0;
 
           for (const draw of draws) {
@@ -583,7 +584,7 @@ export const appRouter = router({
                 mainNumbers: draw.mainNumbers,
                 specialNumbers: draw.specialNumbers,
                 drawTime: draw.drawTime,
-                source: "floridalottery.com",
+                source: "lotteryusa.com",
               });
               insertedCount++;
 
@@ -612,13 +613,13 @@ export const appRouter = router({
         }
       }),
 
-    /** Fetch latest results for ALL games at once */
+    /** Fetch latest results for ALL games at once from lotteryusa.com */
     fetchAll: adminProcedure
       .mutation(async () => {
         const results: Record<string, { success: boolean; count: number }> = {};
 
         try {
-          const allGames = await fetchAllGamesLatest();
+          const allGames = await fetchAllGamesRecent();
 
           for (const [gt, draws] of Object.entries(allGames)) {
             if (!FLORIDA_GAMES[gt as GameType]) continue;
@@ -631,7 +632,7 @@ export const appRouter = router({
                   mainNumbers: draw.mainNumbers,
                   specialNumbers: draw.specialNumbers,
                   drawTime: draw.drawTime,
-                  source: "floridalottery.com",
+                  source: "lotteryusa.com",
                 });
                 count++;
 
@@ -687,7 +688,7 @@ export const appRouter = router({
                 mainNumbers: draw.mainNumbers,
                 specialNumbers: draw.specialNumbers,
                 drawTime: draw.drawTime,
-                source: "floridalottery.com",
+                source: "lotteryusa.com",
               });
               insertedCount++;
             } catch (e) {

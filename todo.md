@@ -62,3 +62,7 @@
 - [x] New scraper: fast indexOf-based HTML parser (handles 10MB+ files in <50ms)
 - [x] New scraper: vitest integration tests (24 tests, all passing)
 - [x] Bulk History now fetches 500 draws per game (up from 50)
+- [x] Fix: scraper only fetching data up to August 2025 — switched to lotteryusa.com for latest draws (now fetching March 2026 data)
+- [x] Fix: Mega Millions special ball color (yellow, not red) and Cash4Life (green, not red)
+- [x] Fix: midday URL slugs for Fantasy 5, Pick 2, Pick 5 on lotteryusa.com
+- [x] New lotteryusa scraper: 18 vitest tests, all passing
