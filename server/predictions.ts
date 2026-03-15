@@ -1,5 +1,5 @@
 /**
- * Florida Lottery Prediction Engine — 16 models ported from Python.
+ * Florida Lottery Prediction Engine — 18 models (16 ported from Python + CDM + Chi-Square).
  * All models are pure functions that take a GameConfig + history and return PredictionResult.
  *
  * IMPORTANT: No model uses pure random number generation. Every model either:

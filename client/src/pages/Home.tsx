@@ -178,14 +178,14 @@ export default function Home() {
           <div className="max-w-3xl mx-auto text-center">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-sm mb-6">
               <Sparkles className="w-3.5 h-3.5" />
-              16 Prediction Models &middot; AI-Powered Analysis
+              18 Prediction Models &middot; AI-Powered Analysis
             </div>
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight mb-4">
               Florida Lotto{" "}
               <span className="text-primary text-glow-cyan">Oracle</span>
             </h1>
             <p className="text-lg text-muted-foreground max-w-xl mx-auto mb-8">
-              Quantum-inspired prediction engine combining 16 statistical models with AI ensemble analysis.
+              Quantum-inspired prediction engine combining 18 statistical models with AI ensemble analysis.
               Generate optimized ticket selections powered by data-driven analysis.
             </p>
 
