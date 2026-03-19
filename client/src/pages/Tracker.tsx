@@ -16,13 +16,26 @@ import { getLoginUrl } from "@/const";
 import {
   DollarSign, TrendingUp, TrendingDown, Trophy, Ticket, Plus, Trash2,
   LogIn, CheckCircle, XCircle, Clock, BarChart3, Target,
+  Camera,
 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
 
+function extractDrawPeriodFromNotes(
+  notes: string | null | undefined
+): "midday" | "evening" | null {
+  if (!notes) return null;
+  const m = notes.match(/Draw period:\s*(midday|evening)/i);
+  if (!m) return null;
+  const value = (m[1] || "").toLowerCase();
+  if (value !== "midday" && value !== "evening") return null;
+  return value as "midday" | "evening";
+}
+
 function ROIDashboard() {
   const { data: stats, isLoading } = trpc.tracker.stats.useQuery();
   const { data: byGame, isLoading: byGameLoading } = trpc.tracker.statsByGame.useQuery();
+  const { data: ticketAnalytics, isLoading: analyticsLoading } = trpc.tickets.ticketAnalytics.useQuery();
 
   if (isLoading) {
     return <div className="grid sm:grid-cols-4 gap-4">{[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-24" />)}</div>;
@@ -124,7 +137,212 @@ function ROIDashboard() {
           </CardContent>
         </Card>
       )}
+
+      {/* Ticket Scanner Analytics */}
+      {!analyticsLoading && ticketAnalytics && (
+        <Card className="bg-card border-border/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 text-primary" />
+              Ticket Scanner Analytics
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              <div>
+                <p className="text-xs text-muted-foreground mb-2">Top Models (most played)</p>
+                <div className="space-y-1">
+                  {ticketAnalytics.modelsPlayedMost?.slice(0, 3).map((m: any) => (
+                    <div key={m.model} className="flex items-center justify-between text-xs">
+                      <span className="text-foreground/90 truncate pr-2">{m.model}</span>
+                      <span className="text-muted-foreground">{m.count}</span>
+                    </div>
+                  )) || <p className="text-xs text-muted-foreground">No scanned tickets yet.</p>}
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs text-muted-foreground mb-2">Best Profit Models</p>
+                <div className="space-y-1">
+                  {ticketAnalytics.modelsWonMoney?.slice(0, 3).map((m: any) => (
+                    <div key={m.model} className="flex items-center justify-between text-xs">
+                      <span className="text-foreground/90 truncate pr-2">{m.model}</span>
+                      <span className={`font-bold ${m.profit >= 0 ? "text-green-400" : "text-red-400"}`}>
+                        {m.profit >= 0 ? "+" : ""}${Number(m.profit || 0).toFixed(0)}
+                      </span>
+                    </div>
+                  )) || <p className="text-xs text-muted-foreground">No wins recorded yet.</p>}
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs text-muted-foreground mb-2">Best Hit Rate Models</p>
+                <div className="space-y-1">
+                  {(ticketAnalytics.hitRateByModel || []).slice(0, 3).map((m: any) => (
+                    <div key={m.model} className="flex items-center justify-between text-xs">
+                      <span className="text-foreground/90 truncate pr-2">{m.model}</span>
+                      <span className="text-muted-foreground">{Number(m.hitRate || 0).toFixed(1)}%</span>
+                    </div>
+                  )) || <p className="text-xs text-muted-foreground">No evaluated tickets yet.</p>}
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs text-muted-foreground mb-2">Midday vs Evening</p>
+                <div className="space-y-1 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Midday</span>
+                    <span className="text-foreground">{ticketAnalytics.middayVsEvening?.midday || 0} tickets</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Evening</span>
+                    <span className="text-foreground">{ticketAnalytics.middayVsEvening?.evening || 0} tickets</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
+  );
+}
+
+function ScanTicketDialog() {
+  const [open, setOpen] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [cost, setCost] = useState("1");
+  const [preview, setPreview] = useState<any>(null);
+  const [isScanning, setIsScanning] = useState(false);
+
+  const utils = trpc.useUtils();
+
+  const readFileAsBase64 = async (f: File) => {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || "");
+        const idx = result.indexOf("base64,");
+        const base64 = idx >= 0 ? result.slice(idx + "base64,".length) : result;
+        resolve(base64);
+      };
+      reader.onerror = () => reject(new Error("Failed to read file"));
+      reader.readAsDataURL(f);
+    });
+  };
+
+  const handleScan = async () => {
+    if (!file) {
+      toast.error("Select a ticket image first");
+      return;
+    }
+    const numericCost = parseFloat(cost);
+    if (!Number.isFinite(numericCost) || numericCost < 0) {
+      toast.error("Cost must be a non-negative number");
+      return;
+    }
+
+    setIsScanning(true);
+    setPreview(null);
+    try {
+      const base64 = await readFileAsBase64(file);
+      const response = await fetch("/api/upload-ticket", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          fileName: file.name,
+          fileData: base64,
+          cost: numericCost,
+        }),
+      });
+
+      const json = await response.json();
+      if (!response.ok) {
+        throw new Error(json?.error || "Ticket scan failed");
+      }
+
+      setPreview(json);
+      toast.success("Ticket scanned and added to your tracker");
+      utils.tracker.list.invalidate();
+      utils.tracker.stats.invalidate();
+      utils.tracker.statsByGame.invalidate();
+      utils.tickets.ticketAnalytics.invalidate();
+      setOpen(false);
+    } catch (e: any) {
+      toast.error(e?.message || "Ticket scan failed");
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button className="bg-card border-border/50 text-foreground hover:bg-card/80">
+          <Camera className="w-4 h-4 mr-2" />
+          Scan Ticket
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="bg-card border-border sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Camera className="w-5 h-5 text-primary" />
+            Ticket Scanner
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="space-y-1">
+            <Label className="text-xs">Ticket Photo</Label>
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={e => setFile(e.target.files?.[0] || null)}
+              className="block w-full text-sm text-muted-foreground"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs">Cost ($)</Label>
+            <Input type="number" step="0.01" min="0" value={cost} onChange={e => setCost(e.target.value)} className="bg-input h-9" />
+          </div>
+
+          {preview?.extracted && (
+            <div className="space-y-2 p-3 rounded-lg border border-border/30 bg-background/30">
+              <p className="text-xs text-muted-foreground">Extracted:</p>
+              <p className="text-xs font-bold">{preview.extracted.gameType}</p>
+              <p className="text-[11px] text-muted-foreground">
+                {preview.extracted.drawDate} ({preview.extracted.drawTime})
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                Main: {Array.isArray(preview.extracted.mainNumbers) ? preview.extracted.mainNumbers.join(", ") : "-"}
+              </p>
+              {preview.extracted.specialNumbers?.length > 0 && (
+                <p className="text-[11px] text-muted-foreground">
+                  Special: {preview.extracted.specialNumbers.join(", ")}
+                </p>
+              )}
+              {preview.matchedModel && (
+                <p className="text-[11px] text-muted-foreground">
+                  Matched model: {preview.matchedModel}
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2">
+            <Button type="button" variant="outline" disabled={isScanning} onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="button" className="bg-primary text-primary-foreground" disabled={isScanning || !file} onClick={handleScan}>
+              {isScanning ? "Scanning..." : "Scan & Save"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -317,6 +535,8 @@ function TicketList() {
         const mainNums = ticket.mainNumbers as number[];
         const specialNums = ticket.specialNumbers as number[] | null;
         const gameCfg = FLORIDA_GAMES[ticket.gameType as GameType];
+        const drawPeriod = extractDrawPeriodFromNotes(ticket.notes as string | null | undefined);
+        const drawDate = ticket.drawDate ? new Date(ticket.drawDate).toLocaleDateString() : null;
         const isEditing = editingId === ticket.id;
 
         return (
@@ -329,6 +549,11 @@ function TicketList() {
                     <span className="text-[10px] text-muted-foreground">
                       {new Date(ticket.purchaseDate).toLocaleDateString()}
                     </span>
+                    {drawPeriod && drawDate && (
+                      <span className="text-[10px] text-cyan-400/70">
+                        Draw: {drawPeriod} {drawDate}
+                      </span>
+                    )}
                     <span className="text-[10px] text-muted-foreground">${Number(ticket.cost).toFixed(2)}</span>
                     {ticket.modelSource && (
                       <span className="text-[10px] text-primary/60">{ticket.modelSource}</span>
@@ -346,6 +571,15 @@ function TicketList() {
 
                   {ticket.notes && (
                     <p className="text-[10px] text-muted-foreground truncate">{ticket.notes}</p>
+                  )}
+
+                  {(ticket.mainHits !== null && ticket.mainHits !== undefined) && ticket.outcome !== "pending" && (
+                    <p className="text-[10px] text-muted-foreground">
+                      Hits: {Number(ticket.mainHits)}/{gameCfg.mainCount}
+                      {gameCfg.specialCount > 0 && (
+                        <>; Special: {Number(ticket.specialHits || 0)}/{gameCfg.specialCount}</>
+                      )}
+                    </p>
                   )}
                 </div>
 
@@ -446,7 +680,10 @@ export default function Tracker() {
             <Target className="w-6 h-6 text-accent" />
             Win/Loss Tracker
           </h1>
-          <LogPurchaseDialog />
+          <div className="flex items-center gap-2">
+            <LogPurchaseDialog />
+            <ScanTicketDialog />
+          </div>
         </div>
 
         {/* ROI Dashboard */}

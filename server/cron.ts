@@ -5,7 +5,7 @@
  */
 import { FLORIDA_GAMES, GAME_TYPES, type GameType } from "@shared/lottery";
 import { fetchAllGamesRecent } from "./lib/lotteryusa-scraper";
-import { insertDrawResult, evaluatePredictionsAgainstDraw, getDb } from "./db";
+import { insertDrawResult, evaluatePredictionsAgainstDraw, evaluatePurchasedTicketsAgainstDraw, getDb } from "./db";
 import { notifyOwner } from "./_core/notification";
 
 export interface AutoFetchResult {
@@ -88,6 +88,19 @@ export async function runAutoFetch(): Promise<AutoFetchResult> {
             } catch (evalErr) {
               // Evaluation errors are non-fatal
               console.warn(`[AutoFetch] Evaluation error for ${gt}:`, evalErr);
+            }
+
+            // Also evaluate purchased tickets against this new draw
+            try {
+              await evaluatePurchasedTicketsAgainstDraw(
+                gt,
+                new Date(draw.drawDate).getTime(),
+                draw.drawTime || "evening",
+                draw.mainNumbers,
+                draw.specialNumbers
+              );
+            } catch (ticketErr) {
+              console.warn(`[AutoFetch] Ticket evaluation error for ${gt}:`, ticketErr);
             }
           }
         } catch (e) {

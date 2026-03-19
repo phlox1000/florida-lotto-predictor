@@ -21,6 +21,7 @@ import {
   insertPurchasedTicket, getUserPurchasedTickets, updatePurchasedTicketOutcome,
   deletePurchasedTicket, getUserROIStats, getROIByGame,
   getModelTrends,
+  getTicketAnalytics,
 } from "./db";
 
 const gameTypeSchema = z.enum(GAME_TYPES);
@@ -197,6 +198,12 @@ export const appRouter = router({
       .input(z.object({ limit: z.number().min(1).max(50).default(20) }))
       .query(async ({ ctx, input }) => {
         return getUserTicketSelections(ctx.user.id, input.limit);
+      }),
+
+    /** Get ticket scanner analytics (models played, profit, hit rate, midday vs evening) */
+    ticketAnalytics: protectedProcedure
+      .query(async ({ ctx }) => {
+        return getTicketAnalytics(ctx.user.id);
       }),
   }),
 

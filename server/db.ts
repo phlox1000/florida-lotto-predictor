@@ -12,6 +12,7 @@ import {
   purchasedTickets, InsertPurchasedTicket,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
+import { FLORIDA_GAMES, type GameType } from '@shared/lottery';
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -715,4 +716,150 @@ export async function getModelStreaks(minHits = 3) {
   // Sort by current streak descending
   streaks.sort((a, b) => b.currentStreak - a.currentStreak);
   return streaks;
+}
+
+
+// ─── Ticket Scanner Helpers ─────────────────────────────────────────────────
+
+export async function getUserPredictionsByGame(userId: number, gameType: string, limit = 250) {
+  const db = await getDb();
+  return db!
+    .select()
+    .from(predictions)
+    .where(and(eq(predictions.userId, userId), eq(predictions.gameType, gameType)))
+    .orderBy(desc(predictions.createdAt))
+    .limit(limit);
+}
+
+export async function getDrawResultByGameDateTime(
+  gameType: string,
+  drawDate: number,
+  drawTime: string
+) {
+  const db = await getDb();
+  const rows = await db!
+    .select()
+    .from(drawResults)
+    .where(
+      and(
+        eq(drawResults.gameType, gameType),
+        eq(drawResults.drawDate, drawDate),
+        eq(drawResults.drawTime, drawTime)
+      )
+    )
+    .limit(1);
+  return rows[0] || null;
+}
+
+export async function evaluatePurchasedTicketsAgainstDraw(
+  gameType: string,
+  drawDate: number,
+  drawTime: string,
+  winningMain: number[],
+  winningSpecial: number[]
+) {
+  const db = await getDb();
+  // Get all pending tickets for this game + draw date
+  const tickets = await db!
+    .select()
+    .from(purchasedTickets)
+    .where(
+      and(
+        eq(purchasedTickets.gameType, gameType),
+        eq(purchasedTickets.drawDate, drawDate),
+        eq(purchasedTickets.outcome, "pending")
+      )
+    );
+
+  const winningMainSet = new Set(winningMain);
+  const winningSpecialSet = new Set(winningSpecial);
+
+  const cfg = FLORIDA_GAMES[gameType as GameType];
+  if (!cfg) return;
+
+  for (const ticket of tickets) {
+    // Filter by draw time if present in notes
+    const notesLower = (ticket.notes || "").toLowerCase();
+    if (drawTime === "midday" && notesLower.includes("draw period: evening")) continue;
+    if (drawTime === "evening" && notesLower.includes("draw period: midday")) continue;
+
+    const ticketMain = (ticket.mainNumbers as number[]) || [];
+    const ticketSpecial = (ticket.specialNumbers as number[]) || [];
+
+    const mainHits = ticketMain.filter(n => winningMainSet.has(n)).length;
+    const specialHits = ticketSpecial.filter(n => winningSpecialSet.has(n)).length;
+
+    // Determine outcome
+    let outcome: "win" | "loss" = "loss";
+    let winAmount = 0;
+
+    // Simple win detection: any main hits count as partial win for tracking
+    if (mainHits >= 2 || (mainHits >= 1 && specialHits >= 1)) {
+      outcome = "win";
+      // We don't know exact prize tiers, so just mark as win
+    }
+
+    await db!
+      .update(purchasedTickets)
+      .set({
+        mainHits,
+        specialHits,
+        outcome,
+        winAmount,
+      })
+      .where(eq(purchasedTickets.id, ticket.id));
+  }
+}
+
+export async function getTicketAnalytics(userId: number) {
+  const db = await getDb();
+  const allTickets = await db!
+    .select()
+    .from(purchasedTickets)
+    .where(eq(purchasedTickets.userId, userId));
+
+  // Models played most
+  const modelCounts: Record<string, number> = {};
+  const modelProfit: Record<string, number> = {};
+  const modelHits: Record<string, { total: number; wins: number }> = {};
+  let middayCount = 0;
+  let eveningCount = 0;
+
+  for (const t of allTickets) {
+    const model = t.modelSource || "unknown";
+    modelCounts[model] = (modelCounts[model] || 0) + 1;
+    modelProfit[model] = (modelProfit[model] || 0) + ((t.winAmount || 0) - t.cost);
+
+    if (!modelHits[model]) modelHits[model] = { total: 0, wins: 0 };
+    modelHits[model].total++;
+    if (t.outcome === "win") modelHits[model].wins++;
+
+    const notesLower = (t.notes || "").toLowerCase();
+    if (notesLower.includes("draw period: midday")) middayCount++;
+    else eveningCount++;
+  }
+
+  const modelsPlayedMost = Object.entries(modelCounts)
+    .map(([model, count]) => ({ model, count }))
+    .sort((a, b) => b.count - a.count);
+
+  const modelsWonMoney = Object.entries(modelProfit)
+    .map(([model, profit]) => ({ model, profit: Math.round(profit * 100) / 100 }))
+    .sort((a, b) => b.profit - a.profit);
+
+  const hitRateByModel = Object.entries(modelHits)
+    .map(([model, { total, wins }]) => ({
+      model,
+      total,
+      wins,
+      hitRate: total > 0 ? Math.round((wins / total) * 10000) / 100 : 0,
+    }))
+    .sort((a, b) => b.hitRate - a.hitRate);
+
+  return {
+    modelsPlayedMost,
+    modelsWonMoney,
+    hitRateByModel,
+    middayVsEvening: { midday: middayCount, evening: eveningCount },
+  };
 }

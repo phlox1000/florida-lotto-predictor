@@ -18,6 +18,19 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.5.0",
+    date: "2026-03-19",
+    title: "Ticket Scanner & Cloud Storage",
+    changes: [
+      { type: "feature", text: "Ticket Scanner — snap a photo of your lottery ticket, LLM vision extracts the numbers automatically" },
+      { type: "feature", text: "Cloud file storage — ticket images stored in S3 (no more local disk writes)" },
+      { type: "feature", text: "Ticket Scanner Analytics — top models played, best profit models, hit rate, midday vs evening" },
+      { type: "feature", text: "Manual ticket entry endpoint with auto-evaluation against existing draws" },
+      { type: "improvement", text: "Auto-fetch cron now evaluates scanned tickets against new draw results" },
+      { type: "improvement", text: "Ticket list shows draw period, draw date, and hit counts" },
+    ],
+  },
+  {
     version: "4.4.0",
     date: "2026-03-15",
     title: "Head-to-Head & Consensus Strength",

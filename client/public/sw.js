@@ -2,7 +2,7 @@
 // IMPORTANT: This version MUST match the APP_VERSION in client/src/lib/version.ts
 // When adding a new changelog entry, update this version to match.
 // The app will display whichever is newer (SW version or bundle version).
-const APP_VERSION = '4.4.0';
+const APP_VERSION = '4.5.0';
 const CACHE_NAME = `fl-lotto-oracle-v${APP_VERSION}`;
 const STATIC_ASSETS = ['/', '/manifest.json'];
 

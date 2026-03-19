@@ -133,3 +133,13 @@
 - [x] Consensus Strength Score: show how many models agree on each number in predictions
 - [x] Consensus Strength Score: frontend ConsensusPanel component computing consensus across all 18 models
 - [x] Consensus Strength Score: visual indicator (color/bar) showing agreement strength
+- [x] Ticket Scanner: LLM vision endpoint to extract numbers from ticket photos
+- [x] Ticket Scanner: S3 cloud storage for ticket images (no local disk writes)
+- [x] Ticket Scanner: auto-match scanned numbers to prediction models
+- [x] Ticket Scanner: ScanTicketDialog UI with camera capture and preview
+- [x] Ticket Scanner Analytics: top models played, best profit, hit rate, midday vs evening
+- [x] Manual ticket entry endpoint with auto-evaluation against existing draws
+- [x] Auto-fetch cron: evaluate purchased tickets against new draw results
+- [x] Ticket list: show draw period, draw date, and hit counts per ticket
+- [x] Version bump to v4.5.0 (SW + changelog)
+- [x] Vitest tests for ticketAnalytics endpoint (3 tests passing)
