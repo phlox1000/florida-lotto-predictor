@@ -143,3 +143,4 @@
 - [x] Ticket list: show draw period, draw date, and hit counts per ticket
 - [x] Version bump to v4.5.0 (SW + changelog)
 - [x] Vitest tests for ticketAnalytics endpoint (3 tests passing)
+- [x] Fix: PDF upload fails for Fantasy 5 results file — added deterministic text parser + pdf-parse (handles 377-page/12K draw PDFs instantly)

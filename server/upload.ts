@@ -327,6 +327,100 @@ export function registerUploadRoutes(app: Express) {
 
 // ─── Background PDF Processing ──────────────────────────────────────────────
 
+// ─── Game type detection from PDF header text ────────────────────────────────
+const GAME_NAME_MAP: Record<string, GameType> = {
+  "FANTASY 5": "fantasy_5",
+  "POWERBALL": "powerball",
+  "MEGA MILLIONS": "mega_millions",
+  "FLORIDA LOTTO": "florida_lotto",
+  "CASH4LIFE": "cash4life",
+  "CASH 4 LIFE": "cash4life",
+  "PICK 2": "pick_2",
+  "PICK 3": "pick_3",
+  "PICK 4": "pick_4",
+  "PICK 5": "pick_5",
+};
+
+function detectGameTypeFromText(text: string): GameType | null {
+  const upper = text.toUpperCase();
+  for (const [name, gt] of Object.entries(GAME_NAME_MAP)) {
+    if (upper.includes(name)) return gt;
+  }
+  return null;
+}
+
+function normalizeDate(dateStr: string): string {
+  // Handles M/D/YY or M/D/YYYY → YYYY-MM-DD
+  const parts = dateStr.split("/");
+  if (parts.length !== 3) return dateStr;
+  let [month, day, year] = parts;
+  let y = parseInt(year, 10);
+  if (y < 100) {
+    // 2-digit year: 00-49 → 2000s, 50-99 → 1900s
+    y = y < 50 ? 2000 + y : 1900 + y;
+  }
+  return `${y}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+}
+
+/**
+ * Deterministic text-based parser for FL Lottery PDF exports.
+ * These PDFs have a very consistent structure:
+ *   date line → draw type (EVENING/MIDDAY) → N number lines
+ * Repeated for every draw, with page headers interspersed.
+ */
+function parseFLLotteryPdfText(
+  text: string,
+  gameType: GameType,
+): Array<{ gameType: GameType; drawDate: string; drawTime: string; mainNumbers: number[]; specialNumbers: number[] }> {
+  const cfg = FLORIDA_GAMES[gameType];
+  if (!cfg) return [];
+
+  const totalNumbersPerDraw = cfg.mainCount + cfg.specialCount;
+  const lines = text.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+
+  const dateRe = /^(\d{1,2}\/\d{1,2}\/\d{2,4})$/;
+  const drawTypeRe = /^(EVENING|MIDDAY)$/;
+
+  const draws: Array<{ gameType: GameType; drawDate: string; drawTime: string; mainNumbers: number[]; specialNumbers: number[] }> = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const dm = dateRe.exec(lines[i]);
+    if (dm) {
+      const dateStr = normalizeDate(dm[1]);
+      i++;
+      if (i < lines.length) {
+        const dtm = drawTypeRe.exec(lines[i]);
+        if (dtm) {
+          const drawTime = dtm[1].toLowerCase();
+          i++;
+          const nums: number[] = [];
+          while (i < lines.length && nums.length < totalNumbersPerDraw + 2) {
+            // Allow digits 0-9 for digit games, multi-digit for regular games
+            if (/^\d+$/.test(lines[i])) {
+              nums.push(parseInt(lines[i], 10));
+              i++;
+            } else {
+              break;
+            }
+          }
+          if (nums.length >= totalNumbersPerDraw) {
+            const mainNumbers = nums.slice(0, cfg.mainCount);
+            const specialNumbers = cfg.specialCount > 0
+              ? nums.slice(cfg.mainCount, cfg.mainCount + cfg.specialCount)
+              : [];
+            draws.push({ gameType, drawDate: dateStr, drawTime, mainNumbers, specialNumbers });
+          }
+          continue;
+        }
+      }
+    }
+    i++;
+  }
+
+  return draws;
+}
+
 async function processPdfWithLLM(
   uploadId: number,
   fileUrl: string,
@@ -334,90 +428,44 @@ async function processPdfWithLLM(
   gameType: string | null
 ) {
   try {
-    const gameHint = gameType && FLORIDA_GAMES[gameType as GameType]
-      ? `This PDF contains ${FLORIDA_GAMES[gameType as GameType].name} results. The game has ${FLORIDA_GAMES[gameType as GameType].mainCount} main numbers${FLORIDA_GAMES[gameType as GameType].specialCount > 0 ? ` and ${FLORIDA_GAMES[gameType as GameType].specialCount} special number(s)` : ""}.`
-      : "This PDF contains Florida Lottery winning number results. Identify which game each set of numbers belongs to.";
+    // Step 1: Extract text from PDF using pdf-parse
+    const pdfBuffer = Buffer.from(fileDataBase64, "base64");
+    let pdfText = "";
+    try {
+      const pdfParseModule = await import("pdf-parse") as any;
+      const pdfParse = pdfParseModule.default || pdfParseModule;
+      const pdfData = await pdfParse(pdfBuffer);
+      pdfText = pdfData.text || "";
+    } catch (parseErr) {
+      console.error("[PDF Upload] pdf-parse failed, will try LLM fallback:", parseErr);
+    }
 
-    const gameTypeList = GAME_TYPES.map(gt => {
-      const cfg = FLORIDA_GAMES[gt];
-      return `${gt}: ${cfg.name} (${cfg.mainCount} main numbers${cfg.isDigitGame ? " digits 0-9" : ` 1-${cfg.mainMax}`}${cfg.specialCount > 0 ? `, ${cfg.specialCount} special 1-${cfg.specialMax}` : ""})`;
-    }).join("\n");
+    // Step 2: Detect game type from PDF header if not provided
+    const detectedGame = gameType as GameType || detectGameTypeFromText(pdfText);
 
-    const result = await invokeLLM({
-      messages: [
-        {
-          role: "system",
-          content: `You are a precise data extraction assistant. Extract ALL lottery drawing results from the provided PDF document. Return ONLY valid JSON. Today is ${new Date().toISOString().split("T")[0]}.
+    // Step 3: Try deterministic text parser first (fast, accurate for FL Lottery PDFs)
+    let draws: Array<{ gameType: string; drawDate: string; drawTime: string; mainNumbers: number[]; specialNumbers: number[] }> = [];
 
-Available game types:\n${gameTypeList}`
-        },
-        {
-          role: "user",
-          content: [
-            {
-              type: "file_url" as const,
-              file_url: {
-                url: fileUrl,
-                mime_type: "application/pdf" as const,
-              },
-            },
-            {
-              type: "text" as const,
-              text: `${gameHint}
+    if (pdfText && detectedGame && FLORIDA_GAMES[detectedGame]) {
+      console.log(`[PDF Upload] Attempting deterministic parse for ${detectedGame}...`);
+      draws = parseFLLotteryPdfText(pdfText, detectedGame);
+      console.log(`[PDF Upload] Deterministic parser found ${draws.length} draws`);
+    }
 
-Extract ALL lottery drawing results from this PDF. For each draw found, determine:
-1. The game type (use one of: ${GAME_TYPES.join(", ")})
-2. The draw date (YYYY-MM-DD format)
-3. The main numbers
-4. Any special/bonus numbers (empty array if none)
-5. Draw time if applicable (midday/evening, or "evening" if not specified)
+    // Step 4: If deterministic parser found nothing, fall back to LLM
+    if (draws.length === 0 && pdfText.length < 50000) {
+      console.log("[PDF Upload] Falling back to LLM for unstructured PDF...");
+      draws = await parsePdfWithLLMFallback(fileUrl, gameType);
+    } else if (draws.length === 0) {
+      // PDF too large for LLM and deterministic parser failed
+      throw new Error("PDF is too large for LLM processing and the text format was not recognized. Try a smaller PDF or use a standard FL Lottery export.");
+    }
 
-Return JSON: { "draws": [{ "gameType": "string", "drawDate": "YYYY-MM-DD", "mainNumbers": [numbers], "specialNumbers": [numbers or empty], "drawTime": "evening" }] }
-
-Extract as many draws as you can find. Be precise with the numbers.`,
-            },
-          ],
-        },
-      ],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "pdf_lottery_draws",
-          strict: true,
-          schema: {
-            type: "object",
-            properties: {
-              draws: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    gameType: { type: "string" },
-                    drawDate: { type: "string" },
-                    mainNumbers: { type: "array", items: { type: "number" } },
-                    specialNumbers: { type: "array", items: { type: "number" } },
-                    drawTime: { type: "string" },
-                  },
-                  required: ["gameType", "drawDate", "mainNumbers", "specialNumbers", "drawTime"],
-                  additionalProperties: false,
-                },
-              },
-            },
-            required: ["draws"],
-            additionalProperties: false,
-          },
-        },
-      },
-    });
-
-    const content = result.choices[0]?.message?.content;
-    const text = typeof content === "string" ? content : "";
-    const parsed = JSON.parse(text);
-
+    // Step 5: Insert draws into database
     let insertedCount = 0;
     let skippedCount = 0;
 
-    for (const draw of parsed.draws) {
+    for (const draw of draws) {
       const gt = draw.gameType as GameType;
       if (!FLORIDA_GAMES[gt]) {
         skippedCount++;
@@ -446,11 +494,79 @@ Extract as many draws as you can find. Be precise with the numbers.`,
 
     console.log(`[PDF Upload] Processed upload ${uploadId}: ${insertedCount} draws extracted, ${skippedCount} skipped`);
   } catch (err: any) {
-    console.error("[PDF Upload] LLM processing failed:", err);
+    console.error("[PDF Upload] Processing failed:", err);
     await updatePdfUploadStatus(uploadId, "failed", {
       errorMessage: err?.message || "Failed to extract numbers from PDF",
     });
   }
+}
+
+/** LLM fallback for small/unstructured PDFs */
+async function parsePdfWithLLMFallback(
+  fileUrl: string,
+  gameType: string | null
+): Promise<Array<{ gameType: string; drawDate: string; drawTime: string; mainNumbers: number[]; specialNumbers: number[] }>> {
+  const gameHint = gameType && FLORIDA_GAMES[gameType as GameType]
+    ? `This PDF contains ${FLORIDA_GAMES[gameType as GameType].name} results.`
+    : "This PDF contains Florida Lottery winning number results.";
+
+  const gameTypeList = GAME_TYPES.map(gt => {
+    const cfg = FLORIDA_GAMES[gt];
+    return `${gt}: ${cfg.name} (${cfg.mainCount} main numbers${cfg.isDigitGame ? " digits 0-9" : ` 1-${cfg.mainMax}`}${cfg.specialCount > 0 ? `, ${cfg.specialCount} special 1-${cfg.specialMax}` : ""})`;
+  }).join("\n");
+
+  const result = await invokeLLM({
+    messages: [
+      {
+        role: "system",
+        content: `You are a precise data extraction assistant. Extract ALL lottery drawing results from the provided PDF document. Return ONLY valid JSON. Today is ${new Date().toISOString().split("T")[0]}.\nAvailable game types:\n${gameTypeList}`
+      },
+      {
+        role: "user",
+        content: [
+          { type: "file_url" as const, file_url: { url: fileUrl, mime_type: "application/pdf" as const } },
+          {
+            type: "text" as const,
+            text: `${gameHint}\nExtract ALL lottery drawing results. Return JSON: { "draws": [{ "gameType": "string", "drawDate": "YYYY-MM-DD", "mainNumbers": [numbers], "specialNumbers": [numbers or empty], "drawTime": "evening" }] }`,
+          },
+        ],
+      },
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "pdf_lottery_draws",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: {
+            draws: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  gameType: { type: "string" },
+                  drawDate: { type: "string" },
+                  mainNumbers: { type: "array", items: { type: "number" } },
+                  specialNumbers: { type: "array", items: { type: "number" } },
+                  drawTime: { type: "string" },
+                },
+                required: ["gameType", "drawDate", "mainNumbers", "specialNumbers", "drawTime"],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ["draws"],
+          additionalProperties: false,
+        },
+      },
+    },
+  });
+
+  const content = result.choices[0]?.message?.content;
+  const text = typeof content === "string" ? content : "";
+  const parsed = JSON.parse(text);
+  return parsed.draws || [];
 }
 
 // ─── Ticket Image → LLM Vision ─────────────────────────────────────────────
