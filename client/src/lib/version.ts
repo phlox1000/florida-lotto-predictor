@@ -18,6 +18,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "4.5.1",
+    date: "2026-03-20",
+    title: "PDF Upload Fix",
+    changes: [
+      { type: "fix", text: "PDF upload now handles large FL Lottery exports (377+ pages, 12K+ draws) instantly" },
+      { type: "improvement", text: "Deterministic text parser for FL Lottery PDFs — no LLM needed, 100% accuracy" },
+      { type: "improvement", text: "Auto-detects game type from PDF header for all 9 FL Lottery games" },
+    ],
+  },
+  {
     version: "4.5.0",
     date: "2026-03-19",
     title: "Ticket Scanner & Cloud Storage",

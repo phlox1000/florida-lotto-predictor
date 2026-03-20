@@ -144,3 +144,4 @@
 - [x] Version bump to v4.5.0 (SW + changelog)
 - [x] Vitest tests for ticketAnalytics endpoint (3 tests passing)
 - [x] Fix: PDF upload fails for Fantasy 5 results file — added deterministic text parser + pdf-parse (handles 377-page/12K draw PDFs instantly)
+- [ ] Fix: PDF upload still failing on 2nd attempt (ff(6).pdf Fantasy 5)
