@@ -56,7 +56,8 @@ export function registerUploadRoutes(app: Express) {
         return;
       }
 
-      const pdfBuffer = Buffer.from(fileData, "base64");
+      const normalizedPdfBase64 = stripDataUrlPrefix(String(fileData));
+      const pdfBuffer = Buffer.from(normalizedPdfBase64, "base64");
       if (pdfBuffer.length > 16 * 1024 * 1024) {
         res.status(400).json({ error: "File too large. Maximum 16MB." });
         return;
@@ -74,7 +75,7 @@ export function registerUploadRoutes(app: Express) {
         status: "processing",
       });
 
-      processPdfWithLLM(uploadId, fileUrl, fileData, gameType || null)
+      processPdfWithLLM(uploadId, fileUrl, normalizedPdfBase64, gameType || null)
         .catch(err => console.error("[PDF Upload] Background processing failed:", err));
 
       res.json({
@@ -421,7 +422,7 @@ function parseFLLotteryPdfText(
   return draws;
 }
 
-async function processPdfWithLLM(
+export async function processPdfWithLLM(
   uploadId: number,
   fileUrl: string,
   fileDataBase64: string,
@@ -429,7 +430,8 @@ async function processPdfWithLLM(
 ) {
   try {
     // Step 1: Extract text from PDF using pdf-parse
-    const pdfBuffer = Buffer.from(fileDataBase64, "base64");
+    const normalizedPdfBase64 = stripDataUrlPrefix(String(fileDataBase64));
+    const pdfBuffer = Buffer.from(normalizedPdfBase64, "base64");
     let pdfText = "";
     try {
       const pdfParseModule = await import("pdf-parse") as any;
@@ -473,7 +475,7 @@ async function processPdfWithLLM(
       }
 
       try {
-        await insertDrawResult({
+        const insertResult = await insertDrawResult({
           gameType: gt,
           drawDate: new Date(draw.drawDate).getTime(),
           mainNumbers: draw.mainNumbers,
@@ -481,7 +483,8 @@ async function processPdfWithLLM(
           drawTime: draw.drawTime || "evening",
           source: "pdf_upload",
         });
-        insertedCount++;
+        if (insertResult.status === "inserted") insertedCount++;
+        else skippedCount++;
       } catch (e) {
         skippedCount++;
       }
