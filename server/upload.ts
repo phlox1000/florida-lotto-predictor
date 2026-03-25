@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { nanoid } from "nanoid";
 import { storagePut } from "./storage";
 import { invokeLLM } from "./_core/llm";
+import { ENV } from "./_core/env";
 import {
   insertPdfUpload,
   updatePdfUploadStatus,
@@ -454,13 +455,25 @@ export async function processPdfWithLLM(
       console.log(`[PDF Upload] Deterministic parser found ${draws.length} draws`);
     }
 
-    // Step 4: If deterministic parser found nothing, fall back to LLM
-    if (draws.length === 0 && pdfText.length < 50000) {
-      console.log("[PDF Upload] Falling back to LLM for unstructured PDF...");
-      draws = await parsePdfWithLLMFallback(fileUrl, gameType);
-    } else if (draws.length === 0) {
-      // PDF too large for LLM and deterministic parser failed
-      throw new Error("PDF is too large for LLM processing and the text format was not recognized. Try a smaller PDF or use a standard FL Lottery export.");
+    // Step 4: Optional LLM fallback only when deterministic parsing found nothing
+    let fallbackNote: string | null = null;
+    if (draws.length === 0) {
+      const hasLlmCredentials = Boolean(ENV.forgeApiKey && ENV.forgeApiKey.trim().length > 0);
+      if (!hasLlmCredentials) {
+        fallbackNote = "LLM fallback skipped: missing LLM credentials";
+        console.warn("[PDF Upload] Skipping LLM fallback - missing credentials");
+      } else if (pdfText.length >= 50000) {
+        fallbackNote = "LLM fallback skipped: extracted text is too large";
+        console.warn("[PDF Upload] Skipping LLM fallback - extracted text too large");
+      } else {
+        try {
+          console.log("[PDF Upload] Falling back to LLM for unstructured PDF...");
+          draws = await parsePdfWithLLMFallback(fileUrl, gameType);
+        } catch (fallbackErr) {
+          fallbackNote = "LLM fallback failed";
+          console.warn("[PDF Upload] LLM fallback failed; completing without extracted draws:", fallbackErr);
+        }
+      }
     }
 
     // Step 5: Insert draws into database
@@ -490,9 +503,16 @@ export async function processPdfWithLLM(
       }
     }
 
+    const completionMessage =
+      skippedCount > 0
+        ? `${skippedCount} draws skipped (duplicates or invalid)`
+        : insertedCount === 0 && fallbackNote
+          ? fallbackNote
+          : null;
+
     await updatePdfUploadStatus(uploadId, "completed", {
       drawsExtracted: insertedCount,
-      errorMessage: skippedCount > 0 ? `${skippedCount} draws skipped (duplicates or invalid)` : null,
+      errorMessage: completionMessage,
     });
 
     console.log(`[PDF Upload] Processed upload ${uploadId}: ${insertedCount} draws extracted, ${skippedCount} skipped`);
