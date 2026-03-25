@@ -114,11 +114,24 @@ export async function insertDrawResult(data: InsertDrawResult) {
   );
   
   if (exists) {
-    return [{ insertId: 0 }]; // Return 0 to indicate skipped duplicate
+    const legacyRow = { insertId: 0 };
+    return {
+      status: "duplicate" as const,
+      insertId: 0,
+      legacyResult: [legacyRow],
+      0: legacyRow,
+    };
   }
-  
+
   const result = await db.insert(drawResults).values(data);
-  return result;
+  const insertId = Number((result as any)?.[0]?.insertId ?? 0);
+  const legacyRow = { insertId };
+  return {
+    status: "inserted" as const,
+    insertId,
+    legacyResult: [legacyRow],
+    0: legacyRow,
+  };
 }
 
 export async function getDrawResults(gameType: string, limit = 200) {
