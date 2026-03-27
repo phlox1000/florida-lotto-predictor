@@ -11,6 +11,21 @@ import { getLastAutoFetchResult, isAutoFetchActive, getAutoFetchRunning, runAuto
 import { fetchRecentDraws, fetchAllGamesRecent } from "./lib/lotteryusa-scraper";
 import { runAllModels, selectBudgetTickets, applySumRangeFilter } from "./predictions";
 import {
+  computeCandidateFeatures,
+  diversifyRankedCandidates,
+  mergeRankedCandidatesIntoPredictions,
+  rankCandidates,
+} from "./ranker-v2";
+import {
+  createPredictionCandidateBatch,
+  getModelAverageHitsMap,
+  getOrCreateActiveRankerVersion,
+  getPredictionCandidateBatchesByUser,
+  getRankerVersionsByGame,
+  recordCandidateOutcomesAndTrainRanker,
+  storePredictionCandidatesAndFeatures,
+} from "./ranker-v2-db";
+import {
   getDrawResults, insertDrawResult, getLatestDrawResults, getAllDrawResults, getDrawResultCount,
   insertPredictions, getUserPredictions, getRecentPredictions,
   insertTicketSelection, getUserTicketSelections,
@@ -25,6 +40,117 @@ import {
 } from "./db";
 
 const gameTypeSchema = z.enum(GAME_TYPES);
+
+function targetDiversifiedCandidateCount(gameType: GameType): number {
+  const cfg = FLORIDA_GAMES[gameType];
+  return Math.min(8, Math.max(3, cfg.mainCount + cfg.specialCount));
+}
+
+async function buildRankedPredictionBundle(params: {
+  gameType: GameType;
+  userId: number | null;
+  source: "predictions.generate" | "tickets.generate";
+  sumRangeFilterApplied: boolean;
+}) {
+  const cfg = FLORIDA_GAMES[params.gameType];
+  const historyRows = await getDrawResults(params.gameType, 200);
+  const history = historyRows.map(r => ({
+    mainNumbers: r.mainNumbers as number[],
+    specialNumbers: (r.specialNumbers as number[]) || [],
+    drawDate: r.drawDate,
+  }));
+
+  const modelWeights = await getModelWeights(params.gameType);
+  const modelAvgHits = await getModelAverageHitsMap(params.gameType);
+  const rankerState = await getOrCreateActiveRankerVersion(params.gameType);
+
+  let predictions = runAllModels(
+    cfg,
+    history,
+    Object.keys(modelWeights).length > 0 ? modelWeights : undefined
+  );
+
+  if (params.sumRangeFilterApplied) {
+    predictions = applySumRangeFilter(predictions, cfg, history);
+  }
+
+  const featureRecords = computeCandidateFeatures(
+    cfg,
+    history,
+    predictions,
+    modelWeights,
+    modelAvgHits
+  );
+  const ranked = rankCandidates(featureRecords, rankerState);
+  diversifyRankedCandidates(ranked, cfg, targetDiversifiedCandidateCount(params.gameType));
+  const rankedPredictions = mergeRankedCandidatesIntoPredictions(predictions, ranked);
+
+  if (params.userId) {
+    try {
+      await insertPredictions(rankedPredictions.map(p => ({
+        userId: params.userId!,
+        gameType: params.gameType,
+        modelName: p.modelName,
+        mainNumbers: p.mainNumbers,
+        specialNumbers: p.specialNumbers,
+        confidenceScore: p.confidenceScore,
+        metadata: p.metadata,
+      })));
+    } catch (e) {
+      console.warn("[Predictions] Failed to persist ranked predictions:", e);
+    }
+  }
+
+  const candidateBatchId = await createPredictionCandidateBatch({
+    userId: params.userId,
+    gameType: params.gameType,
+    source: params.source,
+    sumRangeFilterApplied: params.sumRangeFilterApplied ? 1 : 0,
+    rankerVersionId: rankerState.id ?? null,
+  });
+
+  if (candidateBatchId) {
+    try {
+      await storePredictionCandidatesAndFeatures(ranked.map(candidate => ({
+        batchId: candidateBatchId!,
+        rankerVersionId: rankerState.id ?? null,
+        userId: params.userId,
+        gameType: params.gameType,
+        modelName: candidate.modelName,
+        candidateKey: candidate.candidateKey,
+        mainNumbers: candidate.mainNumbers,
+        specialNumbers: candidate.specialNumbers,
+        baseConfidenceScore: candidate.baseConfidenceScore,
+        rankerScore: candidate.rankerScore,
+        rankerProbability: candidate.rankerProbability,
+        rankPosition: candidate.rankPosition,
+        selectedForFinal: candidate.selectedForFinal,
+        isInsufficientData: candidate.isInsufficientData,
+        metadata: {
+          ...candidate.metadata,
+          rankerV2: {
+            score: candidate.rankerScore,
+            probability: candidate.rankerProbability,
+            rankPosition: candidate.rankPosition,
+            selectedForFinal: candidate.selectedForFinal,
+          },
+        },
+        featureSetVersion: rankerState.featureSetVersion,
+        features: candidate.features,
+      })));
+    } catch (e) {
+      console.warn("[Predictions] Failed to persist candidate snapshots:", e);
+    }
+  }
+
+  return {
+    cfg,
+    rankedPredictions,
+    modelWeights,
+    rankerState,
+    candidateBatchId,
+  };
+}
 
 export const appRouter = router({
   system: systemRouter,
@@ -43,46 +169,26 @@ export const appRouter = router({
     generate: publicProcedure
       .input(z.object({ gameType: gameTypeSchema, sumRangeFilter: z.boolean().default(false) }))
       .mutation(async ({ input, ctx }) => {
-        const cfg = FLORIDA_GAMES[input.gameType];
-        const historyRows = await getDrawResults(input.gameType, 200);
-        const history = historyRows.map(r => ({
-          mainNumbers: r.mainNumbers as number[],
-          specialNumbers: (r.specialNumbers as number[]) || [],
-          drawDate: r.drawDate,
-        }));
-
-        // Fetch model weights from historical accuracy tracking
-        const modelWeights = await getModelWeights(input.gameType);
-        let allPredictions = runAllModels(cfg, history, Object.keys(modelWeights).length > 0 ? modelWeights : undefined);
-
-        // Apply Sum/Range Constraint Filter if toggled on
-        if (input.sumRangeFilter) {
-          allPredictions = applySumRangeFilter(allPredictions, cfg, history);
-        }
-
-        // Persist predictions if user is logged in
-        if (ctx.user) {
-          try {
-            await insertPredictions(allPredictions.map(p => ({
-              userId: ctx.user!.id,
-              gameType: input.gameType,
-              modelName: p.modelName,
-              mainNumbers: p.mainNumbers,
-              specialNumbers: p.specialNumbers,
-              confidenceScore: p.confidenceScore,
-              metadata: p.metadata,
-            })));
-          } catch (e) {
-            console.warn("[Predictions] Failed to persist:", e);
-          }
-        }
+        const bundle = await buildRankedPredictionBundle({
+          gameType: input.gameType,
+          userId: ctx.user?.id ?? null,
+          source: "predictions.generate",
+          sumRangeFilterApplied: input.sumRangeFilter,
+        });
 
         return {
-          predictions: allPredictions,
+          predictions: bundle.rankedPredictions,
           gameType: input.gameType,
-          gameName: cfg.name,
-          weightsUsed: Object.keys(modelWeights).length > 0,
+          gameName: bundle.cfg.name,
+          weightsUsed: Object.keys(bundle.modelWeights).length > 0,
           sumRangeFilterApplied: input.sumRangeFilter,
+          rankerV2: {
+            enabled: true,
+            algorithm: bundle.rankerState.algorithm,
+            featureSetVersion: bundle.rankerState.featureSetVersion,
+            rankerVersionId: bundle.rankerState.id ?? null,
+            candidateBatchId: bundle.candidateBatchId,
+          },
         };
       }),
 
@@ -147,6 +253,20 @@ export const appRouter = router({
       .query(async ({ input }) => {
         return getRecentPredictions(input.gameType, input.limit);
       }),
+
+    /** V2 audit: ranker version history for a game */
+    rankerVersions: publicProcedure
+      .input(z.object({ gameType: gameTypeSchema, limit: z.number().min(1).max(100).default(20) }))
+      .query(async ({ input }) => {
+        return getRankerVersionsByGame(input.gameType, input.limit);
+      }),
+
+    /** V2 audit: current user's candidate-generation batches */
+    candidateBatches: protectedProcedure
+      .input(z.object({ limit: z.number().min(1).max(200).default(50) }))
+      .query(async ({ input, ctx }) => {
+        return getPredictionCandidateBatchesByUser(ctx.user.id, input.limit);
+      }),
   }),
 
   // ─── Budget Ticket Selector ─────────────────────────────────────────────────
@@ -159,17 +279,18 @@ export const appRouter = router({
         maxTickets: z.number().min(1).max(20).default(20),
       }))
       .mutation(async ({ input, ctx }) => {
-        const cfg = FLORIDA_GAMES[input.gameType];
-        const historyRows = await getDrawResults(input.gameType, 200);
-        const history = historyRows.map(r => ({
-          mainNumbers: r.mainNumbers as number[],
-          specialNumbers: (r.specialNumbers as number[]) || [],
-          drawDate: r.drawDate,
-        }));
-
-        const modelWeights = await getModelWeights(input.gameType);
-        const allPredictions = runAllModels(cfg, history, Object.keys(modelWeights).length > 0 ? modelWeights : undefined);
-        const selection = selectBudgetTickets(cfg, allPredictions, input.budget, input.maxTickets);
+        const bundle = await buildRankedPredictionBundle({
+          gameType: input.gameType,
+          userId: ctx.user?.id ?? null,
+          source: "tickets.generate",
+          sumRangeFilterApplied: false,
+        });
+        const selection = selectBudgetTickets(
+          bundle.cfg,
+          bundle.rankedPredictions,
+          input.budget,
+          input.maxTickets
+        );
 
         if (ctx.user) {
           try {
@@ -188,8 +309,14 @@ export const appRouter = router({
         return {
           ...selection,
           gameType: input.gameType,
-          gameName: cfg.name,
-          ticketPrice: cfg.ticketPrice,
+          gameName: bundle.cfg.name,
+          ticketPrice: bundle.cfg.ticketPrice,
+          rankerV2: {
+            enabled: true,
+            algorithm: bundle.rankerState.algorithm,
+            rankerVersionId: bundle.rankerState.id ?? null,
+            candidateBatchId: bundle.candidateBatchId,
+          },
         };
       }),
 

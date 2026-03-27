@@ -4,6 +4,11 @@ import {
   InsertUser, users,
   drawResults, InsertDrawResult,
   predictions, InsertPrediction,
+  predictionCandidateBatches, InsertPredictionCandidateBatch,
+  predictionCandidates, InsertPredictionCandidate,
+  predictionFeatureSnapshots, InsertPredictionFeatureSnapshot,
+  predictionOutcomes, InsertPredictionOutcome,
+  rankerVersions, InsertRankerVersion,
   ticketSelections, InsertTicketSelection,
   modelPerformance, InsertModelPerformance,
   favorites, InsertFavorite,
@@ -270,7 +275,7 @@ export async function evaluatePredictionsAgainstDraw(
   specialNumbers: number[]
 ) {
   const db = await getDb();
-  if (!db) return { evaluated: 0, highAccuracy: 0 };
+  if (!db) return { evaluated: 0, highAccuracy: 0, candidateOutcomes: 0, rankerTrainedExamples: 0, rankerVersionId: null };
 
   // Get predictions made before this draw (within last 7 days)
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -282,7 +287,22 @@ export async function evaluatePredictionsAgainstDraw(
     .orderBy(desc(predictions.createdAt))
     .limit(200);
 
-  if (recentPreds.length === 0) return { evaluated: 0, highAccuracy: 0 };
+  if (recentPreds.length === 0) {
+    try {
+      const { recordCandidateOutcomesAndTrainRanker } = await import("./ranker-v2-db");
+      const v2 = await recordCandidateOutcomesAndTrainRanker(drawId, gameType, mainNumbers, specialNumbers);
+      return {
+        evaluated: 0,
+        highAccuracy: 0,
+        candidateOutcomes: v2.candidateOutcomes,
+        rankerTrainedExamples: v2.trainedExamples,
+        rankerVersionId: v2.newRankerVersionId,
+      };
+    } catch (e) {
+      console.warn("[Predictions] V2 candidate evaluation failed:", e);
+      return { evaluated: 0, highAccuracy: 0, candidateOutcomes: 0, rankerTrainedExamples: 0, rankerVersionId: null };
+    }
+  }
 
   const resultMainSet = new Set(mainNumbers);
   const resultSpecialSet = new Set(specialNumbers);
@@ -315,7 +335,26 @@ export async function evaluatePredictionsAgainstDraw(
     await insertModelPerformance(perfRecords);
   }
 
-  return { evaluated: perfRecords.length, highAccuracy };
+  let candidateOutcomes = 0;
+  let rankerTrainedExamples = 0;
+  let rankerVersionId: number | null = null;
+  try {
+    const { recordCandidateOutcomesAndTrainRanker } = await import("./ranker-v2-db");
+    const v2 = await recordCandidateOutcomesAndTrainRanker(drawId, gameType, mainNumbers, specialNumbers);
+    candidateOutcomes = v2.candidateOutcomes;
+    rankerTrainedExamples = v2.trainedExamples;
+    rankerVersionId = v2.newRankerVersionId;
+  } catch (e) {
+    console.warn("[Predictions] V2 candidate evaluation failed:", e);
+  }
+
+  return {
+    evaluated: perfRecords.length,
+    highAccuracy,
+    candidateOutcomes,
+    rankerTrainedExamples,
+    rankerVersionId,
+  };
 }
 
 // ─── Favorites ──────────────────────────────────────────────────────────────────

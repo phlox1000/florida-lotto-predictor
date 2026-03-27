@@ -52,6 +52,95 @@ export const predictions = mysqlTable("predictions", {
 export type Prediction = typeof predictions.$inferSelect;
 export type InsertPrediction = typeof predictions.$inferInsert;
 
+/** A single generation run (predictions.generate or tickets.generate) */
+export const predictionCandidateBatches = mysqlTable("prediction_candidate_batches", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId"),
+  gameType: varchar("gameType", { length: 32 }).notNull(),
+  source: varchar("source", { length: 64 }).notNull(), // "predictions.generate" | "tickets.generate"
+  sumRangeFilterApplied: int("sumRangeFilterApplied").notNull().default(0),
+  rankerVersionId: int("rankerVersionId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type PredictionCandidateBatch = typeof predictionCandidateBatches.$inferSelect;
+export type InsertPredictionCandidateBatch = typeof predictionCandidateBatches.$inferInsert;
+
+/** Each model output stored as a candidate for ranking/auditing */
+export const predictionCandidates = mysqlTable("prediction_candidates", {
+  id: int("id").autoincrement().primaryKey(),
+  batchId: int("batchId").notNull(),
+  rankerVersionId: int("rankerVersionId"),
+  userId: int("userId"),
+  gameType: varchar("gameType", { length: 32 }).notNull(),
+  modelName: varchar("modelName", { length: 64 }).notNull(),
+  candidateKey: varchar("candidateKey", { length: 256 }).notNull(), // main|special canonical key
+  mainNumbers: json("mainNumbers").notNull(), // number[]
+  specialNumbers: json("specialNumbers"), // number[] | null
+  baseConfidenceScore: float("baseConfidenceScore").notNull(),
+  rankerScore: float("rankerScore").notNull().default(0),
+  rankerProbability: float("rankerProbability").notNull().default(0),
+  rankPosition: int("rankPosition").notNull().default(0),
+  selectedForFinal: int("selectedForFinal").notNull().default(0),
+  isInsufficientData: int("isInsufficientData").notNull().default(0),
+  metadata: json("metadata"),
+  evaluatedDrawResultId: int("evaluatedDrawResultId"),
+  rewardScore: float("rewardScore"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type PredictionCandidate = typeof predictionCandidates.$inferSelect;
+export type InsertPredictionCandidate = typeof predictionCandidates.$inferInsert;
+
+/** Frozen feature vectors used by ranker for each candidate */
+export const predictionFeatureSnapshots = mysqlTable("prediction_feature_snapshots", {
+  id: int("id").autoincrement().primaryKey(),
+  candidateId: int("candidateId").notNull(),
+  featureSetVersion: varchar("featureSetVersion", { length: 64 }).notNull(),
+  features: json("features").notNull(), // Record<string, number>
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type PredictionFeatureSnapshot = typeof predictionFeatureSnapshots.$inferSelect;
+export type InsertPredictionFeatureSnapshot = typeof predictionFeatureSnapshots.$inferInsert;
+
+/** Outcome records tied to draw results for each candidate */
+export const predictionOutcomes = mysqlTable("prediction_outcomes", {
+  id: int("id").autoincrement().primaryKey(),
+  candidateId: int("candidateId").notNull(),
+  drawResultId: int("drawResultId").notNull(),
+  gameType: varchar("gameType", { length: 32 }).notNull(),
+  rankerVersionId: int("rankerVersionId"),
+  mainHits: int("mainHits").notNull().default(0),
+  specialHits: int("specialHits").notNull().default(0),
+  rewardScore: float("rewardScore").notNull().default(0),
+  outcomeTier: varchar("outcomeTier", { length: 32 }).notNull().default("miss"),
+  evaluatedAt: timestamp("evaluatedAt").defaultNow().notNull(),
+});
+
+export type PredictionOutcome = typeof predictionOutcomes.$inferSelect;
+export type InsertPredictionOutcome = typeof predictionOutcomes.$inferInsert;
+
+/** Ranker state/version history (auditable, deterministic coefficients) */
+export const rankerVersions = mysqlTable("ranker_versions", {
+  id: int("id").autoincrement().primaryKey(),
+  gameType: varchar("gameType", { length: 32 }).notNull(),
+  algorithm: varchar("algorithm", { length: 64 }).notNull().default("online_logistic_regression"),
+  featureSetVersion: varchar("featureSetVersion", { length: 64 }).notNull(),
+  intercept: float("intercept").notNull().default(0),
+  coefficients: json("coefficients").notNull(), // Record<string, number>
+  learningRate: float("learningRate").notNull().default(0.05),
+  l2Lambda: float("l2Lambda").notNull().default(0.001),
+  trainedExamples: int("trainedExamples").notNull().default(0),
+  sourceRankerVersionId: int("sourceRankerVersionId"),
+  isActive: int("isActive").notNull().default(1),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type RankerVersion = typeof rankerVersions.$inferSelect;
+export type InsertRankerVersion = typeof rankerVersions.$inferInsert;
+
 /** Budget-aware ticket selections (batches of 20 tickets) */
 export const ticketSelections = mysqlTable("ticket_selections", {
   id: int("id").autoincrement().primaryKey(),

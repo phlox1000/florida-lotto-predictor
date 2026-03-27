@@ -29,6 +29,13 @@
       "when": 1773478917873,
       "tag": "0003_late_lester",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1773480200000,
+      "tag": "0004_lucky_enchantress",
+      "breakpoints": true
     }
   ]
 }
