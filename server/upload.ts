@@ -458,7 +458,12 @@ export async function processPdfWithLLM(
     // Step 4: Optional LLM fallback only when deterministic parsing found nothing
     let fallbackNote: string | null = null;
     if (draws.length === 0) {
-      const hasLlmCredentials = Boolean(ENV.forgeApiKey && ENV.forgeApiKey.trim().length > 0);
+      const hasLlmCredentials = Boolean(
+        ENV.llmApiUrl &&
+        ENV.llmApiUrl.trim().length > 0 &&
+        ENV.llmApiKey &&
+        ENV.llmApiKey.trim().length > 0
+      );
       if (!hasLlmCredentials) {
         fallbackNote = "LLM fallback skipped: missing LLM credentials";
         console.warn("[PDF Upload] Skipping LLM fallback - missing credentials");
