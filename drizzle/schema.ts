@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, float, json, bigint } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, float, json, bigint, index, uniqueIndex } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -146,12 +146,12 @@ export type InsertRankerVersion = typeof rankerVersions.$inferInsert;
 /** Scanned ticket sessions (OCR parse + confirmation lifecycle) */
 export const scannedTickets = mysqlTable("scanned_tickets", {
   id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
+  userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
   gameType: varchar("gameType", { length: 32 }).notNull(),
   drawDate: bigint("drawDate", { mode: "number" }).notNull(),
   drawTime: varchar("drawTime", { length: 16 }).notNull(),
   sourceType: varchar("sourceType", { length: 32 }).notNull().default("scanned_ticket"),
-  ticketOrigin: varchar("ticketOrigin", { length: 32 }).notNull().default("unknown"), // user_selected | quick_pick | unknown
+  ticketOrigin: varchar("ticketOrigin", { length: 32 }).notNull().default("unknown"), // user_selected | quick_pick | imported_historical | ai_generated_purchased | unknown
   scanStatus: varchar("scanStatus", { length: 32 }).notNull().default("parsed"), // parsed | confirmed | rejected | invalid
   confirmationStatus: varchar("confirmationStatus", { length: 32 }).notNull().default("pending"), // pending | confirmed | rejected
   imageUrl: text("imageUrl"),
@@ -161,7 +161,18 @@ export const scannedTickets = mysqlTable("scanned_tickets", {
   linkedPurchasedTicketId: int("linkedPurchasedTicketId"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, table => ({
+  byUserStatus: index("idx_scanned_tickets_user_status").on(
+    table.userId,
+    table.confirmationStatus,
+    table.scanStatus
+  ),
+  byGameDraw: index("idx_scanned_tickets_game_draw").on(
+    table.gameType,
+    table.drawDate,
+    table.drawTime
+  ),
+}));
 
 export type ScannedTicket = typeof scannedTickets.$inferSelect;
 export type InsertScannedTicket = typeof scannedTickets.$inferInsert;
@@ -169,7 +180,7 @@ export type InsertScannedTicket = typeof scannedTickets.$inferInsert;
 /** Parsed rows extracted from a scanned ticket image (one or more plays) */
 export const scannedTicketRows = mysqlTable("scanned_ticket_rows", {
   id: int("id").autoincrement().primaryKey(),
-  scannedTicketId: int("scannedTicketId").notNull(),
+  scannedTicketId: int("scannedTicketId").notNull().references(() => scannedTickets.id, { onDelete: "cascade" }),
   rowIndex: int("rowIndex").notNull().default(0),
   gameType: varchar("gameType", { length: 32 }).notNull(),
   drawDate: bigint("drawDate", { mode: "number" }).notNull(),
@@ -181,7 +192,19 @@ export const scannedTicketRows = mysqlTable("scanned_ticket_rows", {
   rowStatus: varchar("rowStatus", { length: 32 }).notNull().default("parsed"), // parsed | confirmed | rejected
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, table => ({
+  byTicketRowIndex: uniqueIndex("uq_scanned_ticket_rows_ticket_row").on(
+    table.scannedTicketId,
+    table.rowIndex
+  ),
+  byGameDrawStatus: index("idx_scanned_ticket_rows_game_draw_status").on(
+    table.gameType,
+    table.drawDate,
+    table.drawTime,
+    table.rowStatus
+  ),
+  byScannedTicketId: index("idx_scanned_ticket_rows_ticket_id").on(table.scannedTicketId),
+}));
 
 export type ScannedTicketRow = typeof scannedTicketRows.$inferSelect;
 export type InsertScannedTicketRow = typeof scannedTicketRows.$inferInsert;
@@ -189,12 +212,18 @@ export type InsertScannedTicketRow = typeof scannedTicketRows.$inferInsert;
 /** Feature snapshots for scanned-ticket rows used as ranker training examples */
 export const scannedTicketFeatureSnapshots = mysqlTable("scanned_ticket_feature_snapshots", {
   id: int("id").autoincrement().primaryKey(),
-  scannedTicketRowId: int("scannedTicketRowId").notNull(),
-  rankerVersionId: int("rankerVersionId"),
+  scannedTicketRowId: int("scannedTicketRowId").notNull().references(() => scannedTicketRows.id, { onDelete: "cascade" }),
+  rankerVersionId: int("rankerVersionId").references(() => rankerVersions.id, { onDelete: "set null" }),
   featureSetVersion: varchar("featureSetVersion", { length: 64 }).notNull(),
   features: json("features").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, table => ({
+  byRowFeatureVersion: uniqueIndex("uq_scanned_ticket_feature_row_version").on(
+    table.scannedTicketRowId,
+    table.featureSetVersion
+  ),
+  byRowId: index("idx_scanned_ticket_feature_row_id").on(table.scannedTicketRowId),
+}));
 
 export type ScannedTicketFeatureSnapshot = typeof scannedTicketFeatureSnapshots.$inferSelect;
 export type InsertScannedTicketFeatureSnapshot = typeof scannedTicketFeatureSnapshots.$inferInsert;
@@ -202,21 +231,109 @@ export type InsertScannedTicketFeatureSnapshot = typeof scannedTicketFeatureSnap
 /** Outcome rows for scanned tickets after draw-result evaluation */
 export const scannedTicketOutcomes = mysqlTable("scanned_ticket_outcomes", {
   id: int("id").autoincrement().primaryKey(),
-  scannedTicketId: int("scannedTicketId").notNull(),
-  scannedTicketRowId: int("scannedTicketRowId").notNull(),
-  drawResultId: int("drawResultId").notNull(),
+  scannedTicketId: int("scannedTicketId").notNull().references(() => scannedTickets.id, { onDelete: "cascade" }),
+  scannedTicketRowId: int("scannedTicketRowId").notNull().references(() => scannedTicketRows.id, { onDelete: "cascade" }),
+  userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  drawResultId: int("drawResultId").notNull().references(() => drawResults.id, { onDelete: "cascade" }),
   gameType: varchar("gameType", { length: 32 }).notNull(),
+  sourceSubtype: varchar("sourceSubtype", { length: 48 }).notNull().default("unknown"),
   mainHits: int("mainHits").notNull().default(0),
   specialHits: int("specialHits").notNull().default(0),
   rewardScore: float("rewardScore").notNull().default(0),
   outcomeTier: varchar("outcomeTier", { length: 32 }).notNull().default("miss"),
   trainingWeight: float("trainingWeight").notNull().default(0.35),
-  consumedRankerVersionId: int("consumedRankerVersionId"),
+  consumedRankerVersionId: int("consumedRankerVersionId").references(() => rankerVersions.id, { onDelete: "set null" }), // legacy alias of global consumed id
+  personalConsumedRankerVersionId: int("personalConsumedRankerVersionId"),
+  globalConsumedRankerVersionId: int("globalConsumedRankerVersionId").references(() => rankerVersions.id, { onDelete: "set null" }),
+  globalPromotionStatus: varchar("globalPromotionStatus", { length: 24 }).notNull().default("pending"), // pending | blocked | promoted
+  promotionBlockedReason: text("promotionBlockedReason"),
   evaluatedAt: timestamp("evaluatedAt").defaultNow().notNull(),
-});
+}, table => ({
+  byRowDrawUnique: uniqueIndex("uq_scanned_ticket_outcome_row_draw").on(
+    table.scannedTicketRowId,
+    table.drawResultId
+  ),
+  byUserGamePersonalConsumed: index("idx_scanned_ticket_outcomes_user_game_personal").on(
+    table.userId,
+    table.gameType,
+    table.personalConsumedRankerVersionId
+  ),
+  byGameGlobalConsumed: index("idx_scanned_ticket_outcomes_game_global_consumed").on(
+    table.gameType,
+    table.globalConsumedRankerVersionId,
+    table.globalPromotionStatus
+  ),
+  byGameSubtype: index("idx_scanned_ticket_outcomes_game_subtype").on(
+    table.gameType,
+    table.sourceSubtype
+  ),
+  byTicketId: index("idx_scanned_ticket_outcomes_ticket_id").on(table.scannedTicketId),
+}));
 
 export type ScannedTicketOutcome = typeof scannedTicketOutcomes.$inferSelect;
 export type InsertScannedTicketOutcome = typeof scannedTicketOutcomes.$inferInsert;
+
+/** User-scoped personal ranker state/version history */
+export const personalRankerVersions = mysqlTable("personal_ranker_versions", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  gameType: varchar("gameType", { length: 32 }).notNull(),
+  algorithm: varchar("algorithm", { length: 64 }).notNull().default("online_logistic_regression_personal"),
+  featureSetVersion: varchar("featureSetVersion", { length: 64 }).notNull(),
+  intercept: float("intercept").notNull().default(0),
+  coefficients: json("coefficients").notNull(),
+  learningRate: float("learningRate").notNull().default(0.03),
+  l2Lambda: float("l2Lambda").notNull().default(0.002),
+  trainedExamples: int("trainedExamples").notNull().default(0),
+  generatedCandidateExamples: int("generatedCandidateExamples").notNull().default(0),
+  scannedTicketExamples: int("scannedTicketExamples").notNull().default(0),
+  promotedGlobalExamples: int("promotedGlobalExamples").notNull().default(0),
+  sourcePersonalRankerVersionId: int("sourcePersonalRankerVersionId"),
+  isActive: int("isActive").notNull().default(1),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => ({
+  byUserGameActive: index("idx_personal_ranker_versions_user_game_active").on(
+    table.userId,
+    table.gameType,
+    table.isActive,
+    table.id
+  ),
+  byUserGameCreated: index("idx_personal_ranker_versions_user_game_created").on(
+    table.userId,
+    table.gameType,
+    table.createdAt
+  ),
+}));
+
+export type PersonalRankerVersion = typeof personalRankerVersions.$inferSelect;
+export type InsertPersonalRankerVersion = typeof personalRankerVersions.$inferInsert;
+
+/** Audit trail for scanned-signal promotion decisions */
+export const personalRankerPromotionAudit = mysqlTable("personal_ranker_promotion_audit", {
+  id: int("id").autoincrement().primaryKey(),
+  gameType: varchar("gameType", { length: 32 }).notNull(),
+  userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  personalRankerVersionId: int("personalRankerVersionId").references(() => personalRankerVersions.id, { onDelete: "set null" }),
+  promotionStatus: varchar("promotionStatus", { length: 24 }).notNull().default("blocked"), // blocked | promoted
+  blockedReason: text("blockedReason"),
+  evaluatedOutcomeCount: int("evaluatedOutcomeCount").notNull().default(0),
+  promotedOutcomeCount: int("promotedOutcomeCount").notNull().default(0),
+  policySnapshot: json("policySnapshot"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => ({
+  byGameCreated: index("idx_personal_ranker_promo_game_created").on(
+    table.gameType,
+    table.createdAt
+  ),
+  byUserCreated: index("idx_personal_ranker_promo_user_created").on(
+    table.userId,
+    table.createdAt
+  ),
+}));
+
+export type PersonalRankerPromotionAudit = typeof personalRankerPromotionAudit.$inferSelect;
+export type InsertPersonalRankerPromotionAudit = typeof personalRankerPromotionAudit.$inferInsert;
 
 /** Budget-aware ticket selections (batches of 20 tickets) */
 export const ticketSelections = mysqlTable("ticket_selections", {

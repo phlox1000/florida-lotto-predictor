@@ -27,8 +27,13 @@ import {
 import { FLORIDA_GAMES, type GameType } from "../shared/lottery";
 import {
   getPendingScannedTicketTrainingExamplesForGame,
+  markScannedTicketOutcomesBlockedForGlobal,
   markScannedTicketOutcomesConsumed,
 } from "./scanned-ticket-learning";
+import {
+  evaluatePromotionEligibility,
+  trainPersonalRankersForDraw,
+} from "./personal-ranker-db";
 
 function extractInsertId(result: unknown): number | null {
   const candidates = [
@@ -354,22 +359,19 @@ export async function recordCandidateOutcomesAndTrainRanker(
           .where(inArray(predictionCandidates.id, candidateUpdateIds));
       }
 
-      const scannedTicketExamples = await getPendingScannedTicketTrainingExamplesForGame(gameType);
-      const mergedTraining = buildTrainingExamplesWithSourceWeights({
+      const generatedOnlyTraining = buildTrainingExamplesWithSourceWeights({
         generatedExamples: generatedTrainingExamples.map(example => ({
           features: example.features,
           rewardScore: example.rewardScore,
         })),
-        scannedExamples: scannedTicketExamples.map(example => ({
-          features: example.features,
-          rewardScore: example.rewardScore,
-          baseWeight: Number(example.trainingWeight) || 0.35,
-        })),
-        scannedCapRatio: 0.4,
-        scannedBaseWeight: 0.35,
+        scannedExamples: [],
       });
 
-      if (mergedTraining.examples.length === 0) {
+      if (generatedOnlyTraining.examples.length === 0) {
+        const personalTrainingNoGlobal = await trainPersonalRankersForDraw({ drawId, gameType });
+        console.log(
+          `[RankerV2] recordCandidateOutcomesAndTrainRanker gameType=${gameType} drawId=${drawId} outcomesInserted=${outcomeRows.length} generatedExamples=0 scannedExamples=0 totalExamples=0 newRankerVersionId=null personalUsersTrained=${personalTrainingNoGlobal.usersTrained} personalExamples=${personalTrainingNoGlobal.totalExamples}`
+        );
         return {
           candidateOutcomes: outcomeRows.length,
           trainedExamples: 0,
@@ -378,7 +380,7 @@ export async function recordCandidateOutcomesAndTrainRanker(
       }
 
       const active = await getOrCreateActiveRankerVersion(gameType);
-      const trained = trainOnlineLogisticRegression(active, mergedTraining.examples);
+      const trained = trainOnlineLogisticRegression(active, generatedOnlyTraining.examples);
 
       let newRankerVersionId: number | null = null;
       if (active.id) {
@@ -396,31 +398,38 @@ export async function recordCandidateOutcomesAndTrainRanker(
         learningRate: trained.learningRate,
         l2Lambda: trained.l2Lambda,
         trainedExamples: trained.trainedExamples,
-        generatedCandidateExamples: mergedTraining.generatedCount,
-        scannedTicketExamples: mergedTraining.scannedCount,
+        generatedCandidateExamples: generatedOnlyTraining.generatedCount,
+        scannedTicketExamples: 0,
         sourceRankerVersionId: active.id,
         isActive: 1,
-        notes: `Trained on draw ${drawId} with total=${mergedTraining.examples.length} generated=${mergedTraining.generatedCount} scanned=${mergedTraining.scannedCount}`,
+        notes: `Trained on draw ${drawId} with total=${generatedOnlyTraining.examples.length} generated=${generatedOnlyTraining.generatedCount} scanned=0 (personal-only scanned learning)`,
       } satisfies InsertRankerVersion);
       newRankerVersionId = extractInsertId(insertResult);
 
-      if (newRankerVersionId && scannedTicketExamples.length > 0 && mergedTraining.scannedCount > 0) {
-        const consumedOutcomeIds = scannedTicketExamples
-          .slice(0, mergedTraining.scannedCount)
-          .map(example => example.outcomeId);
-        await markScannedTicketOutcomesConsumed(
-          consumedOutcomeIds,
-          newRankerVersionId
-        );
+      const pendingScanned = await getPendingScannedTicketTrainingExamplesForGame(gameType);
+      const promotionStatus = await evaluatePromotionEligibility(gameType);
+      if (newRankerVersionId && pendingScanned.length > 0) {
+        if (promotionStatus.eligible) {
+          await markScannedTicketOutcomesConsumed(
+            pendingScanned.map(example => example.outcomeId),
+            newRankerVersionId
+          );
+        } else {
+          await markScannedTicketOutcomesBlockedForGlobal(
+            pendingScanned.map(example => example.outcomeId),
+            promotionStatus.blockedReasons.join(",") || "promotion_blocked"
+          );
+        }
       }
 
+      const personalTraining = await trainPersonalRankersForDraw({ drawId, gameType });
       console.log(
-        `[RankerV2] recordCandidateOutcomesAndTrainRanker gameType=${gameType} drawId=${drawId} outcomesInserted=${outcomeRows.length} generatedExamples=${mergedTraining.generatedCount} scannedExamples=${mergedTraining.scannedCount} totalExamples=${mergedTraining.examples.length} newRankerVersionId=${newRankerVersionId ?? "null"} insertResultShape=${describeInsertResult(insertResult)}`
+        `[RankerV2] recordCandidateOutcomesAndTrainRanker gameType=${gameType} drawId=${drawId} outcomesInserted=${outcomeRows.length} generatedExamples=${generatedOnlyTraining.generatedCount} scannedExamples=0 totalExamples=${generatedOnlyTraining.examples.length} newRankerVersionId=${newRankerVersionId ?? "null"} promotionEligible=${promotionStatus.eligible} personalUsersTrained=${personalTraining.usersTrained} personalExamples=${personalTraining.totalExamples} insertResultShape=${describeInsertResult(insertResult)}`
       );
 
       return {
         candidateOutcomes: outcomeRows.length,
-        trainedExamples: mergedTraining.examples.length,
+        trainedExamples: generatedOnlyTraining.examples.length,
         newRankerVersionId,
       };
     },
@@ -504,7 +513,7 @@ export async function getRankerTrainingSourceBreakdown(gameType: string) {
   }).from(scannedTicketOutcomes)
     .where(and(
       eq(scannedTicketOutcomes.gameType, gameType),
-      sql`${scannedTicketOutcomes.consumedRankerVersionId} IS NOT NULL`,
+      sql`${scannedTicketOutcomes.personalConsumedRankerVersionId} IS NOT NULL OR ${scannedTicketOutcomes.globalConsumedRankerVersionId} IS NOT NULL`,
     ));
 
   const pendingRows = await db.select({
@@ -512,12 +521,21 @@ export async function getRankerTrainingSourceBreakdown(gameType: string) {
   }).from(scannedTicketOutcomes)
     .where(and(
       eq(scannedTicketOutcomes.gameType, gameType),
-      sql`${scannedTicketOutcomes.consumedRankerVersionId} IS NULL`,
+      sql`${scannedTicketOutcomes.personalConsumedRankerVersionId} IS NULL AND ${scannedTicketOutcomes.globalConsumedRankerVersionId} IS NULL`,
+    ));
+
+  const promotedRows = await db.select({
+    count: sql<number>`COUNT(*)`,
+  }).from(scannedTicketOutcomes)
+    .where(and(
+      eq(scannedTicketOutcomes.gameType, gameType),
+      sql`${scannedTicketOutcomes.globalConsumedRankerVersionId} IS NOT NULL`,
     ));
 
   return {
     generatedCandidateCount: Number(generatedRows[0]?.count || 0),
     scannedTicketCount: Number(scannedRows[0]?.count || 0),
     pendingScannedTicketCount: Number(pendingRows[0]?.count || 0),
+    promotedScannedTicketCount: Number(promotedRows[0]?.count || 0),
   };
 }

@@ -3,6 +3,7 @@ import { FLORIDA_GAMES, type GameConfig, type PredictionResult } from "../shared
 import {
   computeCandidateFeatures,
   diversifyRankedCandidates,
+  applyPersonalizedReranking,
   rankCandidates,
   trainOnlineLogisticRegression,
   getDefaultRankerState,
@@ -179,5 +180,65 @@ describe("ranker-v2", () => {
     const lowDelta = Math.abs(nextLowWeight.coefficients.base_confidence - stateLowWeight.coefficients.base_confidence);
 
     expect(highDelta).toBeGreaterThan(lowDelta);
+  });
+
+  it("applies capped personal reranking only after threshold", () => {
+    const cfg = FLORIDA_GAMES.fantasy_5;
+    const history = mockHistory(cfg, 40);
+    const predictions: PredictionResult[] = [
+      {
+        modelName: "m1",
+        mainNumbers: [1, 2, 3, 4, 5],
+        specialNumbers: [],
+        confidenceScore: 0.7,
+        metadata: {},
+      },
+      {
+        modelName: "m2",
+        mainNumbers: [6, 7, 8, 9, 10],
+        specialNumbers: [],
+        confidenceScore: 0.7,
+        metadata: {},
+      },
+    ];
+    const features = computeCandidateFeatures(cfg, history, predictions, {}, {});
+    const global = getDefaultRankerState("fantasy_5");
+    const ranked = rankCandidates(features, global);
+    const before = ranked.map(c => c.rankerProbability);
+
+    const personalLow = {
+      ...getDefaultRankerState("fantasy_5"),
+      id: 11,
+      trainedExamples: 2,
+      coefficients: { ...getDefaultRankerState("fantasy_5").coefficients, base_confidence: 5 },
+    };
+    const lowBlend = applyPersonalizedReranking(ranked, personalLow, {
+      minExamples: 8,
+      rampExamples: 40,
+      maxBlendWeight: 0.35,
+      maxPerCandidateDelta: 0.2,
+    });
+    expect(lowBlend.applied).toBe(false);
+    expect(ranked.map(c => c.rankerProbability)).toEqual(before);
+
+    const personalReady = {
+      ...getDefaultRankerState("fantasy_5"),
+      id: 12,
+      trainedExamples: 40,
+      coefficients: { ...getDefaultRankerState("fantasy_5").coefficients, base_confidence: -2 },
+    };
+    const applied = applyPersonalizedReranking(ranked, personalReady, {
+      minExamples: 8,
+      rampExamples: 40,
+      maxBlendWeight: 0.35,
+      maxPerCandidateDelta: 0.2,
+    });
+    expect(applied.applied).toBe(true);
+    expect(applied.personalRankerVersionId).toBe(12);
+    expect(applied.adjustedCandidates).toBe(2);
+    for (let i = 0; i < ranked.length; i++) {
+      const delta = Math.abs(ranked[i].rankerProbability - before[i]);
+      expect(delta).toBeLessThanOrEqual(0.2);
+    }
   });
 });

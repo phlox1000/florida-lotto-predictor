@@ -18,7 +18,12 @@ import {
 } from "./ranker-v2";
 import { withMySqlNamedLock } from "./db";
 
-export type TicketOrigin = "user_selected" | "quick_pick" | "unknown";
+export type TicketOrigin =
+  | "user_selected"
+  | "quick_pick"
+  | "imported_historical"
+  | "ai_generated_purchased"
+  | "unknown";
 
 export interface ScannedTicketFeatureContext {
   gameType: string;
@@ -61,6 +66,17 @@ function normalizeTicketOrigin(value: unknown): TicketOrigin {
   const str = String(value ?? "").trim().toLowerCase();
   if (str === "quick_pick") return "quick_pick";
   if (str === "user_selected") return "user_selected";
+  if (str === "imported_historical") return "imported_historical";
+  if (str === "ai_generated_purchased") return "ai_generated_purchased";
+  return "unknown";
+}
+
+export function extractScannedSourceSubtypeFromFeatures(features: Record<string, number>): string {
+  if ((Number(features.ticketOrigin_quick_pick) || 0) > 0.5) return "quick_pick";
+  if ((Number(features.ticketOrigin_user_selected) || 0) > 0.5) return "user_selected";
+  if ((Number(features.ticketOrigin_imported_historical) || 0) > 0.5) return "imported_historical";
+  if ((Number(features.ticketOrigin_ai_generated_purchased) || 0) > 0.5) return "ai_generated_purchased";
+  if ((Number(features.ticketOrigin_unknown) || 0) > 0.5) return "unknown";
   return "unknown";
 }
 
@@ -73,6 +89,8 @@ function readParsedPayloadField<T>(payload: unknown, key: string): T | null {
 function computeScannedTrainingWeight(ticketOrigin: TicketOrigin): number {
   if (ticketOrigin === "quick_pick") return 0.4;
   if (ticketOrigin === "user_selected") return 0.35;
+  if (ticketOrigin === "imported_historical") return 0.3;
+  if (ticketOrigin === "ai_generated_purchased") return 0.25;
   return 0.3;
 }
 
@@ -127,9 +145,11 @@ export function computeScannedTicketOutcome(params: {
 
 export async function getPendingScannedTicketTrainingExamplesForGame(gameType: string): Promise<Array<{
   outcomeId: number;
+  userId: number;
   features: Record<string, number>;
   rewardScore: number;
   trainingWeight: number;
+  sourceSubtype: string;
 }>> {
   const db = await getDb();
   if (!db) return [];
@@ -137,8 +157,10 @@ export async function getPendingScannedTicketTrainingExamplesForGame(gameType: s
   const rows = await db
     .select({
       outcomeId: scannedTicketOutcomes.id,
+      userId: scannedTicketOutcomes.userId,
       rewardScore: scannedTicketOutcomes.rewardScore,
       trainingWeight: scannedTicketOutcomes.trainingWeight,
+      sourceSubtype: scannedTicketOutcomes.sourceSubtype,
       features: scannedTicketFeatureSnapshots.features,
       featureSnapshotId: scannedTicketFeatureSnapshots.id,
     })
@@ -156,17 +178,21 @@ export async function getPendingScannedTicketTrainingExamplesForGame(gameType: s
 
   const byOutcome = new Map<number, {
     outcomeId: number;
+    userId: number;
     features: Record<string, number>;
     rewardScore: number;
     trainingWeight: number;
+    sourceSubtype: string;
   }>();
   for (const row of rows) {
     if (byOutcome.has(row.outcomeId)) continue;
     byOutcome.set(row.outcomeId, {
       outcomeId: row.outcomeId,
+      userId: Number(row.userId) || 0,
       features: (row.features as Record<string, number>) || {},
       rewardScore: Number(row.rewardScore) || 0,
       trainingWeight: Number(row.trainingWeight) || 0.35,
+      sourceSubtype: String(row.sourceSubtype || "unknown"),
     });
   }
   return [...byOutcome.values()];
@@ -179,7 +205,26 @@ export async function markScannedTicketOutcomesConsumed(
   const db = await getDb();
   if (!db || outcomeIds.length === 0) return;
   await db.update(scannedTicketOutcomes)
-    .set({ consumedRankerVersionId: rankerVersionId })
+    .set({
+      consumedRankerVersionId: rankerVersionId,
+      globalConsumedRankerVersionId: rankerVersionId,
+      globalPromotionStatus: "promoted",
+      promotionBlockedReason: null,
+    })
+    .where(inArray(scannedTicketOutcomes.id, outcomeIds));
+}
+
+export async function markScannedTicketOutcomesBlockedForGlobal(
+  outcomeIds: number[],
+  reason: string
+): Promise<void> {
+  const db = await getDb();
+  if (!db || outcomeIds.length === 0) return;
+  await db.update(scannedTicketOutcomes)
+    .set({
+      globalPromotionStatus: "blocked",
+      promotionBlockedReason: reason,
+    })
     .where(inArray(scannedTicketOutcomes.id, outcomeIds));
 }
 
@@ -211,6 +256,7 @@ export async function evaluateConfirmedScannedTicketsForDraw(
         .select({
           scannedTicketId: scannedTickets.id,
           scannedTicketRowId: scannedTicketRows.id,
+          userId: scannedTickets.userId,
           confirmedMainNumbers: scannedTicketRows.confirmedMainNumbers,
           confirmedSpecialNumbers: scannedTicketRows.confirmedSpecialNumbers,
           ticketOrigin: scannedTickets.ticketOrigin,
@@ -289,8 +335,10 @@ export async function evaluateConfirmedScannedTicketsForDraw(
         outcomeRows.push({
           scannedTicketId: row.scannedTicketId,
           scannedTicketRowId: row.scannedTicketRowId,
+          userId: Number(row.userId) || 0,
           drawResultId: drawId,
           gameType,
+          sourceSubtype: ticketOrigin,
           mainHits: outcome.mainHits,
           specialHits: outcome.specialHits,
           rewardScore: outcome.rewardScore,

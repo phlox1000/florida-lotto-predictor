@@ -12,6 +12,7 @@ import { fetchRecentDraws, fetchAllGamesRecent } from "./lib/lotteryusa-scraper"
 import { runAllModels, selectBudgetTickets, applySumRangeFilter } from "./predictions";
 import {
   computeCandidateFeatures,
+  applyPersonalizedReranking,
   diversifyRankedCandidates,
   mergeRankedCandidatesIntoPredictions,
   rankCandidates,
@@ -26,6 +27,13 @@ import {
   recordCandidateOutcomesAndTrainRanker,
   storePredictionCandidatesAndFeatures,
 } from "./ranker-v2-db";
+import {
+  evaluatePromotionEligibility,
+  getActivePersonalRankerVersion,
+  getPersonalRankerStatus,
+  getPersonalTrainingSourceBreakdown,
+  getPersonalizationConfig,
+} from "./personal-ranker-db";
 import {
   computeScannedTicketFeatureSnapshot,
   evaluateConfirmedScannedTicketsForDraw,
@@ -118,6 +126,20 @@ async function buildRankedPredictionBundle(params: {
     modelAvgHits
   );
   const ranked = rankCandidates(featureRecords, rankerState);
+  const personalizationCfg = getPersonalizationConfig();
+  const personalState = params.userId
+    ? await getActivePersonalRankerVersion(params.userId, params.gameType)
+    : null;
+  const personalBlend = applyPersonalizedReranking(
+    ranked,
+    personalState,
+    {
+      minExamples: personalizationCfg.minExamplesToApply,
+      rampExamples: personalizationCfg.rampExamples,
+      maxBlendWeight: personalizationCfg.maxBlendWeight,
+      maxPerCandidateDelta: personalizationCfg.maxPerCandidateDelta,
+    }
+  );
   diversifyRankedCandidates(ranked, cfg, targetDiversifiedCandidateCount(params.gameType));
   const rankedPredictions = mergeRankedCandidatesIntoPredictions(predictions, ranked);
 
@@ -184,6 +206,8 @@ async function buildRankedPredictionBundle(params: {
     rankedPredictions,
     modelWeights,
     rankerState,
+    personalState,
+    personalBlend,
     candidateBatchId,
   };
 }
@@ -224,6 +248,12 @@ export const appRouter = router({
             featureSetVersion: bundle.rankerState.featureSetVersion,
             rankerVersionId: bundle.rankerState.id ?? null,
             candidateBatchId: bundle.candidateBatchId,
+            personalization: {
+              applied: bundle.personalBlend.applied,
+              personalRankerVersionId: bundle.personalBlend.personalRankerVersionId,
+              blendWeight: bundle.personalBlend.blendWeight,
+              adjustedCandidates: bundle.personalBlend.adjustedCandidates,
+            },
           },
         };
       }),
@@ -310,6 +340,27 @@ export const appRouter = router({
       .query(async ({ input }) => {
         return getRankerTrainingSourceBreakdown(input.gameType);
       }),
+
+    /** Personal ranker status and eligibility for the authenticated user */
+    personalRankerStatus: protectedProcedure
+      .input(z.object({ gameType: gameTypeSchema }))
+      .query(async ({ input, ctx }) => {
+        return getPersonalRankerStatus(ctx.user.id, input.gameType);
+      }),
+
+    /** Personal training source breakdown for the authenticated user */
+    personalTrainingSourceBreakdown: protectedProcedure
+      .input(z.object({ gameType: gameTypeSchema }))
+      .query(async ({ input, ctx }) => {
+        return getPersonalTrainingSourceBreakdown(ctx.user.id, input.gameType);
+      }),
+
+    /** Global promotion status for scanned-ticket signals */
+    promotionStatus: publicProcedure
+      .input(z.object({ gameType: gameTypeSchema }))
+      .query(async ({ input }) => {
+        return evaluatePromotionEligibility(input.gameType);
+      }),
   }),
 
   // ─── Budget Ticket Selector ─────────────────────────────────────────────────
@@ -359,6 +410,12 @@ export const appRouter = router({
             algorithm: bundle.rankerState.algorithm,
             rankerVersionId: bundle.rankerState.id ?? null,
             candidateBatchId: bundle.candidateBatchId,
+            personalization: {
+              applied: bundle.personalBlend.applied,
+              personalRankerVersionId: bundle.personalBlend.personalRankerVersionId,
+              blendWeight: bundle.personalBlend.blendWeight,
+              adjustedCandidates: bundle.personalBlend.adjustedCandidates,
+            },
           },
         };
       }),
@@ -391,7 +448,7 @@ export const appRouter = router({
     confirmScannedTicket: protectedProcedure
       .input(z.object({
         scannedTicketId: z.number().int().positive(),
-        ticketOrigin: z.enum(["user_selected", "quick_pick", "unknown"]).default("unknown"),
+        ticketOrigin: z.enum(["user_selected", "quick_pick", "imported_historical", "ai_generated_purchased", "unknown"]).default("unknown"),
         drawDate: z.string().optional(), // YYYY-MM-DD
         drawTime: z.enum(["midday", "evening"]).optional(),
         cost: z.number().min(0),

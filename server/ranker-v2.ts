@@ -33,6 +33,20 @@ export interface RankedCandidate extends CandidateFeatureRecord {
   selectedForFinal: boolean;
 }
 
+export interface PersonalizationBlendConfig {
+  minExamples: number;
+  rampExamples: number;
+  maxBlendWeight: number;
+  maxPerCandidateDelta: number;
+}
+
+export interface PersonalizationBlendResult {
+  applied: boolean;
+  personalRankerVersionId: number | null;
+  blendWeight: number;
+  adjustedCandidates: number;
+}
+
 export interface TrainingExample {
   features: Record<string, number>;
   rewardScore: number;
@@ -184,7 +198,10 @@ export function computeCandidateFeatures(
   });
 }
 
-function scoreFeatures(features: Record<string, number>, state: RankerState): { score: number; probability: number } {
+export function scoreWithRankerState(
+  features: Record<string, number>,
+  state: RankerState
+): { score: number; probability: number } {
   let score = state.intercept;
   for (const [featureName, value] of Object.entries(features)) {
     const coefficient = state.coefficients[featureName] ?? 0;
@@ -198,7 +215,7 @@ export function rankCandidates(
   rankerState: RankerState
 ): RankedCandidate[] {
   const scored = featureRecords.map(record => {
-    const { score, probability } = scoreFeatures(record.features, rankerState);
+    const { score, probability } = scoreWithRankerState(record.features, rankerState);
     return {
       ...record,
       rankerScore: score,
@@ -217,6 +234,84 @@ export function rankCandidates(
     candidate.rankPosition = idx + 1;
   });
   return scored;
+}
+
+export function applyPersonalizedReranking(
+  ranked: RankedCandidate[],
+  personalState: RankerState | null,
+  config: PersonalizationBlendConfig
+): PersonalizationBlendResult {
+  if (!personalState) {
+    return {
+      applied: false,
+      personalRankerVersionId: null,
+      blendWeight: 0,
+      adjustedCandidates: 0,
+    };
+  }
+
+  const trainedExamples = Number(personalState.trainedExamples) || 0;
+  const minExamples = Math.max(1, config.minExamples);
+  if (trainedExamples < minExamples) {
+    return {
+      applied: false,
+      personalRankerVersionId: personalState.id ?? null,
+      blendWeight: 0,
+      adjustedCandidates: 0,
+    };
+  }
+
+  const ramp = Math.max(1, config.rampExamples);
+  const readiness = clamp01((trainedExamples - minExamples + 1) / ramp);
+  const blendWeight = clamp01(config.maxBlendWeight) * readiness;
+  const maxDelta = clamp01(config.maxPerCandidateDelta);
+  if (blendWeight <= 0 || maxDelta <= 0 || ranked.length === 0) {
+    return {
+      applied: false,
+      personalRankerVersionId: personalState.id ?? null,
+      blendWeight: 0,
+      adjustedCandidates: 0,
+    };
+  }
+
+  for (const candidate of ranked) {
+    const globalProbability = clamp01(candidate.rankerProbability);
+    const personalProbability = scoreWithRankerState(candidate.features, personalState).probability;
+    const rawDelta = personalProbability - globalProbability;
+    const cappedDelta = Math.max(-maxDelta, Math.min(maxDelta, rawDelta));
+    const blendedProbability = clamp01(globalProbability + blendWeight * cappedDelta);
+    candidate.rankerProbability = blendedProbability;
+    candidate.rankerScore = blendedProbability;
+    candidate.metadata = {
+      ...candidate.metadata,
+      personalization: {
+        applied: true,
+        globalProbability,
+        personalProbability,
+        blendedProbability,
+        cappedDelta,
+        blendWeight,
+        personalRankerVersionId: personalState.id ?? null,
+      },
+    };
+  }
+
+  ranked.sort((a, b) =>
+    b.rankerProbability - a.rankerProbability ||
+    b.baseConfidenceScore - a.baseConfidenceScore ||
+    a.candidateKey.localeCompare(b.candidateKey)
+  );
+  ranked.forEach((candidate, idx) => {
+    candidate.rankPosition = idx + 1;
+    candidate.selectedForFinal = false;
+  });
+
+  return {
+    applied: true,
+    personalRankerVersionId: personalState.id ?? null,
+    blendWeight,
+    adjustedCandidates: ranked.length,
+  };
 }
 
 function overlapCount(a: number[], b: number[]): number {
@@ -346,7 +441,7 @@ export function trainOnlineLogisticRegression(
   for (const example of examples) {
     const weight = Math.max(0.01, Math.min(1, Number(example.trainingWeight ?? 1)));
     const y = clamp01(example.rewardScore);
-    const { probability } = scoreFeatures(example.features, next);
+    const { probability } = scoreWithRankerState(example.features, next);
     const error = (probability - y) * weight;
 
     next.intercept -= learningRate * error;
@@ -367,7 +462,7 @@ export function computeScannedTicketFeatures(params: {
   cfg: GameConfig;
   mainNumbers: number[];
   specialNumbers: number[];
-  ticketOrigin: "user_selected" | "quick_pick" | "unknown";
+  ticketOrigin: "user_selected" | "quick_pick" | "imported_historical" | "ai_generated_purchased" | "unknown";
   sourceModelWeight?: number;
   sourceModelAvgHits?: number;
   historyDepth?: number;
@@ -402,6 +497,8 @@ export function computeScannedTicketFeatures(params: {
     source_generated_candidate: 0,
     ticketOrigin_quick_pick: ticketOrigin === "quick_pick" ? 1 : 0,
     ticketOrigin_user_selected: ticketOrigin === "user_selected" ? 1 : 0,
+    ticketOrigin_imported_historical: ticketOrigin === "imported_historical" ? 1 : 0,
+    ticketOrigin_ai_generated_purchased: ticketOrigin === "ai_generated_purchased" ? 1 : 0,
     ticketOrigin_unknown: ticketOrigin === "unknown" ? 1 : 0,
   };
 }

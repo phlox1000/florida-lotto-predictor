@@ -675,7 +675,7 @@ export async function updateScannedTicketStatus(params: {
   userId: number;
   scanStatus: "parsed" | "confirming" | "confirmed" | "rejected" | "invalid";
   confirmationStatus: "pending" | "processing" | "confirmed" | "rejected";
-  ticketOrigin?: "user_selected" | "quick_pick" | "unknown";
+  ticketOrigin?: "user_selected" | "quick_pick" | "imported_historical" | "ai_generated_purchased" | "unknown";
   confirmedPayload?: unknown;
   linkedPurchasedTicketId?: number | null;
 }) {
