@@ -7,6 +7,7 @@ import {
   trainOnlineLogisticRegression,
   getDefaultRankerState,
   computeRewardScore,
+  buildTrainingExamplesWithSourceWeights,
 } from "./ranker-v2";
 
 function mockHistory(cfg: GameConfig, count: number) {
@@ -135,5 +136,48 @@ describe("ranker-v2", () => {
     expect(strong).toBeGreaterThan(partial);
     expect(jackpot).toBeGreaterThanOrEqual(strong);
     expect(jackpot).toBeLessThanOrEqual(1);
+  });
+
+  it("applies scanned-source cap and per-example weights", () => {
+    const merged = buildTrainingExamplesWithSourceWeights({
+      generatedExamples: [
+        { features: { base_confidence: 0.7 }, rewardScore: 0.6 },
+        { features: { base_confidence: 0.4 }, rewardScore: 0.2 },
+        { features: { base_confidence: 0.9 }, rewardScore: 0.9 },
+        { features: { base_confidence: 0.1 }, rewardScore: 0.1 },
+        { features: { base_confidence: 0.5 }, rewardScore: 0.3 },
+      ],
+      scannedExamples: [
+        { features: { source_scanned_ticket: 1 }, rewardScore: 0.8, baseWeight: 0.25 },
+        { features: { source_scanned_ticket: 1 }, rewardScore: 0.1, baseWeight: 0.45 },
+        { features: { source_scanned_ticket: 1 }, rewardScore: 0.3, baseWeight: 0.55 },
+      ],
+      scannedCapRatio: 0.4,
+      scannedBaseWeight: 0.35,
+    });
+
+    // floor(5 * 0.4) => 2 scanned examples max
+    expect(merged.generatedCount).toBe(5);
+    expect(merged.scannedCount).toBe(2);
+    expect(merged.examples).toHaveLength(7);
+    expect(merged.examples.slice(0, 5).every(e => e.trainingWeight === 1)).toBe(true);
+    expect(merged.examples[5].trainingWeight).toBeCloseTo(0.25, 6);
+    expect(merged.examples[6].trainingWeight).toBeCloseTo(0.45, 6);
+  });
+
+  it("uses trainingWeight in logistic updates", () => {
+    const stateHighWeight = getDefaultRankerState("fantasy_5");
+    const nextHighWeight = trainOnlineLogisticRegression(stateHighWeight, [
+      { features: { base_confidence: 1 }, rewardScore: 0, trainingWeight: 1 },
+    ]);
+    const highDelta = Math.abs(nextHighWeight.coefficients.base_confidence - stateHighWeight.coefficients.base_confidence);
+
+    const stateLowWeight = getDefaultRankerState("fantasy_5");
+    const nextLowWeight = trainOnlineLogisticRegression(stateLowWeight, [
+      { features: { base_confidence: 1 }, rewardScore: 0, trainingWeight: 0.1 },
+    ]);
+    const lowDelta = Math.abs(nextLowWeight.coefficients.base_confidence - stateLowWeight.coefficients.base_confidence);
+
+    expect(highDelta).toBeGreaterThan(lowDelta);
   });
 });
