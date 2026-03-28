@@ -12,7 +12,7 @@ import {
   type InsertPredictionOutcome,
   type InsertRankerVersion,
 } from "../drizzle/schema";
-import { getDb, getModelPerformanceStats } from "./db";
+import { getDb, getModelPerformanceStats, withMySqlNamedLock } from "./db";
 import {
   RANKER_V2_ALGORITHM,
   RANKER_V2_FEATURE_SET,
@@ -52,6 +52,11 @@ function describeInsertResult(result: unknown): string {
     return `object(keys=${Object.keys(result as Record<string, unknown>).join(",")})`;
   }
   return String(result);
+}
+
+function extractMysqlErrorCode(error: unknown): string | number | null {
+  if (!error || typeof error !== "object") return null;
+  return (error as any).code ?? (error as any).errno ?? null;
 }
 
 function toRankerState(row: {
@@ -253,156 +258,181 @@ export async function recordCandidateOutcomesAndTrainRanker(
   winningMain: number[],
   winningSpecial: number[]
 ): Promise<{ candidateOutcomes: number; trainedExamples: number; newRankerVersionId: number | null }> {
-  const db = await getDb();
-  if (!db) return { candidateOutcomes: 0, trainedExamples: 0, newRankerVersionId: null };
+  return withMySqlNamedLock(
+    `ranker_train:${gameType}:${drawId}`,
+    10,
+    async () => {
+      const db = await getDb();
+      if (!db) return { candidateOutcomes: 0, trainedExamples: 0, newRankerVersionId: null };
 
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  const candidateRows = await db
-    .select({
-      candidateId: predictionCandidates.id,
-      gameType: predictionCandidates.gameType,
-      mainNumbers: predictionCandidates.mainNumbers,
-      specialNumbers: predictionCandidates.specialNumbers,
-      rankerVersionId: predictionCandidates.rankerVersionId,
-      features: predictionFeatureSnapshots.features,
-    })
-    .from(predictionCandidates)
-    .innerJoin(
-      predictionFeatureSnapshots,
-      eq(predictionFeatureSnapshots.candidateId, predictionCandidates.id)
-    )
-    .where(and(
-      eq(predictionCandidates.gameType, gameType),
-      gte(predictionCandidates.createdAt, sevenDaysAgo),
-      sql`${predictionCandidates.evaluatedDrawResultId} IS NULL`,
-    ))
-    .orderBy(desc(predictionCandidates.createdAt))
-    .limit(500) as CandidateEvalRow[];
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const candidateRows = await db
+        .select({
+          candidateId: predictionCandidates.id,
+          gameType: predictionCandidates.gameType,
+          mainNumbers: predictionCandidates.mainNumbers,
+          specialNumbers: predictionCandidates.specialNumbers,
+          rankerVersionId: predictionCandidates.rankerVersionId,
+          features: predictionFeatureSnapshots.features,
+        })
+        .from(predictionCandidates)
+        .innerJoin(
+          predictionFeatureSnapshots,
+          eq(predictionFeatureSnapshots.candidateId, predictionCandidates.id)
+        )
+        .where(and(
+          eq(predictionCandidates.gameType, gameType),
+          gte(predictionCandidates.createdAt, sevenDaysAgo),
+          sql`${predictionCandidates.evaluatedDrawResultId} IS NULL`,
+        ))
+        .orderBy(desc(predictionCandidates.createdAt))
+        .limit(500) as CandidateEvalRow[];
 
-  const cfg = FLORIDA_GAMES[gameType as GameType];
-  if (!cfg) return { candidateOutcomes: 0, trainedExamples: 0, newRankerVersionId: null };
+      const cfg = FLORIDA_GAMES[gameType as GameType];
+      if (!cfg) return { candidateOutcomes: 0, trainedExamples: 0, newRankerVersionId: null };
 
-  const winningMainSet = new Set(winningMain);
-  const winningSpecialSet = new Set(winningSpecial);
+      const winningMainSet = new Set(winningMain);
+      const winningSpecialSet = new Set(winningSpecial);
 
-  const outcomeRows: InsertPredictionOutcome[] = [];
-  const candidateUpdateIds: number[] = [];
-  const generatedTrainingExamples: TrainingExample[] = [];
+      const outcomeRows: InsertPredictionOutcome[] = [];
+      const candidateUpdateIds: number[] = [];
+      const generatedTrainingExamples: TrainingExample[] = [];
 
-  for (const row of candidateRows) {
-    const main = toArrayNumbers(row.mainNumbers);
-    const special = toArrayNumbers(row.specialNumbers);
-    const mainHits = main.filter(n => winningMainSet.has(n)).length;
-    const specialHits = special.filter(n => winningSpecialSet.has(n)).length;
-    const rewardScore = computeRewardScore(cfg, mainHits, specialHits);
-    const outcomeTier = rewardTier(cfg, mainHits, specialHits, rewardScore);
+      for (const row of candidateRows) {
+        const main = toArrayNumbers(row.mainNumbers);
+        const special = toArrayNumbers(row.specialNumbers);
+        const mainHits = main.filter(n => winningMainSet.has(n)).length;
+        const specialHits = special.filter(n => winningSpecialSet.has(n)).length;
+        const rewardScore = computeRewardScore(cfg, mainHits, specialHits);
+        const outcomeTier = rewardTier(cfg, mainHits, specialHits, rewardScore);
 
-    outcomeRows.push({
-      candidateId: row.candidateId,
-      drawResultId: drawId,
-      gameType,
-      rankerVersionId: row.rankerVersionId,
-      mainHits,
-      specialHits,
-      rewardScore,
-      outcomeTier,
-    });
-    candidateUpdateIds.push(row.candidateId);
-    generatedTrainingExamples.push({
-      features: (row.features as Record<string, number>) || {},
-      rewardScore,
-      sourceType: "generated_candidate",
-    });
-  }
+        outcomeRows.push({
+          candidateId: row.candidateId,
+          drawResultId: drawId,
+          gameType,
+          rankerVersionId: row.rankerVersionId,
+          mainHits,
+          specialHits,
+          rewardScore,
+          outcomeTier,
+        });
+        candidateUpdateIds.push(row.candidateId);
+        generatedTrainingExamples.push({
+          features: (row.features as Record<string, number>) || {},
+          rewardScore,
+          sourceType: "generated_candidate",
+        });
+      }
 
-  if (outcomeRows.length > 0) {
-    await db.insert(predictionOutcomes).values(outcomeRows);
-  }
+      if (outcomeRows.length > 0) {
+        try {
+          await db.insert(predictionOutcomes).values(outcomeRows);
+        } catch (error) {
+          const code = extractMysqlErrorCode(error);
+          if (code === "ER_DUP_ENTRY" || code === 1062) {
+            console.warn(
+              `[RankerV2] prediction_outcomes duplicate insert avoided drawId=${drawId} gameType=${gameType}`
+            );
+          } else {
+            throw error;
+          }
+        }
+      }
 
-  if (candidateUpdateIds.length > 0) {
-    await db.update(predictionCandidates)
-      .set({
-        evaluatedDrawResultId: drawId,
-        rewardScore: sql`(
-          SELECT po.rewardScore
-          FROM prediction_outcomes po
-          WHERE po.candidateId = ${predictionCandidates.id}
-          ORDER BY po.id DESC
-          LIMIT 1
-        )`,
-      })
-      .where(inArray(predictionCandidates.id, candidateUpdateIds));
-  }
+      if (candidateUpdateIds.length > 0) {
+        await db.update(predictionCandidates)
+          .set({
+            evaluatedDrawResultId: drawId,
+            rewardScore: sql`(
+              SELECT po.rewardScore
+              FROM prediction_outcomes po
+              WHERE po.candidateId = ${predictionCandidates.id}
+              ORDER BY po.id DESC
+              LIMIT 1
+            )`,
+          })
+          .where(inArray(predictionCandidates.id, candidateUpdateIds));
+      }
 
-  const scannedTicketExamples = await getPendingScannedTicketTrainingExamplesForGame(gameType);
-  const mergedTraining = buildTrainingExamplesWithSourceWeights({
-    generatedExamples: generatedTrainingExamples.map(example => ({
-      features: example.features,
-      rewardScore: example.rewardScore,
-    })),
-    scannedExamples: scannedTicketExamples.map(example => ({
-      features: example.features,
-      rewardScore: example.rewardScore,
-      baseWeight: Number(example.trainingWeight) || 0.35,
-    })),
-    scannedCapRatio: 0.4,
-    scannedBaseWeight: 0.35,
-  });
+      const scannedTicketExamples = await getPendingScannedTicketTrainingExamplesForGame(gameType);
+      const mergedTraining = buildTrainingExamplesWithSourceWeights({
+        generatedExamples: generatedTrainingExamples.map(example => ({
+          features: example.features,
+          rewardScore: example.rewardScore,
+        })),
+        scannedExamples: scannedTicketExamples.map(example => ({
+          features: example.features,
+          rewardScore: example.rewardScore,
+          baseWeight: Number(example.trainingWeight) || 0.35,
+        })),
+        scannedCapRatio: 0.4,
+        scannedBaseWeight: 0.35,
+      });
 
-  if (mergedTraining.examples.length === 0) {
-    return {
-      candidateOutcomes: outcomeRows.length,
-      trainedExamples: 0,
-      newRankerVersionId: null,
-    };
-  }
+      if (mergedTraining.examples.length === 0) {
+        return {
+          candidateOutcomes: outcomeRows.length,
+          trainedExamples: 0,
+          newRankerVersionId: null,
+        };
+      }
 
-  const active = await getOrCreateActiveRankerVersion(gameType);
-  const trained = trainOnlineLogisticRegression(active, mergedTraining.examples);
+      const active = await getOrCreateActiveRankerVersion(gameType);
+      const trained = trainOnlineLogisticRegression(active, mergedTraining.examples);
 
-  let newRankerVersionId: number | null = null;
-  if (active.id) {
-    await db.update(rankerVersions)
-      .set({ isActive: 0 })
-      .where(eq(rankerVersions.id, active.id));
-  }
+      let newRankerVersionId: number | null = null;
+      if (active.id) {
+        await db.update(rankerVersions)
+          .set({ isActive: 0 })
+          .where(eq(rankerVersions.id, active.id));
+      }
 
-  const insertResult = await db.insert(rankerVersions).values({
-    gameType: trained.gameType,
-    algorithm: trained.algorithm,
-    featureSetVersion: trained.featureSetVersion,
-    intercept: trained.intercept,
-    coefficients: trained.coefficients,
-    learningRate: trained.learningRate,
-    l2Lambda: trained.l2Lambda,
-    trainedExamples: trained.trainedExamples,
-    generatedCandidateExamples: mergedTraining.generatedCount,
-    scannedTicketExamples: mergedTraining.scannedCount,
-    sourceRankerVersionId: active.id,
-    isActive: 1,
-    notes: `Trained on draw ${drawId} with total=${mergedTraining.examples.length} generated=${mergedTraining.generatedCount} scanned=${mergedTraining.scannedCount}`,
-  } satisfies InsertRankerVersion);
-  newRankerVersionId = extractInsertId(insertResult);
+      const insertResult = await db.insert(rankerVersions).values({
+        gameType: trained.gameType,
+        algorithm: trained.algorithm,
+        featureSetVersion: trained.featureSetVersion,
+        intercept: trained.intercept,
+        coefficients: trained.coefficients,
+        learningRate: trained.learningRate,
+        l2Lambda: trained.l2Lambda,
+        trainedExamples: trained.trainedExamples,
+        generatedCandidateExamples: mergedTraining.generatedCount,
+        scannedTicketExamples: mergedTraining.scannedCount,
+        sourceRankerVersionId: active.id,
+        isActive: 1,
+        notes: `Trained on draw ${drawId} with total=${mergedTraining.examples.length} generated=${mergedTraining.generatedCount} scanned=${mergedTraining.scannedCount}`,
+      } satisfies InsertRankerVersion);
+      newRankerVersionId = extractInsertId(insertResult);
 
-  if (newRankerVersionId && scannedTicketExamples.length > 0 && mergedTraining.scannedCount > 0) {
-    const consumedOutcomeIds = scannedTicketExamples
-      .slice(0, mergedTraining.scannedCount)
-      .map(example => example.outcomeId);
-    await markScannedTicketOutcomesConsumed(
-      consumedOutcomeIds,
-      newRankerVersionId
-    );
-  }
+      if (newRankerVersionId && scannedTicketExamples.length > 0 && mergedTraining.scannedCount > 0) {
+        const consumedOutcomeIds = scannedTicketExamples
+          .slice(0, mergedTraining.scannedCount)
+          .map(example => example.outcomeId);
+        await markScannedTicketOutcomesConsumed(
+          consumedOutcomeIds,
+          newRankerVersionId
+        );
+      }
 
-  console.log(
-    `[RankerV2] recordCandidateOutcomesAndTrainRanker gameType=${gameType} drawId=${drawId} outcomesInserted=${outcomeRows.length} generatedExamples=${mergedTraining.generatedCount} scannedExamples=${mergedTraining.scannedCount} totalExamples=${mergedTraining.examples.length} newRankerVersionId=${newRankerVersionId ?? "null"} insertResultShape=${describeInsertResult(insertResult)}`
+      console.log(
+        `[RankerV2] recordCandidateOutcomesAndTrainRanker gameType=${gameType} drawId=${drawId} outcomesInserted=${outcomeRows.length} generatedExamples=${mergedTraining.generatedCount} scannedExamples=${mergedTraining.scannedCount} totalExamples=${mergedTraining.examples.length} newRankerVersionId=${newRankerVersionId ?? "null"} insertResultShape=${describeInsertResult(insertResult)}`
+      );
+
+      return {
+        candidateOutcomes: outcomeRows.length,
+        trainedExamples: mergedTraining.examples.length,
+        newRankerVersionId,
+      };
+    },
+    {
+      onLockMiss: () => {
+        console.warn(
+          `[RankerV2] skipped recordCandidateOutcomesAndTrainRanker due to lock contention drawId=${drawId} gameType=${gameType}`
+        );
+      },
+      fallbackResult: { candidateOutcomes: 0, trainedExamples: 0, newRankerVersionId: null },
+    }
   );
-
-  return {
-    candidateOutcomes: outcomeRows.length,
-    trainedExamples: mergedTraining.examples.length,
-    newRankerVersionId,
-  };
 }
 
 export async function getRankerVersionsByGame(gameType: string, limit = 20) {

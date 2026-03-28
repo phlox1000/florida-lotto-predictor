@@ -44,6 +44,8 @@ import {
   insertScannedTicketFeatureSnapshots,
   getDrawResultByGameDateTime,
   evaluatePurchasedTicketsAgainstDraw,
+  claimScannedTicketForConfirmation,
+  findDuplicateConfirmedScannedRow,
   updateScannedTicketStatus,
   updateScannedTicketRowConfirmation,
   insertPurchasedTicket, getUserPurchasedTickets, updatePurchasedTicketOutcome,
@@ -57,6 +59,27 @@ const gameTypeSchema = z.enum(GAME_TYPES);
 function targetDiversifiedCandidateCount(gameType: GameType): number {
   const cfg = FLORIDA_GAMES[gameType];
   return Math.min(8, Math.max(3, cfg.mainCount + cfg.specialCount));
+}
+
+function parseIsoDateToUtcStart(value: string): number {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return Number.NaN;
+  const [, year, month, day] = match;
+  return Date.UTC(Number(year), Number(month) - 1, Number(day));
+}
+
+function canonicalNumberSignature(mainNumbers: number[], specialNumbers: number[]): string {
+  const main = [...mainNumbers].sort((a, b) => a - b).join(",");
+  const special = [...specialNumbers].sort((a, b) => a - b).join(",");
+  return `${main}|${special}`;
+}
+
+function normalizeNumberArray(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map(n => Number(n))
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
 }
 
 async function buildRankedPredictionBundle(params: {
@@ -385,6 +408,8 @@ export const appRouter = router({
           throw new Error("Scanned ticket not found");
         }
         const { ticket, rows: existingRows } = payload;
+        const ticketConfirmationStatus = String(ticket.confirmationStatus || "");
+        const ticketScanStatus = String(ticket.scanStatus || "");
         const gameType = String(ticket.gameType) as GameType;
         const cfg = FLORIDA_GAMES[gameType];
         if (!cfg) {
@@ -392,7 +417,7 @@ export const appRouter = router({
         }
 
         const drawDateTs = input.drawDate
-          ? new Date(input.drawDate).getTime()
+          ? parseIsoDateToUtcStart(input.drawDate)
           : Number(ticket.drawDate);
         if (!Number.isFinite(drawDateTs)) {
           throw new Error("Invalid draw date");
@@ -402,159 +427,291 @@ export const appRouter = router({
           throw new Error("Invalid draw time");
         }
 
+        let claimOwned = false;
+        let finalized = false;
+        if (ticketConfirmationStatus === "processing" || ticketScanStatus === "confirming") {
+          throw new Error("Scanned ticket confirmation is already in progress. Please retry.");
+        }
+        if (ticketConfirmationStatus === "confirmed" || ticketScanStatus === "confirmed") {
+          const existingConfirmed = existingRows
+            .filter(r => String(r.rowStatus) === "confirmed")
+            .map(r => ({
+              rowId: Number(r.id),
+              signature: canonicalNumberSignature(
+                normalizeNumberArray(r.confirmedMainNumbers),
+                normalizeNumberArray(r.confirmedSpecialNumbers),
+              ),
+            }));
+          const requestConfirmed = input.rows
+            .filter(r => r.rowStatus === "confirmed")
+            .map(r => ({
+              rowId: Number(r.rowId),
+              signature: canonicalNumberSignature(
+                normalizeNumberArray(r.mainNumbers),
+                normalizeNumberArray(r.specialNumbers),
+              ),
+            }));
+          const existingSet = new Set(existingConfirmed.map(r => r.signature));
+          const requestSet = new Set(requestConfirmed.map(r => r.signature));
+          const signaturesMatch =
+            existingSet.size === requestSet.size &&
+            [...requestSet].every(sig => existingSet.has(sig));
+          if (signaturesMatch) {
+            return {
+              success: true,
+              scannedTicketId: input.scannedTicketId,
+              purchasedTicketIds: [],
+              confirmedRows: existingConfirmed.length,
+              rejectedRows: Math.max(0, existingRows.length - existingConfirmed.length),
+              featureSnapshotsCreated: 0,
+              evaluatedNow: false,
+              scannedOutcomesNow: 0,
+              trainedExamplesNow: 0,
+              newRankerVersionId: null,
+              idempotent: true,
+            };
+          }
+          throw new Error("Scanned ticket was already confirmed with different rows. Create a new scan to revise.");
+        }
+        {
+          const claimed = await claimScannedTicketForConfirmation({
+            scannedTicketId: input.scannedTicketId,
+            userId: ctx.user.id,
+          });
+          if (!claimed) {
+            throw new Error("Scanned ticket confirmation is already in progress. Please retry.");
+          }
+          claimOwned = true;
+        }
+
         const rowById = new Map(existingRows.map(r => [Number(r.id), r]));
         const parsedPayload = (ticket.parsedPayload as Record<string, unknown> | null) || {};
         const matchedModel = typeof parsedPayload.matchedModel === "string" ? parsedPayload.matchedModel : undefined;
         const sourceConfidence = Number(parsedPayload.confidence ?? 0.5) || 0.5;
 
-        const confirmedRows: Array<{ rowId: number; mainNumbers: number[]; specialNumbers: number[] }> = [];
-        for (const row of input.rows) {
-          if (!rowById.has(row.rowId)) {
-            throw new Error(`Row ${row.rowId} does not belong to scanned ticket ${input.scannedTicketId}`);
-          }
-          const main = [...row.mainNumbers].map(n => Number(n)).filter(Number.isFinite).sort((a, b) => a - b);
-          const special = [...row.specialNumbers].map(n => Number(n)).filter(Number.isFinite).sort((a, b) => a - b);
+        try {
+          const confirmedRows: Array<{ rowId: number; mainNumbers: number[]; specialNumbers: number[] }> = [];
+          const requestSignatures = new Set<string>();
+          for (const row of input.rows) {
+            if (!rowById.has(row.rowId)) {
+              throw new Error(`Row ${row.rowId} does not belong to scanned ticket ${input.scannedTicketId}`);
+            }
+            const main = [...row.mainNumbers].map(n => Number(n)).filter(Number.isFinite).sort((a, b) => a - b);
+            const special = [...row.specialNumbers].map(n => Number(n)).filter(Number.isFinite).sort((a, b) => a - b);
 
-          if (row.rowStatus === "confirmed") {
-            if (main.length !== cfg.mainCount) {
-              throw new Error(`Row ${row.rowId} has invalid main number count`);
+            if (row.rowStatus === "confirmed") {
+              if (main.length !== cfg.mainCount) {
+                throw new Error(`Row ${row.rowId} has invalid main number count`);
+              }
+              if (!cfg.isDigitGame && new Set(main).size !== main.length) {
+                throw new Error(`Row ${row.rowId} has duplicate main numbers`);
+              }
+              if (cfg.isDigitGame) {
+                if (main.some(n => n < 0 || n > 9)) {
+                  throw new Error(`Row ${row.rowId} has out-of-range digit values`);
+                }
+              } else {
+                if (main.some(n => n < 1 || n > cfg.mainMax)) {
+                  throw new Error(`Row ${row.rowId} has out-of-range main numbers`);
+                }
+              }
+              if (cfg.specialCount > 0) {
+                if (special.length !== cfg.specialCount) {
+                  throw new Error(`Row ${row.rowId} has invalid special number count`);
+                }
+                if (special.some(n => n < 1 || n > cfg.specialMax)) {
+                  throw new Error(`Row ${row.rowId} has out-of-range special numbers`);
+                }
+                if (new Set(special).size !== special.length) {
+                  throw new Error(`Row ${row.rowId} has duplicate special numbers`);
+                }
+              }
+              if (cfg.specialCount === 0 && special.length > 0) {
+                throw new Error(`Row ${row.rowId} should not include special numbers for ${cfg.name}`);
+              }
+
+              const rowSignature = canonicalNumberSignature(main, special);
+              if (requestSignatures.has(rowSignature)) {
+                throw new Error(`Row ${row.rowId} duplicates another confirmed row in this request`);
+              }
+              requestSignatures.add(rowSignature);
+
+              const duplicateRow = await findDuplicateConfirmedScannedRow({
+                userId: ctx.user.id,
+                gameType,
+                drawDate: drawDateTs,
+                drawTime,
+                mainNumbers: main,
+                specialNumbers: special,
+                excludeScannedTicketId: input.scannedTicketId,
+                excludeRowId: row.rowId,
+              });
+              if (duplicateRow) {
+                throw new Error(
+                  `Row ${row.rowId} duplicates an already confirmed scanned row (ticket ${duplicateRow.scannedTicketId}, row ${duplicateRow.rowId})`
+                );
+              }
+              confirmedRows.push({ rowId: row.rowId, mainNumbers: main, specialNumbers: special });
             }
-            if (cfg.isDigitGame) {
-              if (main.some(n => n < 0 || n > 9)) {
-                throw new Error(`Row ${row.rowId} has out-of-range digit values`);
-              }
-            } else {
-              if (main.some(n => n < 1 || n > cfg.mainMax)) {
-                throw new Error(`Row ${row.rowId} has out-of-range main numbers`);
-              }
-            }
-            if (cfg.specialCount > 0) {
-              if (special.length !== cfg.specialCount) {
-                throw new Error(`Row ${row.rowId} has invalid special number count`);
-              }
-              if (special.some(n => n < 1 || n > cfg.specialMax)) {
-                throw new Error(`Row ${row.rowId} has out-of-range special numbers`);
-              }
-            }
-            confirmedRows.push({ rowId: row.rowId, mainNumbers: main, specialNumbers: special });
+
+            await updateScannedTicketRowConfirmation({
+              scannedTicketId: input.scannedTicketId,
+              rowId: row.rowId,
+              confirmedMainNumbers: row.rowStatus === "confirmed" ? main : [],
+              confirmedSpecialNumbers: row.rowStatus === "confirmed" ? special : [],
+              rowStatus: row.rowStatus,
+              drawDate: drawDateTs,
+              drawTime,
+            });
           }
 
-          await updateScannedTicketRowConfirmation({
+          if (confirmedRows.length === 0) {
+            await updateScannedTicketStatus({
+              scannedTicketId: input.scannedTicketId,
+              userId: ctx.user.id,
+              scanStatus: "rejected",
+              confirmationStatus: "rejected",
+              ticketOrigin: input.ticketOrigin,
+              confirmedPayload: {
+                drawDate: drawDateTs,
+                drawTime,
+                rows: input.rows,
+              },
+            });
+            finalized = true;
+            return {
+              success: true,
+              scannedTicketId: input.scannedTicketId,
+              purchasedTicketIds: [],
+              confirmedRows: 0,
+              rejectedRows: input.rows.length,
+              featureSnapshotsCreated: 0,
+              evaluatedNow: false,
+              scannedOutcomesNow: 0,
+              trainedExamplesNow: 0,
+              newRankerVersionId: null,
+              idempotent: false,
+            };
+          }
+
+          const purchasedTicketIds: number[] = [];
+          for (const confirmed of confirmedRows) {
+            const ticketNotes = [
+              `Draw period: ${drawTime}`,
+              `Scanned confirmed: ${new Date().toISOString()}`,
+              `Scanned ticket ID: ${input.scannedTicketId}`,
+              `Scanned row ID: ${confirmed.rowId}`,
+              `Matched model: ${matchedModel || "unknown"}`,
+            ].join("\n");
+
+            const purchasedTicketId = await insertPurchasedTicket({
+              userId: ctx.user.id,
+              gameType,
+              mainNumbers: confirmed.mainNumbers,
+              specialNumbers: confirmed.specialNumbers,
+              purchaseDate: Date.now(),
+              drawDate: drawDateTs,
+              cost: Number(input.cost) || cfg.ticketPrice,
+              notes: ticketNotes,
+              modelSource: matchedModel || undefined,
+            });
+            purchasedTicketIds.push(purchasedTicketId);
+          }
+
+          const ranker = await getOrCreateActiveRankerVersion(gameType);
+          const featureRows = [];
+          for (const confirmed of confirmedRows) {
+            const features = await computeScannedTicketFeatureSnapshot({
+              gameType,
+              mainNumbers: confirmed.mainNumbers,
+              specialNumbers: confirmed.specialNumbers,
+              ticketOrigin: input.ticketOrigin as TicketOrigin,
+              sourceModelName: matchedModel,
+              sourceConfidence,
+            });
+            featureRows.push({
+              scannedTicketRowId: confirmed.rowId,
+              rankerVersionId: ranker.id ?? null,
+              featureSetVersion: ranker.featureSetVersion,
+              features,
+            });
+          }
+          if (featureRows.length > 0) {
+            await insertScannedTicketFeatureSnapshots(featureRows);
+          }
+
+          await updateScannedTicketStatus({
             scannedTicketId: input.scannedTicketId,
-            rowId: row.rowId,
-            confirmedMainNumbers: row.rowStatus === "confirmed" ? main : [],
-            confirmedSpecialNumbers: row.rowStatus === "confirmed" ? special : [],
-            rowStatus: row.rowStatus,
-            drawDate: drawDateTs,
-            drawTime,
-          });
-        }
-
-        const purchasedTicketIds: number[] = [];
-        for (const confirmed of confirmedRows) {
-          const ticketNotes = [
-            `Draw period: ${drawTime}`,
-            `Scanned confirmed: ${new Date().toISOString()}`,
-            `Scanned ticket ID: ${input.scannedTicketId}`,
-            `Scanned row ID: ${confirmed.rowId}`,
-            `Matched model: ${matchedModel || "unknown"}`,
-          ].join("\n");
-
-          const purchasedTicketId = await insertPurchasedTicket({
             userId: ctx.user.id,
-            gameType,
-            mainNumbers: confirmed.mainNumbers,
-            specialNumbers: confirmed.specialNumbers,
-            purchaseDate: Date.now(),
-            drawDate: drawDateTs,
-            cost: Number(input.cost) || cfg.ticketPrice,
-            notes: ticketNotes,
-            modelSource: matchedModel || undefined,
+            scanStatus: confirmedRows.length > 0 ? "confirmed" : "rejected",
+            confirmationStatus: confirmedRows.length > 0 ? "confirmed" : "rejected",
+            ticketOrigin: input.ticketOrigin,
+            linkedPurchasedTicketId: purchasedTicketIds[0] ?? null,
+            confirmedPayload: {
+              drawDate: drawDateTs,
+              drawTime,
+              rows: input.rows,
+            },
           });
-          purchasedTicketIds.push(purchasedTicketId);
+          finalized = true;
+
+          const existingDraw = await getDrawResultByGameDateTime(gameType, drawDateTs, drawTime);
+          let evaluatedNow = false;
+          let scannedOutcomesNow = 0;
+          let trainedExamplesNow = 0;
+          let newRankerVersionId: number | null = null;
+
+          if (existingDraw) {
+            await evaluatePurchasedTicketsAgainstDraw(
+              gameType,
+              drawDateTs,
+              drawTime,
+              (existingDraw.mainNumbers as number[]) || [],
+              (existingDraw.specialNumbers as number[]) || []
+            );
+            const scannedEval = await evaluateConfirmedScannedTicketsForDraw(
+              existingDraw.id,
+              gameType,
+              (existingDraw.mainNumbers as number[]) || [],
+              (existingDraw.specialNumbers as number[]) || [],
+              ranker.id ?? null
+            );
+            const trainResult = await recordCandidateOutcomesAndTrainRanker(
+              existingDraw.id,
+              gameType,
+              (existingDraw.mainNumbers as number[]) || [],
+              (existingDraw.specialNumbers as number[]) || []
+            );
+            evaluatedNow = true;
+            scannedOutcomesNow = scannedEval.newOutcomes;
+            trainedExamplesNow = trainResult.trainedExamples;
+            newRankerVersionId = trainResult.newRankerVersionId;
+          }
+
+          return {
+            success: true,
+            scannedTicketId: input.scannedTicketId,
+            purchasedTicketIds,
+            confirmedRows: confirmedRows.length,
+            rejectedRows: input.rows.length - confirmedRows.length,
+            featureSnapshotsCreated: featureRows.length,
+            evaluatedNow,
+            scannedOutcomesNow,
+            trainedExamplesNow,
+            newRankerVersionId,
+            idempotent: false,
+          };
+        } catch (error) {
+          if (claimOwned && !finalized) {
+            await updateScannedTicketStatus({
+              scannedTicketId: input.scannedTicketId,
+              userId: ctx.user.id,
+              scanStatus: "parsed",
+              confirmationStatus: "pending",
+            });
+          }
+          throw error;
         }
-
-        const ranker = await getOrCreateActiveRankerVersion(gameType);
-        const featureRows = [];
-        for (const confirmed of confirmedRows) {
-          const features = await computeScannedTicketFeatureSnapshot({
-            gameType,
-            mainNumbers: confirmed.mainNumbers,
-            specialNumbers: confirmed.specialNumbers,
-            ticketOrigin: input.ticketOrigin as TicketOrigin,
-            sourceModelName: matchedModel,
-            sourceConfidence,
-          });
-          featureRows.push({
-            scannedTicketRowId: confirmed.rowId,
-            rankerVersionId: ranker.id ?? null,
-            featureSetVersion: ranker.featureSetVersion,
-            features,
-          });
-        }
-        if (featureRows.length > 0) {
-          await insertScannedTicketFeatureSnapshots(featureRows);
-        }
-
-        await updateScannedTicketStatus({
-          scannedTicketId: input.scannedTicketId,
-          userId: ctx.user.id,
-          scanStatus: confirmedRows.length > 0 ? "confirmed" : "rejected",
-          confirmationStatus: confirmedRows.length > 0 ? "confirmed" : "rejected",
-          ticketOrigin: input.ticketOrigin,
-          linkedPurchasedTicketId: purchasedTicketIds[0] ?? null,
-          confirmedPayload: {
-            drawDate: drawDateTs,
-            drawTime,
-            rows: input.rows,
-          },
-        });
-
-        const existingDraw = await getDrawResultByGameDateTime(gameType, drawDateTs, drawTime);
-        let evaluatedNow = false;
-        let scannedOutcomesNow = 0;
-        let trainedExamplesNow = 0;
-        let newRankerVersionId: number | null = null;
-
-        if (existingDraw) {
-          await evaluatePurchasedTicketsAgainstDraw(
-            gameType,
-            drawDateTs,
-            drawTime,
-            (existingDraw.mainNumbers as number[]) || [],
-            (existingDraw.specialNumbers as number[]) || []
-          );
-          const scannedEval = await evaluateConfirmedScannedTicketsForDraw(
-            existingDraw.id,
-            gameType,
-            (existingDraw.mainNumbers as number[]) || [],
-            (existingDraw.specialNumbers as number[]) || [],
-            ranker.id ?? null
-          );
-          const trainResult = await recordCandidateOutcomesAndTrainRanker(
-            existingDraw.id,
-            gameType,
-            (existingDraw.mainNumbers as number[]) || [],
-            (existingDraw.specialNumbers as number[]) || []
-          );
-          evaluatedNow = true;
-          scannedOutcomesNow = scannedEval.newOutcomes;
-          trainedExamplesNow = trainResult.trainedExamples;
-          newRankerVersionId = trainResult.newRankerVersionId;
-        }
-
-        return {
-          success: true,
-          scannedTicketId: input.scannedTicketId,
-          purchasedTicketIds,
-          confirmedRows: confirmedRows.length,
-          rejectedRows: input.rows.length - confirmedRows.length,
-          featureSnapshotsCreated: featureRows.length,
-          evaluatedNow,
-          scannedOutcomesNow,
-          trainedExamplesNow,
-          newRankerVersionId,
-        };
       }),
 
     /** Audit endpoint: latest scanned ticket sessions for current user */

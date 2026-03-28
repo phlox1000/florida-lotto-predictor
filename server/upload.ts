@@ -31,6 +31,13 @@ function stripDataUrlPrefix(maybeDataUrl: string): string {
   return maybeDataUrl;
 }
 
+function parseIsoDateToUtcStart(value: string): number {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return Number.NaN;
+  const [, year, month, day] = match;
+  return Date.UTC(Number(year), Number(month) - 1, Number(day));
+}
+
 /**
  * Register all upload routes on the Express app.
  */
@@ -142,7 +149,7 @@ export function registerUploadRoutes(app: Express) {
         return;
       }
 
-      const drawDateTs = new Date(extracted.drawDate).getTime();
+      const drawDateTs = parseIsoDateToUtcStart(extracted.drawDate);
       if (!Number.isFinite(drawDateTs)) {
         res.status(400).json({ error: "Invalid drawDate extracted from ticket" });
         return;
@@ -169,6 +176,10 @@ export function registerUploadRoutes(app: Express) {
           return;
         }
       } else {
+        if (new Set(ticketMain).size !== ticketMain.length) {
+          res.status(400).json({ error: "Main numbers must be unique for this game" });
+          return;
+        }
         if (ticketMain.some(n => n < 1 || n > cfg.mainMax)) {
           res.status(400).json({ error: "Main numbers out of range" });
           return;
@@ -182,6 +193,10 @@ export function registerUploadRoutes(app: Express) {
           return;
         }
         normalizedSpecial = ticketSpecial;
+        if (new Set(normalizedSpecial).size !== normalizedSpecial.length) {
+          res.status(400).json({ error: "Special numbers must be unique" });
+          return;
+        }
         if (normalizedSpecial.some(n => n < 1 || n > cfg.specialMax)) {
           res.status(400).json({ error: "Special numbers out of range" });
           return;

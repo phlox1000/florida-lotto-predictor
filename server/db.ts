@@ -37,6 +37,26 @@ export async function getDb() {
   return _db;
 }
 
+function mysqlRowsFromExecute(result: unknown): Array<Record<string, unknown>> {
+  if (Array.isArray(result) && Array.isArray(result[0])) {
+    return result[0] as Array<Record<string, unknown>>;
+  }
+  if (Array.isArray(result)) {
+    return result as Array<Record<string, unknown>>;
+  }
+  return [];
+}
+
+function firstNumericField(rows: Array<Record<string, unknown>>): number | null {
+  if (rows.length === 0) return null;
+  const row = rows[0];
+  for (const value of Object.values(row)) {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
 function extractInsertId(result: unknown): number | null {
   const candidates = [
     Number((result as any)?.insertId),
@@ -47,6 +67,79 @@ function extractInsertId(result: unknown): number | null {
     if (Number.isFinite(value) && value > 0) return value;
   }
   return null;
+}
+
+function extractAffectedRows(result: unknown): number {
+  const candidates = [
+    Number((result as any)?.rowsAffected),
+    Number((result as any)?.affectedRows),
+    Number((result as any)?.[0]?.rowsAffected),
+    Number((result as any)?.[0]?.affectedRows),
+  ];
+  for (const value of candidates) {
+    if (Number.isFinite(value) && value >= 0) return value;
+  }
+  return 0;
+}
+
+function parseNumberArray(value: unknown): number[] {
+  if (Array.isArray(value)) {
+    return value.map(Number).filter(Number.isFinite);
+  }
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) {
+        return parsed.map(Number).filter(Number.isFinite);
+      }
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function canonicalNumberSignature(mainNumbers: number[], specialNumbers: number[]): string {
+  const main = [...mainNumbers].sort((a, b) => a - b).join(",");
+  const special = [...specialNumbers].sort((a, b) => a - b).join(",");
+  return `${main}|${special}`;
+}
+
+export async function withMySqlNamedLock<T>(
+  lockName: string,
+  timeoutSeconds: number,
+  work: () => Promise<T>,
+  options: {
+    fallbackResult: T;
+    onLockMiss?: () => void;
+  }
+): Promise<T> {
+  const db = await getDb();
+  if (!db) return options.fallbackResult;
+
+  try {
+    const lockResult = await db.execute(
+      sql`SELECT GET_LOCK(${lockName}, ${Math.max(0, timeoutSeconds)}) AS gotLock`
+    );
+    const gotLock = firstNumericField(mysqlRowsFromExecute(lockResult));
+    if (gotLock !== 1) {
+      options.onLockMiss?.();
+      return options.fallbackResult;
+    }
+
+    try {
+      return await work();
+    } finally {
+      try {
+        await db.execute(sql`SELECT RELEASE_LOCK(${lockName}) AS releasedLock`);
+      } catch (releaseError) {
+        console.warn(`[Database] Failed to release lock ${lockName}:`, releaseError);
+      }
+    }
+  } catch (error) {
+    console.warn(`[Database] Lock workflow failed for ${lockName}:`, error);
+    return options.fallbackResult;
+  }
 }
 
 // ─── User queries ───────────────────────────────────────────────────────────────
@@ -532,6 +625,28 @@ export async function insertScannedTicketRow(data: InsertScannedTicketRow) {
   return insertId;
 }
 
+export async function findPurchasedTicketByScannedRow(params: {
+  userId: number;
+  scannedTicketId: number;
+  scannedTicketRowId: number;
+}): Promise<number | null> {
+  const db = await getDb();
+  if (!db) return null;
+  const scannedTicketNeedle = `%Scanned ticket ID: ${params.scannedTicketId}%`;
+  const scannedRowNeedle = `%Scanned row ID: ${params.scannedTicketRowId}%`;
+  const rows = await db.select({
+    id: purchasedTickets.id,
+  }).from(purchasedTickets)
+    .where(and(
+      eq(purchasedTickets.userId, params.userId),
+      sql`${purchasedTickets.notes} LIKE ${scannedTicketNeedle}`,
+      sql`${purchasedTickets.notes} LIKE ${scannedRowNeedle}`,
+    ))
+    .orderBy(desc(purchasedTickets.id))
+    .limit(1);
+  return rows[0]?.id ?? null;
+}
+
 export async function getScannedTicketForUser(scannedTicketId: number, userId: number) {
   const db = await getDb();
   if (!db) return null;
@@ -558,8 +673,8 @@ export async function getUserScannedTickets(userId: number, limit = 50) {
 export async function updateScannedTicketStatus(params: {
   scannedTicketId: number;
   userId: number;
-  scanStatus: "parsed" | "confirmed" | "rejected" | "invalid";
-  confirmationStatus: "pending" | "confirmed" | "rejected";
+  scanStatus: "parsed" | "confirming" | "confirmed" | "rejected" | "invalid";
+  confirmationStatus: "pending" | "processing" | "confirmed" | "rejected";
   ticketOrigin?: "user_selected" | "quick_pick" | "unknown";
   confirmedPayload?: unknown;
   linkedPurchasedTicketId?: number | null;
@@ -575,6 +690,25 @@ export async function updateScannedTicketStatus(params: {
   if (params.linkedPurchasedTicketId !== undefined) updateData.linkedPurchasedTicketId = params.linkedPurchasedTicketId;
   await db.update(scannedTickets).set(updateData)
     .where(and(eq(scannedTickets.id, params.scannedTicketId), eq(scannedTickets.userId, params.userId)));
+}
+
+export async function claimScannedTicketForConfirmation(params: {
+  scannedTicketId: number;
+  userId: number;
+}): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  const result = await db.update(scannedTickets)
+    .set({
+      scanStatus: "confirming",
+      confirmationStatus: "processing",
+    })
+    .where(and(
+      eq(scannedTickets.id, params.scannedTicketId),
+      eq(scannedTickets.userId, params.userId),
+      eq(scannedTickets.confirmationStatus, "pending"),
+    ));
+  return extractAffectedRows(result) > 0;
 }
 
 export async function updateScannedTicketRowConfirmation(params: {
@@ -603,10 +737,87 @@ export async function updateScannedTicketRowConfirmation(params: {
     ));
 }
 
+export async function findDuplicateConfirmedScannedRow(params: {
+  userId: number;
+  gameType: string;
+  drawDate: number;
+  drawTime: string;
+  mainNumbers: number[];
+  specialNumbers: number[];
+  excludeScannedTicketId?: number;
+  excludeRowId?: number;
+}): Promise<{ scannedTicketId: number; rowId: number } | null> {
+  const db = await getDb();
+  if (!db) return null;
+
+  const duplicateCandidates = await db
+    .select({
+      scannedTicketId: scannedTicketRows.scannedTicketId,
+      rowId: scannedTicketRows.id,
+      confirmedMainNumbers: scannedTicketRows.confirmedMainNumbers,
+      confirmedSpecialNumbers: scannedTicketRows.confirmedSpecialNumbers,
+    })
+    .from(scannedTicketRows)
+    .innerJoin(scannedTickets, eq(scannedTickets.id, scannedTicketRows.scannedTicketId))
+    .where(and(
+      eq(scannedTickets.userId, params.userId),
+      eq(scannedTicketRows.gameType, params.gameType),
+      eq(scannedTicketRows.drawDate, params.drawDate),
+      eq(scannedTicketRows.drawTime, params.drawTime),
+      eq(scannedTicketRows.rowStatus, "confirmed"),
+      inArray(scannedTickets.confirmationStatus, ["processing", "confirmed"]),
+      inArray(scannedTickets.scanStatus, ["confirming", "confirmed"]),
+    ))
+    .orderBy(desc(scannedTicketRows.id))
+    .limit(500);
+
+  const targetSignature = canonicalNumberSignature(params.mainNumbers, params.specialNumbers);
+  for (const row of duplicateCandidates) {
+    if (params.excludeScannedTicketId && row.scannedTicketId === params.excludeScannedTicketId) {
+      continue;
+    }
+    if (params.excludeRowId && row.rowId === params.excludeRowId) {
+      continue;
+    }
+    const existingSignature = canonicalNumberSignature(
+      parseNumberArray(row.confirmedMainNumbers),
+      parseNumberArray(row.confirmedSpecialNumbers),
+    );
+    if (existingSignature === targetSignature) {
+      return {
+        scannedTicketId: row.scannedTicketId,
+        rowId: row.rowId,
+      };
+    }
+  }
+
+  return null;
+}
+
 export async function insertScannedTicketFeatureSnapshots(rows: InsertScannedTicketFeatureSnapshot[]) {
   const db = await getDb();
-  if (!db || rows.length === 0) return;
-  await db.insert(scannedTicketFeatureSnapshots).values(rows);
+  if (!db || rows.length === 0) return 0;
+  const rowIds = [...new Set(rows.map(r => Number(r.scannedTicketRowId)).filter(Number.isFinite))];
+  const versions = [...new Set(rows.map(r => String(r.featureSetVersion)).filter(Boolean))];
+  const existing = rowIds.length > 0 && versions.length > 0
+    ? await db.select({
+      scannedTicketRowId: scannedTicketFeatureSnapshots.scannedTicketRowId,
+      featureSetVersion: scannedTicketFeatureSnapshots.featureSetVersion,
+    }).from(scannedTicketFeatureSnapshots)
+      .where(and(
+        inArray(scannedTicketFeatureSnapshots.scannedTicketRowId, rowIds),
+        inArray(scannedTicketFeatureSnapshots.featureSetVersion, versions),
+      ))
+    : [];
+  const existingKeys = new Set(
+    existing.map(r => `${r.scannedTicketRowId}|${r.featureSetVersion}`)
+  );
+  const insertable = rows.filter(r =>
+    !existingKeys.has(`${r.scannedTicketRowId}|${r.featureSetVersion}`)
+  );
+  if (insertable.length === 0) return 0;
+  await db.insert(scannedTicketFeatureSnapshots).values(insertable);
+  return insertable.length;
 }
 
 export async function insertScannedTicketOutcomes(rows: InsertScannedTicketOutcome[]) {
