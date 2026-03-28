@@ -410,6 +410,22 @@ export const appRouter = router({
         const { ticket, rows: existingRows } = payload;
         const ticketConfirmationStatus = String(ticket.confirmationStatus || "");
         const ticketScanStatus = String(ticket.scanStatus || "");
+        if (ticketConfirmationStatus === "confirmed" && ticketScanStatus === "confirmed") {
+          const alreadyConfirmedRows = existingRows.filter(r => String(r.rowStatus) === "confirmed").length;
+          return {
+            success: true,
+            scannedTicketId: input.scannedTicketId,
+            purchasedTicketIds: [],
+            confirmedRows: alreadyConfirmedRows,
+            rejectedRows: Math.max(0, existingRows.length - alreadyConfirmedRows),
+            featureSnapshotsCreated: 0,
+            evaluatedNow: false,
+            scannedOutcomesNow: 0,
+            trainedExamplesNow: 0,
+            newRankerVersionId: null,
+            idempotent: true,
+          };
+        }
         const gameType = String(ticket.gameType) as GameType;
         const cfg = FLORIDA_GAMES[gameType];
         if (!cfg) {
