@@ -132,6 +132,8 @@ export const rankerVersions = mysqlTable("ranker_versions", {
   learningRate: float("learningRate").notNull().default(0.05),
   l2Lambda: float("l2Lambda").notNull().default(0.001),
   trainedExamples: int("trainedExamples").notNull().default(0),
+  generatedCandidateExamples: int("generatedCandidateExamples").notNull().default(0),
+  scannedTicketExamples: int("scannedTicketExamples").notNull().default(0),
   sourceRankerVersionId: int("sourceRankerVersionId"),
   isActive: int("isActive").notNull().default(1),
   notes: text("notes"),
@@ -140,6 +142,81 @@ export const rankerVersions = mysqlTable("ranker_versions", {
 
 export type RankerVersion = typeof rankerVersions.$inferSelect;
 export type InsertRankerVersion = typeof rankerVersions.$inferInsert;
+
+/** Scanned ticket sessions (OCR parse + confirmation lifecycle) */
+export const scannedTickets = mysqlTable("scanned_tickets", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  gameType: varchar("gameType", { length: 32 }).notNull(),
+  drawDate: bigint("drawDate", { mode: "number" }).notNull(),
+  drawTime: varchar("drawTime", { length: 16 }).notNull(),
+  sourceType: varchar("sourceType", { length: 32 }).notNull().default("scanned_ticket"),
+  ticketOrigin: varchar("ticketOrigin", { length: 32 }).notNull().default("unknown"), // user_selected | quick_pick | unknown
+  scanStatus: varchar("scanStatus", { length: 32 }).notNull().default("parsed"), // parsed | confirmed | rejected | invalid
+  confirmationStatus: varchar("confirmationStatus", { length: 32 }).notNull().default("pending"), // pending | confirmed | rejected
+  imageUrl: text("imageUrl"),
+  fileKey: varchar("fileKey", { length: 256 }),
+  parsedPayload: json("parsedPayload"),
+  confirmedPayload: json("confirmedPayload"),
+  linkedPurchasedTicketId: int("linkedPurchasedTicketId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ScannedTicket = typeof scannedTickets.$inferSelect;
+export type InsertScannedTicket = typeof scannedTickets.$inferInsert;
+
+/** Parsed rows extracted from a scanned ticket image (one or more plays) */
+export const scannedTicketRows = mysqlTable("scanned_ticket_rows", {
+  id: int("id").autoincrement().primaryKey(),
+  scannedTicketId: int("scannedTicketId").notNull(),
+  rowIndex: int("rowIndex").notNull().default(0),
+  gameType: varchar("gameType", { length: 32 }).notNull(),
+  drawDate: bigint("drawDate", { mode: "number" }).notNull(),
+  drawTime: varchar("drawTime", { length: 16 }).notNull(),
+  parsedMainNumbers: json("parsedMainNumbers").notNull(),
+  parsedSpecialNumbers: json("parsedSpecialNumbers"),
+  confirmedMainNumbers: json("confirmedMainNumbers"),
+  confirmedSpecialNumbers: json("confirmedSpecialNumbers"),
+  rowStatus: varchar("rowStatus", { length: 32 }).notNull().default("parsed"), // parsed | confirmed | rejected
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ScannedTicketRow = typeof scannedTicketRows.$inferSelect;
+export type InsertScannedTicketRow = typeof scannedTicketRows.$inferInsert;
+
+/** Feature snapshots for scanned-ticket rows used as ranker training examples */
+export const scannedTicketFeatureSnapshots = mysqlTable("scanned_ticket_feature_snapshots", {
+  id: int("id").autoincrement().primaryKey(),
+  scannedTicketRowId: int("scannedTicketRowId").notNull(),
+  rankerVersionId: int("rankerVersionId"),
+  featureSetVersion: varchar("featureSetVersion", { length: 64 }).notNull(),
+  features: json("features").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ScannedTicketFeatureSnapshot = typeof scannedTicketFeatureSnapshots.$inferSelect;
+export type InsertScannedTicketFeatureSnapshot = typeof scannedTicketFeatureSnapshots.$inferInsert;
+
+/** Outcome rows for scanned tickets after draw-result evaluation */
+export const scannedTicketOutcomes = mysqlTable("scanned_ticket_outcomes", {
+  id: int("id").autoincrement().primaryKey(),
+  scannedTicketId: int("scannedTicketId").notNull(),
+  scannedTicketRowId: int("scannedTicketRowId").notNull(),
+  drawResultId: int("drawResultId").notNull(),
+  gameType: varchar("gameType", { length: 32 }).notNull(),
+  mainHits: int("mainHits").notNull().default(0),
+  specialHits: int("specialHits").notNull().default(0),
+  rewardScore: float("rewardScore").notNull().default(0),
+  outcomeTier: varchar("outcomeTier", { length: 32 }).notNull().default("miss"),
+  trainingWeight: float("trainingWeight").notNull().default(0.35),
+  consumedRankerVersionId: int("consumedRankerVersionId"),
+  evaluatedAt: timestamp("evaluatedAt").defaultNow().notNull(),
+});
+
+export type ScannedTicketOutcome = typeof scannedTicketOutcomes.$inferSelect;
+export type InsertScannedTicketOutcome = typeof scannedTicketOutcomes.$inferInsert;
 
 /** Budget-aware ticket selections (batches of 20 tickets) */
 export const ticketSelections = mysqlTable("ticket_selections", {

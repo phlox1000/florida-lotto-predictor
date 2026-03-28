@@ -17,6 +17,7 @@ import {
   DollarSign, TrendingUp, TrendingDown, Trophy, Ticket, Plus, Trash2,
   LogIn, CheckCircle, XCircle, Clock, BarChart3, Target,
   Camera,
+  Pencil,
 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
@@ -214,8 +215,20 @@ function ScanTicketDialog() {
   const [cost, setCost] = useState("1");
   const [preview, setPreview] = useState<any>(null);
   const [isScanning, setIsScanning] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
+  const [ticketOrigin, setTicketOrigin] = useState<"user_selected" | "quick_pick" | "unknown">("unknown");
+  const [editDrawDate, setEditDrawDate] = useState("");
+  const [editDrawTime, setEditDrawTime] = useState<"midday" | "evening">("evening");
+  const [editableRows, setEditableRows] = useState<Array<{
+    rowId: number;
+    rowIndex: number;
+    mainNumbersText: string;
+    specialNumbersText: string;
+    rowStatus: "confirmed" | "rejected";
+  }>>([]);
 
   const utils = trpc.useUtils();
+  const confirmScannedTicket = trpc.tickets.confirmScannedTicket.useMutation();
 
   const readFileAsBase64 = async (f: File) => {
     return new Promise<string>((resolve, reject) => {
@@ -244,6 +257,7 @@ function ScanTicketDialog() {
 
     setIsScanning(true);
     setPreview(null);
+    setEditableRows([]);
     try {
       const base64 = await readFileAsBase64(file);
       const response = await fetch("/api/upload-ticket", {
@@ -263,16 +277,76 @@ function ScanTicketDialog() {
       }
 
       setPreview(json);
-      toast.success("Ticket scanned and added to your tracker");
-      utils.tracker.list.invalidate();
-      utils.tracker.stats.invalidate();
-      utils.tracker.statsByGame.invalidate();
-      utils.tickets.ticketAnalytics.invalidate();
-      setOpen(false);
+      setTicketOrigin("unknown");
+      setEditDrawDate(String(json?.extracted?.drawDate || ""));
+      setEditDrawTime(String(json?.extracted?.drawTime || "evening") === "midday" ? "midday" : "evening");
+      const rows = Array.isArray(json?.rows) ? json.rows : [];
+      setEditableRows(rows.map((row: any) => ({
+        rowId: Number(row.rowId),
+        rowIndex: Number(row.rowIndex ?? 0),
+        mainNumbersText: Array.isArray(row.mainNumbers) ? row.mainNumbers.join(", ") : "",
+        specialNumbersText: Array.isArray(row.specialNumbers) ? row.specialNumbers.join(", ") : "",
+        rowStatus: "confirmed",
+      })));
+      toast.success("Ticket scanned. Review and confirm before saving.");
     } catch (e: any) {
       toast.error(e?.message || "Ticket scan failed");
     } finally {
       setIsScanning(false);
+    }
+  };
+
+  const parseNumbers = (value: string) =>
+    value.split(",").map(n => parseInt(n.trim(), 10)).filter(n => Number.isFinite(n));
+
+  const handleConfirm = async () => {
+    if (!preview?.scannedTicketId) {
+      toast.error("No scanned ticket to confirm");
+      return;
+    }
+    if (editableRows.length === 0) {
+      toast.error("No rows to confirm");
+      return;
+    }
+    const numericCost = parseFloat(cost);
+    if (!Number.isFinite(numericCost) || numericCost < 0) {
+      toast.error("Cost must be a non-negative number");
+      return;
+    }
+
+    setIsConfirming(true);
+    try {
+      const rowsPayload = editableRows.map(row => ({
+        rowId: row.rowId,
+        mainNumbers: parseNumbers(row.mainNumbersText),
+        specialNumbers: parseNumbers(row.specialNumbersText),
+        rowStatus: row.rowStatus,
+      }));
+
+      const result = await confirmScannedTicket.mutateAsync({
+        scannedTicketId: Number(preview.scannedTicketId),
+        ticketOrigin,
+        drawDate: editDrawDate || undefined,
+        drawTime: editDrawTime,
+        cost: numericCost,
+        rows: rowsPayload,
+      });
+
+      toast.success(`Ticket confirmed. ${result.confirmedRows} row(s) saved.`);
+      setPreview(null);
+      setEditableRows([]);
+      setOpen(false);
+      utils.tracker.list.invalidate();
+      utils.tracker.stats.invalidate();
+      utils.tracker.statsByGame.invalidate();
+      utils.tickets.ticketAnalytics.invalidate();
+      utils.tickets.scannedHistory.invalidate();
+      utils.predictions.rankerVersions.invalidate();
+      utils.predictions.trainingSourceBreakdown.invalidate();
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to confirm scanned ticket");
+    } finally {
+      setIsConfirming(false);
     }
   };
 
@@ -310,20 +384,94 @@ function ScanTicketDialog() {
           </div>
 
           {preview?.extracted && (
-            <div className="space-y-2 p-3 rounded-lg border border-border/30 bg-background/30">
-              <p className="text-xs text-muted-foreground">Extracted:</p>
-              <p className="text-xs font-bold">{preview.extracted.gameType}</p>
-              <p className="text-[11px] text-muted-foreground">
-                {preview.extracted.drawDate} ({preview.extracted.drawTime})
-              </p>
-              <p className="text-[11px] text-muted-foreground">
-                Main: {Array.isArray(preview.extracted.mainNumbers) ? preview.extracted.mainNumbers.join(", ") : "-"}
-              </p>
-              {preview.extracted.specialNumbers?.length > 0 && (
-                <p className="text-[11px] text-muted-foreground">
-                  Special: {preview.extracted.specialNumbers.join(", ")}
-                </p>
-              )}
+            <div className="space-y-3 p-3 rounded-lg border border-border/30 bg-background/30">
+              <div>
+                <p className="text-xs text-muted-foreground">Parsed ticket (review required)</p>
+                <p className="text-xs font-bold">{preview.extracted.gameName || preview.extracted.gameType}</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-muted-foreground">Draw Date</Label>
+                  <Input
+                    type="date"
+                    value={editDrawDate}
+                    onChange={e => setEditDrawDate(e.target.value)}
+                    className="bg-input h-8 text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-muted-foreground">Draw Time</Label>
+                  <Select value={editDrawTime} onValueChange={(value) => setEditDrawTime(value as "midday" | "evening")}>
+                    <SelectTrigger className="bg-input h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="midday">midday</SelectItem>
+                      <SelectItem value="evening">evening</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground">Ticket Origin</Label>
+                <Select value={ticketOrigin} onValueChange={(value) => setTicketOrigin(value as "user_selected" | "quick_pick" | "unknown")}>
+                  <SelectTrigger className="bg-input h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="unknown">unknown</SelectItem>
+                    <SelectItem value="user_selected">user_selected</SelectItem>
+                    <SelectItem value="quick_pick">quick_pick</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                {editableRows.map((row, idx) => (
+                  <div key={row.rowId} className="space-y-2 rounded border border-border/40 p-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[11px] text-muted-foreground">Row {idx + 1}</p>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-[10px]"
+                        onClick={() => setEditableRows(prev => prev.map((r, i) => i === idx ? {
+                          ...r,
+                          rowStatus: r.rowStatus === "confirmed" ? "rejected" : "confirmed",
+                        } : r))}
+                      >
+                        {row.rowStatus === "confirmed" ? "Mark rejected" : "Mark confirmed"}
+                      </Button>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-muted-foreground">Main Numbers</Label>
+                      <div className="flex items-center gap-1">
+                        <Pencil className="h-3 w-3 text-muted-foreground" />
+                        <Input
+                          value={row.mainNumbersText}
+                          onChange={e => setEditableRows(prev => prev.map((r, i) => i === idx ? { ...r, mainNumbersText: e.target.value } : r))}
+                          className="bg-input h-8 text-xs"
+                          disabled={row.rowStatus !== "confirmed"}
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] text-muted-foreground">Special Numbers</Label>
+                      <Input
+                        value={row.specialNumbersText}
+                        onChange={e => setEditableRows(prev => prev.map((r, i) => i === idx ? { ...r, specialNumbersText: e.target.value } : r))}
+                        className="bg-input h-8 text-xs"
+                        disabled={row.rowStatus !== "confirmed"}
+                      />
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">Status: {row.rowStatus}</p>
+                  </div>
+                ))}
+              </div>
+
               {preview.matchedModel && (
                 <p className="text-[11px] text-muted-foreground">
                   Matched model: {preview.matchedModel}
@@ -333,12 +481,18 @@ function ScanTicketDialog() {
           )}
 
           <div className="flex items-center justify-end gap-2">
-            <Button type="button" variant="outline" disabled={isScanning} onClick={() => setOpen(false)}>
+            <Button type="button" variant="outline" disabled={isScanning || isConfirming} onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button type="button" className="bg-primary text-primary-foreground" disabled={isScanning || !file} onClick={handleScan}>
-              {isScanning ? "Scanning..." : "Scan & Save"}
-            </Button>
+            {!preview?.scannedTicketId ? (
+              <Button type="button" className="bg-primary text-primary-foreground" disabled={isScanning || isConfirming || !file} onClick={handleScan}>
+                {isScanning ? "Scanning..." : "Scan Ticket"}
+              </Button>
+            ) : (
+              <Button type="button" className="bg-primary text-primary-foreground" disabled={isScanning || isConfirming} onClick={handleConfirm}>
+                {isConfirming ? "Confirming..." : "Confirm & Save"}
+              </Button>
+            )}
           </div>
         </div>
       </DialogContent>

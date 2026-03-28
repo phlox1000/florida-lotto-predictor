@@ -1,4 +1,4 @@
-import { eq, desc, and, sql, gte } from "drizzle-orm";
+import { eq, desc, and, sql, gte, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users,
@@ -15,6 +15,10 @@ import {
   pushSubscriptions, InsertPushSubscription,
   pdfUploads, InsertPdfUpload,
   purchasedTickets, InsertPurchasedTicket,
+  scannedTickets, InsertScannedTicket,
+  scannedTicketRows, InsertScannedTicketRow,
+  scannedTicketFeatureSnapshots, InsertScannedTicketFeatureSnapshot,
+  scannedTicketOutcomes, InsertScannedTicketOutcome,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { FLORIDA_GAMES, type GameType } from '@shared/lottery';
@@ -31,6 +35,18 @@ export async function getDb() {
     }
   }
   return _db;
+}
+
+function extractInsertId(result: unknown): number | null {
+  const candidates = [
+    Number((result as any)?.insertId),
+    Number((result as any)?.[0]?.insertId),
+    Number((result as any)?.[0]?.[0]?.insertId),
+  ];
+  for (const value of candidates) {
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return null;
 }
 
 // ─── User queries ───────────────────────────────────────────────────────────────
@@ -129,7 +145,7 @@ export async function insertDrawResult(data: InsertDrawResult) {
   }
 
   const result = await db.insert(drawResults).values(data);
-  const insertId = Number((result as any)?.[0]?.insertId ?? 0);
+  const insertId = extractInsertId(result) ?? 0;
   const legacyRow = { insertId };
   return {
     status: "inserted" as const,
@@ -275,7 +291,17 @@ export async function evaluatePredictionsAgainstDraw(
   specialNumbers: number[]
 ) {
   const db = await getDb();
-  if (!db) return { evaluated: 0, highAccuracy: 0, candidateOutcomes: 0, rankerTrainedExamples: 0, rankerVersionId: null };
+  if (!db) {
+    return {
+      evaluated: 0,
+      highAccuracy: 0,
+      candidateOutcomes: 0,
+      rankerTrainedExamples: 0,
+      rankerVersionId: null,
+      scannedTicketsEvaluated: 0,
+      scannedTicketOutcomes: 0,
+    };
+  }
 
   // Get predictions made before this draw (within last 7 days)
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -287,52 +313,52 @@ export async function evaluatePredictionsAgainstDraw(
     .orderBy(desc(predictions.createdAt))
     .limit(200);
 
-  if (recentPreds.length === 0) {
-    try {
-      const { recordCandidateOutcomesAndTrainRanker } = await import("./ranker-v2-db");
-      const v2 = await recordCandidateOutcomesAndTrainRanker(drawId, gameType, mainNumbers, specialNumbers);
-      return {
-        evaluated: 0,
-        highAccuracy: 0,
-        candidateOutcomes: v2.candidateOutcomes,
-        rankerTrainedExamples: v2.trainedExamples,
-        rankerVersionId: v2.newRankerVersionId,
-      };
-    } catch (e) {
-      console.warn("[Predictions] V2 candidate evaluation failed:", e);
-      return { evaluated: 0, highAccuracy: 0, candidateOutcomes: 0, rankerTrainedExamples: 0, rankerVersionId: null };
-    }
-  }
-
-  const resultMainSet = new Set(mainNumbers);
-  const resultSpecialSet = new Set(specialNumbers);
   const perfRecords: InsertModelPerformance[] = [];
   let highAccuracy = 0;
+  if (recentPreds.length > 0) {
+    const resultMainSet = new Set(mainNumbers);
+    const resultSpecialSet = new Set(specialNumbers);
+    for (const pred of recentPreds) {
+      const predMain = pred.mainNumbers as number[];
+      const predSpecial = (pred.specialNumbers as number[]) || [];
 
-  for (const pred of recentPreds) {
-    const predMain = pred.mainNumbers as number[];
-    const predSpecial = (pred.specialNumbers as number[]) || [];
+      const mainHits = predMain.filter(n => resultMainSet.has(n)).length;
+      const specialHits = predSpecial.filter(n => resultSpecialSet.has(n)).length;
 
-    const mainHits = predMain.filter(n => resultMainSet.has(n)).length;
-    const specialHits = predSpecial.filter(n => resultSpecialSet.has(n)).length;
+      perfRecords.push({
+        modelName: pred.modelName,
+        gameType,
+        drawResultId: drawId,
+        predictionId: pred.id,
+        mainHits,
+        specialHits,
+      });
 
-    perfRecords.push({
-      modelName: pred.modelName,
-      gameType,
-      drawResultId: drawId,
-      predictionId: pred.id,
-      mainHits,
-      specialHits,
-    });
-
-    // Check for high accuracy (60%+ main number match)
-    if (mainHits >= Math.ceil(predMain.length * 0.6)) {
-      highAccuracy++;
+      // Check for high accuracy (60%+ main number match)
+      if (mainHits >= Math.ceil(predMain.length * 0.6)) {
+        highAccuracy++;
+      }
     }
   }
 
   if (perfRecords.length > 0) {
     await insertModelPerformance(perfRecords);
+  }
+
+  let scannedTicketsEvaluated = 0;
+  let scannedTicketOutcomes = 0;
+  try {
+    const { evaluateConfirmedScannedTicketsForDraw } = await import("./scanned-ticket-learning");
+    const scanned = await evaluateConfirmedScannedTicketsForDraw(
+      drawId,
+      gameType,
+      mainNumbers,
+      specialNumbers
+    );
+    scannedTicketsEvaluated = scanned.evaluatedCount;
+    scannedTicketOutcomes = scanned.newOutcomes;
+  } catch (e) {
+    console.warn("[Predictions] Scanned ticket evaluation failed:", e);
   }
 
   let candidateOutcomes = 0;
@@ -354,6 +380,8 @@ export async function evaluatePredictionsAgainstDraw(
     candidateOutcomes,
     rankerTrainedExamples,
     rankerVersionId,
+    scannedTicketsEvaluated,
+    scannedTicketOutcomes,
   };
 }
 
@@ -449,7 +477,9 @@ export async function insertPdfUpload(data: InsertPdfUpload) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const result = await db.insert(pdfUploads).values(data);
-  return (result as any)[0]?.insertId;
+  const insertId = extractInsertId(result);
+  if (!insertId) throw new Error("Failed to insert pdf upload");
+  return insertId;
 }
 
 export async function updatePdfUploadStatus(
@@ -479,7 +509,118 @@ export async function insertPurchasedTicket(data: InsertPurchasedTicket) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const result = await db.insert(purchasedTickets).values(data);
-  return (result as any)[0]?.insertId;
+  const insertId = extractInsertId(result);
+  if (!insertId) throw new Error("Failed to insert purchased ticket");
+  return insertId;
+}
+
+export async function insertScannedTicket(data: InsertScannedTicket) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(scannedTickets).values(data);
+  const insertId = extractInsertId(result);
+  if (!insertId) throw new Error("Failed to insert scanned ticket");
+  return insertId;
+}
+
+export async function insertScannedTicketRow(data: InsertScannedTicketRow) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(scannedTicketRows).values(data);
+  const insertId = extractInsertId(result);
+  if (!insertId) throw new Error("Failed to insert scanned ticket row");
+  return insertId;
+}
+
+export async function getScannedTicketForUser(scannedTicketId: number, userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const tickets = await db.select().from(scannedTickets)
+    .where(and(eq(scannedTickets.id, scannedTicketId), eq(scannedTickets.userId, userId)))
+    .limit(1);
+  const ticket = tickets[0];
+  if (!ticket) return null;
+  const rows = await db.select().from(scannedTicketRows)
+    .where(eq(scannedTicketRows.scannedTicketId, scannedTicketId))
+    .orderBy(scannedTicketRows.rowIndex, scannedTicketRows.id);
+  return { ticket, rows };
+}
+
+export async function getUserScannedTickets(userId: number, limit = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(scannedTickets)
+    .where(eq(scannedTickets.userId, userId))
+    .orderBy(desc(scannedTickets.createdAt))
+    .limit(limit);
+}
+
+export async function updateScannedTicketStatus(params: {
+  scannedTicketId: number;
+  userId: number;
+  scanStatus: "parsed" | "confirmed" | "rejected" | "invalid";
+  confirmationStatus: "pending" | "confirmed" | "rejected";
+  ticketOrigin?: "user_selected" | "quick_pick" | "unknown";
+  confirmedPayload?: unknown;
+  linkedPurchasedTicketId?: number | null;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  const updateData: Record<string, unknown> = {
+    scanStatus: params.scanStatus,
+    confirmationStatus: params.confirmationStatus,
+  };
+  if (params.ticketOrigin !== undefined) updateData.ticketOrigin = params.ticketOrigin;
+  if (params.confirmedPayload !== undefined) updateData.confirmedPayload = params.confirmedPayload;
+  if (params.linkedPurchasedTicketId !== undefined) updateData.linkedPurchasedTicketId = params.linkedPurchasedTicketId;
+  await db.update(scannedTickets).set(updateData)
+    .where(and(eq(scannedTickets.id, params.scannedTicketId), eq(scannedTickets.userId, params.userId)));
+}
+
+export async function updateScannedTicketRowConfirmation(params: {
+  scannedTicketId: number;
+  rowId: number;
+  confirmedMainNumbers: number[];
+  confirmedSpecialNumbers: number[];
+  rowStatus: "confirmed" | "rejected";
+  drawDate?: number;
+  drawTime?: string;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  const updateData: Record<string, unknown> = {
+    confirmedMainNumbers: params.confirmedMainNumbers,
+    confirmedSpecialNumbers: params.confirmedSpecialNumbers,
+    rowStatus: params.rowStatus,
+  };
+  if (params.drawDate !== undefined) updateData.drawDate = params.drawDate;
+  if (params.drawTime !== undefined) updateData.drawTime = params.drawTime;
+  await db.update(scannedTicketRows)
+    .set(updateData)
+    .where(and(
+      eq(scannedTicketRows.scannedTicketId, params.scannedTicketId),
+      eq(scannedTicketRows.id, params.rowId)
+    ));
+}
+
+export async function insertScannedTicketFeatureSnapshots(rows: InsertScannedTicketFeatureSnapshot[]) {
+  const db = await getDb();
+  if (!db || rows.length === 0) return;
+  await db.insert(scannedTicketFeatureSnapshots).values(rows);
+}
+
+export async function insertScannedTicketOutcomes(rows: InsertScannedTicketOutcome[]) {
+  const db = await getDb();
+  if (!db || rows.length === 0) return;
+  await db.insert(scannedTicketOutcomes).values(rows);
+}
+
+export async function updateScannedTicketOutcomeConsumed(outcomeIds: number[], rankerVersionId: number) {
+  const db = await getDb();
+  if (!db || outcomeIds.length === 0) return;
+  await db.update(scannedTicketOutcomes)
+    .set({ consumedRankerVersionId: rankerVersionId })
+    .where(inArray(scannedTicketOutcomes.id, outcomeIds));
 }
 
 export async function getUserPurchasedTickets(userId: number, limit = 100) {

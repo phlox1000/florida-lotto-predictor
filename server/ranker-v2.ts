@@ -36,6 +36,8 @@ export interface RankedCandidate extends CandidateFeatureRecord {
 export interface TrainingExample {
   features: Record<string, number>;
   rewardScore: number;
+  sourceType?: "generated_candidate" | "scanned_ticket";
+  trainingWeight?: number;
 }
 
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
@@ -342,9 +344,10 @@ export function trainOnlineLogisticRegression(
   const l2 = Math.max(0, state.l2Lambda);
 
   for (const example of examples) {
+    const weight = Math.max(0.01, Math.min(1, Number(example.trainingWeight ?? 1)));
     const y = clamp01(example.rewardScore);
     const { probability } = scoreFeatures(example.features, next);
-    const error = probability - y;
+    const error = (probability - y) * weight;
 
     next.intercept -= learningRate * error;
 
@@ -358,6 +361,82 @@ export function trainOnlineLogisticRegression(
 
   next.trainedExamples = state.trainedExamples + examples.length;
   return next;
+}
+
+export function computeScannedTicketFeatures(params: {
+  cfg: GameConfig;
+  mainNumbers: number[];
+  specialNumbers: number[];
+  ticketOrigin: "user_selected" | "quick_pick" | "unknown";
+  sourceModelWeight?: number;
+  sourceModelAvgHits?: number;
+  historyDepth?: number;
+  sourceConfidence?: number;
+}): Record<string, number> {
+  const {
+    cfg,
+    mainNumbers,
+    specialNumbers,
+    ticketOrigin,
+    sourceModelWeight = 0.5,
+    sourceModelAvgHits = 0,
+    historyDepth = 0,
+    sourceConfidence = 0.5,
+  } = params;
+  const clampedSourceConfidence = clamp01(sourceConfidence);
+  return {
+    base_confidence: clampedSourceConfidence,
+    top_freq_overlap: 0,
+    consensus_overlap: 0,
+    model_weight_prior: clamp01(sourceModelWeight),
+    model_avg_hits_prior: clamp01(sourceModelAvgHits / Math.max(1, cfg.mainCount)),
+    odd_balance: oddBalance(mainNumbers),
+    spread_norm: normalizeSpread(mainNumbers, cfg),
+    unique_ratio: mainNumbers.length > 0 ? clamp01(new Set(mainNumbers).size / mainNumbers.length) : 0,
+    candidate_duplication_penalty: 0,
+    special_presence: cfg.specialCount > 0 ? clamp01(specialNumbers.length / cfg.specialCount) : 0,
+    insufficient_penalty: 0,
+    history_depth_norm: clamp01(historyDepth / 200),
+    main_mean_norm: mainNumbers.length > 0 ? clamp01(safeAverage(mainNumbers) / Math.max(1, cfg.mainMax)) : 0,
+    source_scanned_ticket: 1,
+    source_generated_candidate: 0,
+    ticketOrigin_quick_pick: ticketOrigin === "quick_pick" ? 1 : 0,
+    ticketOrigin_user_selected: ticketOrigin === "user_selected" ? 1 : 0,
+    ticketOrigin_unknown: ticketOrigin === "unknown" ? 1 : 0,
+  };
+}
+
+export function buildTrainingExamplesWithSourceWeights(params: {
+  generatedExamples: Array<{ features: Record<string, number>; rewardScore: number }>;
+  scannedExamples: Array<{ features: Record<string, number>; rewardScore: number; baseWeight?: number }>;
+  scannedCapRatio?: number;
+  scannedBaseWeight?: number;
+}): {
+  examples: TrainingExample[];
+  generatedCount: number;
+  scannedCount: number;
+} {
+  const generatedCount = params.generatedExamples.length;
+  const scannedCapRatio = params.scannedCapRatio ?? 0.4;
+  const scannedBaseWeight = params.scannedBaseWeight ?? 0.35;
+  const scannedMax = Math.floor(Math.max(0, generatedCount) * Math.max(0, Math.min(1, scannedCapRatio)));
+  const cappedScanned = params.scannedExamples
+    .slice(0, scannedMax > 0 ? scannedMax : (generatedCount === 0 ? params.scannedExamples.length : 0))
+    .map(example => ({
+      ...example,
+      trainingWeight: Math.max(0.01, Math.min(1, Number(example.baseWeight ?? scannedBaseWeight))),
+    }));
+
+  const weightedGenerated = params.generatedExamples.map(example => ({
+    ...example,
+    trainingWeight: 1,
+  }));
+
+  return {
+    examples: [...weightedGenerated, ...cappedScanned],
+    generatedCount: weightedGenerated.length,
+    scannedCount: cappedScanned.length,
+  };
 }
 
 export function selectBudgetTicketsFromRankedCandidates(

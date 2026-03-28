@@ -8,6 +8,8 @@ import {
   updatePdfUploadStatus,
   insertDrawResult,
   insertPurchasedTicket,
+  insertScannedTicket,
+  insertScannedTicketRow,
   getUserPredictionsByGame,
   getDrawResultByGameDateTime,
   evaluatePurchasedTicketsAgainstDraw,
@@ -204,38 +206,63 @@ export function registerUploadRoutes(app: Express) {
         }
       }
 
-      const matchModelSource = bestMatch?.modelName;
-      const ticketNotes = `Draw period: ${drawTime}\nScanned: ${new Date().toISOString()}\nMatched model: ${matchModelSource ?? "unknown"}`;
+      const matchModelSource = bestMatch?.modelName ?? null;
+      const confidence =
+        bestMatch && cfg.mainCount > 0
+          ? Math.max(0, Math.min(1, (bestMatch.mainHits / cfg.mainCount) + (bestMatch.specialHits * 0.1)))
+          : 0.5;
 
-      const ticketId = await insertPurchasedTicket({
+      const scannedTicketId = await insertScannedTicket({
         userId: ctx.user.id,
         gameType,
-        mainNumbers: ticketMain,
-        specialNumbers: normalizedSpecial.length > 0 ? normalizedSpecial : [],
-        purchaseDate: Date.now(),
         drawDate: drawDateTs,
-        cost: numericCost,
-        notes: ticketNotes,
-        modelSource: matchModelSource ?? undefined,
+        drawTime,
+        sourceType: "scanned_ticket",
+        ticketOrigin: "unknown",
+        scanStatus: "parsed",
+        confirmationStatus: "pending",
+        imageUrl: fileUrl,
+        fileKey,
+        parsedPayload: {
+          extracted: {
+            gameType,
+            gameName: cfg.name,
+            drawDate: extracted.drawDate,
+            drawTime,
+            mainNumbers: ticketMain,
+            specialNumbers: normalizedSpecial,
+          },
+          matchedModel: matchModelSource,
+          confidence,
+          inferredCost: numericCost,
+        },
       });
 
-      // If results already exist for this draw, evaluate immediately
-      const existingDraw = await getDrawResultByGameDateTime(gameType, drawDateTs, drawTime);
-      let evaluatedNow = false;
-      if (existingDraw) {
-        await evaluatePurchasedTicketsAgainstDraw(
-          gameType,
-          drawDateTs,
-          drawTime,
-          (existingDraw.mainNumbers as number[]) || [],
-          (existingDraw.specialNumbers as number[]) || []
-        );
-        evaluatedNow = true;
-      }
+      const scannedTicketRowId = await insertScannedTicketRow({
+        scannedTicketId,
+        rowIndex: 0,
+        gameType,
+        drawDate: drawDateTs,
+        drawTime,
+        parsedMainNumbers: ticketMain,
+        parsedSpecialNumbers: normalizedSpecial,
+        rowStatus: "parsed",
+      });
 
       res.json({
         success: true,
-        ticketId,
+        scannedTicketId,
+        requiresConfirmation: true,
+        cost: numericCost,
+        rows: [
+          {
+            rowId: scannedTicketRowId,
+            rowIndex: 0,
+            mainNumbers: ticketMain,
+            specialNumbers: normalizedSpecial,
+            rowStatus: "parsed",
+          },
+        ],
         extracted: {
           gameType,
           gameName: cfg.name,
@@ -244,8 +271,7 @@ export function registerUploadRoutes(app: Express) {
           mainNumbers: ticketMain,
           specialNumbers: normalizedSpecial,
         },
-        matchedModel: matchModelSource ?? null,
-        evaluatedNow,
+        matchedModel: matchModelSource,
         imageUrl: fileUrl,
       });
     } catch (err: any) {

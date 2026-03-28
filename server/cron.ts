@@ -72,10 +72,13 @@ export async function runAutoFetch(): Promise<AutoFetchResult> {
             drawTime: draw.drawTime,
             source: "auto-fetch",
           });
+          if (insertResult.status !== "inserted" || !insertResult.insertId) {
+            continue;
+          }
           gameResult.newDraws++;
 
           // Auto-evaluate predictions against this new draw
-          const drawId = (insertResult as any)?.[0]?.insertId ?? 0;
+          const drawId = insertResult.insertId;
           if (drawId) {
             try {
               const evalResult = await evaluatePredictionsAgainstDraw(
