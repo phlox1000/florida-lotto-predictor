@@ -24,6 +24,30 @@ import {
 } from "./ranker-v2";
 import { FLORIDA_GAMES, type GameType } from "../shared/lottery";
 
+function extractInsertId(result: unknown): number | null {
+  const candidates = [
+    Number((result as any)?.insertId),
+    Number((result as any)?.[0]?.insertId),
+    Number((result as any)?.[0]?.[0]?.insertId),
+  ];
+  for (const value of candidates) {
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return null;
+}
+
+function describeInsertResult(result: unknown): string {
+  if (Array.isArray(result)) {
+    const first = result[0] as any;
+    const keys = first && typeof first === "object" ? Object.keys(first).join(",") : typeof first;
+    return `array(len=${result.length},firstKeys=${keys})`;
+  }
+  if (result && typeof result === "object") {
+    return `object(keys=${Object.keys(result as Record<string, unknown>).join(",")})`;
+  }
+  return String(result);
+}
+
 function toRankerState(row: {
   id: number;
   gameType: string;
@@ -72,7 +96,7 @@ export async function getOrCreateActiveRankerVersion(gameType: string): Promise<
   if (existing.length > 0) return toRankerState(existing[0]);
 
   const seed = getDefaultRankerState(gameType);
-  const [insertResult] = await db.insert(rankerVersions).values({
+  const insertResult = await db.insert(rankerVersions).values({
     gameType,
     algorithm: seed.algorithm,
     featureSetVersion: seed.featureSetVersion,
@@ -84,8 +108,19 @@ export async function getOrCreateActiveRankerVersion(gameType: string): Promise<
     isActive: 1,
     notes: "Initial V2 ranker bootstrap",
   } satisfies InsertRankerVersion);
-
-  return { ...seed, id: Number((insertResult as any)?.insertId || 0) || undefined };
+  let insertedId = extractInsertId(insertResult);
+  if (!insertedId) {
+    const fallback = await db.select({ id: rankerVersions.id })
+      .from(rankerVersions)
+      .where(and(
+        eq(rankerVersions.gameType, gameType),
+        eq(rankerVersions.isActive, 1),
+      ))
+      .orderBy(desc(rankerVersions.id))
+      .limit(1);
+    insertedId = fallback[0]?.id ?? null;
+  }
+  return { ...seed, id: insertedId ?? undefined };
 }
 
 export async function getModelAverageHitsMap(gameType: string): Promise<Record<string, number>> {
@@ -103,7 +138,11 @@ export async function createPredictionCandidateBatch(
   const db = await getDb();
   if (!db) return null;
   const result = await db.insert(predictionCandidateBatches).values(data);
-  return Number((result as any)?.insertId || 0) || null;
+  const batchId = extractInsertId(result);
+  console.log(
+    `[RankerV2] createPredictionCandidateBatch userId=${data.userId ?? "null"} gameType=${data.gameType} batchId=${batchId ?? "null"} resultShape=${describeInsertResult(result)}`
+  );
+  return batchId;
 }
 
 export interface StoredCandidateInput {
@@ -151,11 +190,25 @@ export async function storePredictionCandidatesAndFeatures(
   } satisfies InsertPredictionCandidate));
 
   const result = await db.insert(predictionCandidates).values(insertRows);
-  const firstId = Number((result as any)?.insertId || 0);
-  if (!firstId) return [];
+  const insertedCandidateRows = await db.select({
+    id: predictionCandidates.id,
+  }).from(predictionCandidates)
+    .where(eq(predictionCandidates.batchId, candidates[0].batchId))
+    .orderBy(desc(predictionCandidates.id))
+    .limit(candidates.length);
+
+  const sortedInserted = [...insertedCandidateRows]
+    .sort((a, b) => a.id - b.id);
+
+  if (sortedInserted.length !== candidates.length) {
+    console.warn(
+      `[RankerV2] storePredictionCandidatesAndFeatures unexpected inserted count; batchId=${candidates[0].batchId} expected=${candidates.length} got=${sortedInserted.length} resultShape=${describeInsertResult(result)}`
+    );
+    return [];
+  }
 
   const withIds = candidates.map((candidate, idx) => ({
-    candidateId: firstId + idx,
+    candidateId: sortedInserted[idx].id,
     featureSetVersion: candidate.featureSetVersion,
     features: candidate.features,
   }));
@@ -166,6 +219,10 @@ export async function storePredictionCandidatesAndFeatures(
       featureSetVersion: row.featureSetVersion,
       features: row.features,
     } satisfies InsertPredictionFeatureSnapshot))
+  );
+
+  console.log(
+    `[RankerV2] storePredictionCandidatesAndFeatures batchId=${candidates[0].batchId} candidatesInserted=${insertRows.length} firstCandidateId=${withIds[0]?.candidateId ?? "null"} lastCandidateId=${withIds[withIds.length - 1]?.candidateId ?? "null"} featureSnapshotsInserted=${withIds.length}`
   );
 
   return withIds.map(row => ({ candidateId: row.candidateId, features: row.features }));
@@ -299,7 +356,11 @@ export async function recordCandidateOutcomesAndTrainRanker(
     isActive: 1,
     notes: `Trained on draw ${drawId} with ${trainingExamples.length} examples`,
   } satisfies InsertRankerVersion);
-  newRankerVersionId = Number((insertResult as any)?.insertId || 0) || null;
+  newRankerVersionId = extractInsertId(insertResult);
+
+  console.log(
+    `[RankerV2] recordCandidateOutcomesAndTrainRanker gameType=${gameType} drawId=${drawId} outcomesInserted=${outcomeRows.length} trainingExamples=${trainingExamples.length} newRankerVersionId=${newRankerVersionId ?? "null"} insertResultShape=${describeInsertResult(insertResult)}`
+  );
 
   return {
     candidateOutcomes: outcomeRows.length,
