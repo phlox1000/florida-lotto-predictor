@@ -16,6 +16,7 @@ import {
 } from "./db";
 import { FLORIDA_GAMES, GAME_TYPES, type GameType } from "@shared/lottery";
 import { createContext } from "./_core/context";
+import { getPersonalizationImpactSummary } from "./personalization-metrics";
 
 function guessImageMimeType(fileName: string): string {
   const lower = fileName.toLowerCase();
@@ -42,6 +43,34 @@ function parseIsoDateToUtcStart(value: string): number {
  * Register all upload routes on the Express app.
  */
 export function registerUploadRoutes(app: Express) {
+  // ─── Personalization Metrics (REST alias) ────────────────────────────────
+  app.get("/metrics/personalization-impact", async (req: Request, res: Response) => {
+    try {
+      const gameTypeRaw = typeof req.query.gameType === "string" ? req.query.gameType : undefined;
+      const gameType = gameTypeRaw && GAME_TYPES.includes(gameTypeRaw as any) ? gameTypeRaw : undefined;
+      if (gameTypeRaw && !gameType) {
+        res.status(400).json({ error: "Invalid gameType" });
+        return;
+      }
+      const lookbackRaw = typeof req.query.lookbackDays === "string" ? Number(req.query.lookbackDays) : undefined;
+      const lookbackDays = Number.isFinite(lookbackRaw) && lookbackRaw! >= 1 && lookbackRaw! <= 365
+        ? Math.floor(lookbackRaw!)
+        : undefined;
+      if (req.query.lookbackDays !== undefined && lookbackDays === undefined) {
+        res.status(400).json({ error: "Invalid lookbackDays (expected 1-365)" });
+        return;
+      }
+      const summary = await getPersonalizationImpactSummary({
+        gameType,
+        lookbackDays,
+      });
+      res.json(summary);
+    } catch (error) {
+      console.warn("[Metrics] personalization-impact endpoint failed:", error);
+      res.status(500).json({ error: "Failed to load personalization impact metrics" });
+    }
+  });
+
   // ─── PDF Upload (Admin) ──────────────────────────────────────────────────
   app.post("/api/upload-pdf", async (req: Request, res: Response) => {
     try {
