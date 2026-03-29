@@ -335,6 +335,69 @@ export const personalRankerPromotionAudit = mysqlTable("personal_ranker_promotio
 export type PersonalRankerPromotionAudit = typeof personalRankerPromotionAudit.$inferSelect;
 export type InsertPersonalRankerPromotionAudit = typeof personalRankerPromotionAudit.$inferInsert;
 
+/** Request-level personalization instrumentation + evaluated impact metrics */
+export const personalizationMetrics = mysqlTable("personalization_metrics", {
+  id: int("id").autoincrement().primaryKey(),
+  gameType: varchar("gameType", { length: 32 }).notNull(),
+  requestSource: varchar("requestSource", { length: 64 }).notNull(), // predictions.generate | tickets.generate
+  anonymizedUserId: varchar("anonymizedUserId", { length: 96 }),
+  candidateBatchId: int("candidateBatchId").references(() => predictionCandidateBatches.id, { onDelete: "set null" }),
+  globalRankerVersionId: int("globalRankerVersionId").references(() => rankerVersions.id, { onDelete: "set null" }),
+  personalRankerVersionId: int("personalRankerVersionId").references(() => personalRankerVersions.id, { onDelete: "set null" }),
+  abGroup: varchar("abGroup", { length: 24 }).notNull().default("treatment"), // control | treatment | ineligible
+  abBucket: int("abBucket"),
+  personalizationEligible: int("personalizationEligible").notNull().default(0),
+  personalizationApplied: int("personalizationApplied").notNull().default(0),
+  personalizationBlockedReason: varchar("personalizationBlockedReason", { length: 128 }),
+  blendWeight: float("blendWeight").notNull().default(0),
+  topN: int("topN").notNull().default(10),
+  topGlobalCandidates: json("topGlobalCandidates").notNull(),
+  topServedCandidates: json("topServedCandidates").notNull(),
+  selectedCandidateKeys: json("selectedCandidateKeys"),
+  selectedCandidateKey: varchar("selectedCandidateKey", { length: 256 }),
+  selectedCandidateSource: varchar("selectedCandidateSource", { length: 64 }), // global_ranking | personal_reranker_adjustment | outside_ranked_candidates
+  evaluatedDrawResultId: int("evaluatedDrawResultId").references(() => drawResults.id, { onDelete: "set null" }),
+  baselineSelectedRank: int("baselineSelectedRank"),
+  personalizedSelectedRank: int("personalizedSelectedRank"),
+  selectedRankLift: int("selectedRankLift"),
+  selectedMainHits: int("selectedMainHits"),
+  selectedSpecialHits: int("selectedSpecialHits"),
+  selectedRewardScore: float("selectedRewardScore"),
+  baselineHitAt5: int("baselineHitAt5"),
+  personalizedHitAt5: int("personalizedHitAt5"),
+  baselineHitAt10: int("baselineHitAt10"),
+  personalizedHitAt10: int("personalizedHitAt10"),
+  baselinePrecisionAt5: float("baselinePrecisionAt5"),
+  personalizedPrecisionAt5: float("personalizedPrecisionAt5"),
+  baselinePrecisionAt10: float("baselinePrecisionAt10"),
+  personalizedPrecisionAt10: float("personalizedPrecisionAt10"),
+  precisionLiftAt5: float("precisionLiftAt5"),
+  precisionLiftAt10: float("precisionLiftAt10"),
+  evaluatedAt: timestamp("evaluatedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => ({
+  byGameCreated: index("idx_personalization_metrics_game_created").on(
+    table.gameType,
+    table.createdAt
+  ),
+  byEvaluationState: index("idx_personalization_metrics_eval_state").on(
+    table.gameType,
+    table.evaluatedDrawResultId,
+    table.createdAt
+  ),
+  byAbGroup: index("idx_personalization_metrics_ab_group").on(
+    table.abGroup,
+    table.gameType,
+    table.createdAt
+  ),
+  uqCandidateBatch: uniqueIndex("uq_personalization_metrics_candidate_batch").on(
+    table.candidateBatchId
+  ),
+}));
+
+export type PersonalizationMetric = typeof personalizationMetrics.$inferSelect;
+export type InsertPersonalizationMetric = typeof personalizationMetrics.$inferInsert;
+
 /** Budget-aware ticket selections (batches of 20 tickets) */
 export const ticketSelections = mysqlTable("ticket_selections", {
   id: int("id").autoincrement().primaryKey(),

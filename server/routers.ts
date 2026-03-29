@@ -35,6 +35,14 @@ import {
   getPersonalizationConfig,
 } from "./personal-ranker-db";
 import {
+  assignPersonalizationAbGroup,
+  enqueuePersonalizationRequestMetric,
+  getPersonalizationImpactSummary,
+  getPersonalizationMetricsConfig,
+  resolveSelectedCandidateSource,
+  snapshotTopCandidates,
+} from "./personalization-metrics";
+import {
   computeScannedTicketFeatureSnapshot,
   evaluateConfirmedScannedTicketsForDraw,
   type TicketOrigin,
@@ -126,21 +134,66 @@ async function buildRankedPredictionBundle(params: {
     modelAvgHits
   );
   const ranked = rankCandidates(featureRecords, rankerState);
+  const baselineRankByKey = new Map(
+    ranked.map(candidate => [candidate.candidateKey, candidate.rankPosition])
+  );
+  const metricsCfg = getPersonalizationMetricsConfig();
+  const topN = metricsCfg.topN;
+  const topGlobalCandidates = snapshotTopCandidates(ranked, topN);
   const personalizationCfg = getPersonalizationConfig();
   const personalState = params.userId
     ? await getActivePersonalRankerVersion(params.userId, params.gameType)
     : null;
-  const personalBlend = applyPersonalizedReranking(
-    ranked,
-    personalState,
-    {
-      minExamples: personalizationCfg.minExamplesToApply,
-      rampExamples: personalizationCfg.rampExamples,
-      maxBlendWeight: personalizationCfg.maxBlendWeight,
-      maxPerCandidateDelta: personalizationCfg.maxPerCandidateDelta,
-    }
+  const personalExamples = Number(personalState?.trainedExamples || 0);
+  const personalizationEligible = Boolean(
+    params.userId &&
+    personalState &&
+    personalExamples >= personalizationCfg.minExamplesToApply
   );
+  const abAssignment = assignPersonalizationAbGroup({
+    userId: params.userId,
+    gameType: params.gameType,
+    personalizationEligible,
+  });
+  const shouldApplyPersonalization = abAssignment.personalizationAllowed && Boolean(personalState);
+  const personalBlend = shouldApplyPersonalization
+    ? applyPersonalizedReranking(
+      ranked,
+      personalState,
+      {
+        minExamples: personalizationCfg.minExamplesToApply,
+        rampExamples: personalizationCfg.rampExamples,
+        maxBlendWeight: personalizationCfg.maxBlendWeight,
+        maxPerCandidateDelta: personalizationCfg.maxPerCandidateDelta,
+      }
+    )
+    : {
+      applied: false,
+      personalRankerVersionId: personalState?.id ?? null,
+      blendWeight: 0,
+      adjustedCandidates: 0,
+    };
+  const personalizationBlockedReason =
+    !params.userId ? "anonymous_user"
+      : !personalState ? "no_personal_ranker"
+        : !personalizationEligible ? "insufficient_personal_examples"
+          : abAssignment.group === "control" ? "ab_control"
+            : null;
   diversifyRankedCandidates(ranked, cfg, targetDiversifiedCandidateCount(params.gameType));
+  const topServedCandidates = snapshotTopCandidates(ranked, topN);
+  const selectedCandidateKeys = ranked
+    .filter(candidate => candidate.selectedForFinal)
+    .map(candidate => candidate.candidateKey);
+  const selectedCandidateKey = selectedCandidateKeys[0] ?? ranked[0]?.candidateKey ?? null;
+  const servedRankByKey = new Map(
+    ranked.map(candidate => [candidate.candidateKey, candidate.rankPosition])
+  );
+  const selectedCandidateSource = resolveSelectedCandidateSource({
+    selectedCandidateKey,
+    personalizationApplied: personalBlend.applied,
+    baselineRankByKey,
+    servedRankByKey,
+  });
   const rankedPredictions = mergeRankedCandidatesIntoPredictions(predictions, ranked);
 
   if (params.userId) {
@@ -201,6 +254,27 @@ async function buildRankedPredictionBundle(params: {
     }
   }
 
+  enqueuePersonalizationRequestMetric({
+    gameType: params.gameType,
+    requestSource: params.source,
+    userId: params.userId,
+    candidateBatchId,
+    globalRankerVersionId: rankerState.id ?? null,
+    personalRankerVersionId: personalState?.id ?? null,
+    personalizationEligible,
+    personalizationApplied: personalBlend.applied,
+    personalizationBlockedReason,
+    blendWeight: personalBlend.blendWeight,
+    abGroup: abAssignment.group,
+    abBucket: abAssignment.bucket,
+    topN,
+    topGlobalCandidates,
+    topServedCandidates,
+    selectedCandidateKeys,
+    selectedCandidateKey,
+    selectedCandidateSource,
+  });
+
   return {
     cfg,
     rankedPredictions,
@@ -209,6 +283,10 @@ async function buildRankedPredictionBundle(params: {
     personalState,
     personalBlend,
     candidateBatchId,
+    personalizationEligible,
+    personalizationBlockedReason,
+    personalizationAbGroup: abAssignment.group,
+    personalizationAbBucket: abAssignment.bucket,
   };
 }
 
@@ -253,6 +331,10 @@ export const appRouter = router({
               personalRankerVersionId: bundle.personalBlend.personalRankerVersionId,
               blendWeight: bundle.personalBlend.blendWeight,
               adjustedCandidates: bundle.personalBlend.adjustedCandidates,
+              eligible: bundle.personalizationEligible,
+              blockedReason: bundle.personalizationBlockedReason,
+              abGroup: bundle.personalizationAbGroup,
+              abBucket: bundle.personalizationAbBucket,
             },
           },
         };
@@ -415,6 +497,10 @@ export const appRouter = router({
               personalRankerVersionId: bundle.personalBlend.personalRankerVersionId,
               blendWeight: bundle.personalBlend.blendWeight,
               adjustedCandidates: bundle.personalBlend.adjustedCandidates,
+              eligible: bundle.personalizationEligible,
+              blockedReason: bundle.personalizationBlockedReason,
+              abGroup: bundle.personalizationAbGroup,
+              abBucket: bundle.personalizationAbBucket,
             },
           },
         };
@@ -878,6 +964,20 @@ export const appRouter = router({
       .input(z.object({ gameType: gameTypeSchema }))
       .query(async ({ input }) => {
         return getModelWeights(input.gameType);
+      }),
+  }),
+
+  metrics: router({
+    personalizationImpact: publicProcedure
+      .input(z.object({
+        gameType: gameTypeSchema.optional(),
+        lookbackDays: z.number().int().min(1).max(365).optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        return getPersonalizationImpactSummary({
+          gameType: input?.gameType,
+          lookbackDays: input?.lookbackDays,
+        });
       }),
   }),
 

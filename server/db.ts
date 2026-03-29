@@ -473,6 +473,7 @@ export async function evaluatePredictionsAgainstDraw(
     candidateOutcomes,
     rankerTrainedExamples,
     rankerVersionId,
+    personalizationMetricsEvaluated: (v2 as any)?.personalizationMetricsEvaluated ?? 0,
     scannedTicketsEvaluated,
     scannedTicketOutcomes,
   };

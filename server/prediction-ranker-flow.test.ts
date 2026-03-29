@@ -14,6 +14,10 @@ const {
   mockInsertPredictions,
   mockCreatePredictionCandidateBatch,
   mockStorePredictionCandidatesAndFeatures,
+  mockGetPersonalizationMetricsConfig,
+  mockAssignPersonalizationAbGroup,
+  mockEnqueuePersonalizationRequestMetric,
+  mockGetPersonalizationImpactSummary,
   mockRunAllModels,
   mockSelectBudgetTickets,
 } = vi.hoisted(() => ({
@@ -29,6 +33,10 @@ const {
   mockInsertPredictions: vi.fn(),
   mockCreatePredictionCandidateBatch: vi.fn(),
   mockStorePredictionCandidatesAndFeatures: vi.fn(),
+  mockGetPersonalizationMetricsConfig: vi.fn(),
+  mockAssignPersonalizationAbGroup: vi.fn(),
+  mockEnqueuePersonalizationRequestMetric: vi.fn(),
+  mockGetPersonalizationImpactSummary: vi.fn(),
   mockRunAllModels: vi.fn(),
   mockSelectBudgetTickets: vi.fn(),
 }));
@@ -109,6 +117,21 @@ vi.mock("./predictions", () => ({
   runAllModels: mockRunAllModels,
   selectBudgetTickets: mockSelectBudgetTickets,
   applySumRangeFilter: (predictions: any[]) => predictions,
+}));
+
+vi.mock("./personalization-metrics", () => ({
+  getPersonalizationMetricsConfig: mockGetPersonalizationMetricsConfig,
+  assignPersonalizationAbGroup: mockAssignPersonalizationAbGroup,
+  snapshotTopCandidates: (ranked: any[], topN: number) =>
+    ranked.slice(0, topN).map((candidate, idx) => ({
+      candidateKey: candidate.candidateKey,
+      rankPosition: Number(candidate.rankPosition || idx + 1),
+      probability: Number(candidate.rankerProbability || 0),
+    })),
+  resolveSelectedCandidateSource: ({ personalizationApplied }: { personalizationApplied: boolean }) =>
+    personalizationApplied ? "personal_reranker_adjustment" : "global_ranking",
+  enqueuePersonalizationRequestMetric: mockEnqueuePersonalizationRequestMetric,
+  getPersonalizationImpactSummary: mockGetPersonalizationImpactSummary,
 }));
 
 vi.mock("./_core/llm", () => ({ invokeLLM: vi.fn() }));
@@ -233,6 +256,31 @@ describe("prediction ranker V2 flow through routers", () => {
       { candidateId: 1001, features: { base_confidence: 0.3 } },
       { candidateId: 1002, features: { base_confidence: 0.7 } },
     ]);
+    mockGetPersonalizationMetricsConfig.mockReturnValue({
+      topN: 10,
+      abControlPercent: 0,
+      hashSalt: "test-salt",
+      impactLookbackDays: 90,
+    });
+    mockAssignPersonalizationAbGroup.mockReturnValue({
+      group: "treatment",
+      bucket: 50,
+      personalizationAllowed: true,
+    });
+    mockGetPersonalizationImpactSummary.mockResolvedValue({
+      sampleSize: 12,
+      avgLift: 1.1,
+      percentImprovement: 9.5,
+      hitRateAt5: { baseline: 0.22, personalized: 0.24, improvementPercent: 9.1 },
+      hitRateAt10: { baseline: 0.31, personalized: 0.34, improvementPercent: 9.7 },
+      precisionAt5: { baseline: 0.08, personalized: 0.1, avgLift: 0.02 },
+      precisionAt10: { baseline: 0.05, personalized: 0.06, avgLift: 0.01 },
+      ab: {
+        controlSampleSize: 5,
+        treatmentSampleSize: 7,
+        treatmentVsControlHitRateImprovementAt5Percent: 11.3,
+      },
+    });
     mockInsertPredictions.mockResolvedValue(undefined);
     mockSelectBudgetTickets.mockReturnValue({
       tickets: [
@@ -274,6 +322,18 @@ describe("prediction ranker V2 flow through routers", () => {
     expect(mockCreatePredictionCandidateBatch).toHaveBeenCalledTimes(1);
     expect(mockStorePredictionCandidatesAndFeatures).toHaveBeenCalledTimes(1);
     expect(mockInsertPredictions).toHaveBeenCalledTimes(1);
+    expect(mockEnqueuePersonalizationRequestMetric).toHaveBeenCalledTimes(1);
+    const metricPayload = mockEnqueuePersonalizationRequestMetric.mock.calls[0][0];
+    expect(metricPayload).toMatchObject({
+      gameType: "fantasy_5",
+      requestSource: "predictions.generate",
+      candidateBatchId: 9001,
+      personalizationApplied: false,
+      abGroup: "treatment",
+      abBucket: 50,
+    });
+    expect(Array.isArray(metricPayload.topGlobalCandidates)).toBe(true);
+    expect(Array.isArray(metricPayload.topServedCandidates)).toBe(true);
   });
 
   it("tickets.generate uses ranked predictions and includes ranker metadata", async () => {
@@ -364,5 +424,71 @@ describe("prediction ranker V2 flow through routers", () => {
 
     expect(resultB.rankerV2.personalization.applied).toBe(false);
     expect(resultB.rankerV2.personalization.personalRankerVersionId).toBeNull();
+  });
+
+  it("forces control bucket to disable personalization while keeping eligibility metadata", async () => {
+    mockAssignPersonalizationAbGroup.mockReturnValueOnce({
+      group: "control",
+      bucket: 9,
+      personalizationAllowed: false,
+    });
+    mockGetActivePersonalRankerVersion.mockResolvedValueOnce({
+      id: 901,
+      gameType: "fantasy_5",
+      algorithm: "online_logistic_regression_personal",
+      featureSetVersion: "ranker_v2_structured_2026_03",
+      intercept: 1.5,
+      coefficients: { base_confidence: -1.5 },
+      learningRate: 0.04,
+      l2Lambda: 0.002,
+      trainedExamples: 80,
+    });
+
+    const caller = appRouter.createCaller({
+      user: {
+        id: 7,
+        openId: "u7",
+        email: null,
+        name: "Tester",
+        role: "user",
+        loginMethod: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        lastSignedIn: new Date(),
+      },
+      res: { clearCookie: () => {} } as any,
+      req: {} as any,
+    } as any);
+
+    const result = await caller.predictions.generate({
+      gameType: "fantasy_5",
+      sumRangeFilter: false,
+    });
+
+    expect(result.rankerV2.personalization.applied).toBe(false);
+    expect(result.rankerV2.personalization.eligible).toBe(true);
+    expect(result.rankerV2.personalization.abGroup).toBe("control");
+    expect(result.rankerV2.personalization.blockedReason).toBe("ab_control");
+  });
+
+  it("returns aggregated personalization impact metrics", async () => {
+    const caller = appRouter.createCaller({
+      user: null,
+      res: { clearCookie: () => {} } as any,
+      req: {} as any,
+    } as any);
+
+    const result = await caller.metrics.personalizationImpact({
+      gameType: "fantasy_5",
+      lookbackDays: 30,
+    });
+
+    expect(mockGetPersonalizationImpactSummary).toHaveBeenCalledWith({
+      gameType: "fantasy_5",
+      lookbackDays: 30,
+    });
+    expect(result.sampleSize).toBe(12);
+    expect(result.avgLift).toBe(1.1);
+    expect(result.ab.treatmentSampleSize).toBe(7);
   });
 });

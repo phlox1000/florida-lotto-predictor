@@ -34,6 +34,7 @@ import {
   evaluatePromotionEligibility,
   trainPersonalRankersForDraw,
 } from "./personal-ranker-db";
+import { evaluatePersonalizationMetricsForDraw } from "./personalization-metrics";
 
 function extractInsertId(result: unknown): number | null {
   const candidates = [
@@ -262,13 +263,25 @@ export async function recordCandidateOutcomesAndTrainRanker(
   gameType: string,
   winningMain: number[],
   winningSpecial: number[]
-): Promise<{ candidateOutcomes: number; trainedExamples: number; newRankerVersionId: number | null }> {
+): Promise<{
+  candidateOutcomes: number;
+  trainedExamples: number;
+  newRankerVersionId: number | null;
+  personalizationMetricsEvaluated: number;
+}> {
   return withMySqlNamedLock(
     `ranker_train:${gameType}:${drawId}`,
     10,
     async () => {
       const db = await getDb();
-      if (!db) return { candidateOutcomes: 0, trainedExamples: 0, newRankerVersionId: null };
+      if (!db) {
+        return {
+          candidateOutcomes: 0,
+          trainedExamples: 0,
+          newRankerVersionId: null,
+          personalizationMetricsEvaluated: 0,
+        };
+      }
 
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
       const candidateRows = await db
@@ -294,7 +307,14 @@ export async function recordCandidateOutcomesAndTrainRanker(
         .limit(500) as CandidateEvalRow[];
 
       const cfg = FLORIDA_GAMES[gameType as GameType];
-      if (!cfg) return { candidateOutcomes: 0, trainedExamples: 0, newRankerVersionId: null };
+      if (!cfg) {
+        return {
+          candidateOutcomes: 0,
+          trainedExamples: 0,
+          newRankerVersionId: null,
+          personalizationMetricsEvaluated: 0,
+        };
+      }
 
       const winningMainSet = new Set(winningMain);
       const winningSpecialSet = new Set(winningSpecial);
@@ -369,13 +389,20 @@ export async function recordCandidateOutcomesAndTrainRanker(
 
       if (generatedOnlyTraining.examples.length === 0) {
         const personalTrainingNoGlobal = await trainPersonalRankersForDraw({ drawId, gameType });
+        const metricEvalNoGlobal = await evaluatePersonalizationMetricsForDraw({
+          drawId,
+          gameType,
+          winningMain,
+          winningSpecial,
+        });
         console.log(
-          `[RankerV2] recordCandidateOutcomesAndTrainRanker gameType=${gameType} drawId=${drawId} outcomesInserted=${outcomeRows.length} generatedExamples=0 scannedExamples=0 totalExamples=0 newRankerVersionId=null personalUsersTrained=${personalTrainingNoGlobal.usersTrained} personalExamples=${personalTrainingNoGlobal.totalExamples}`
+          `[RankerV2] recordCandidateOutcomesAndTrainRanker gameType=${gameType} drawId=${drawId} outcomesInserted=${outcomeRows.length} generatedExamples=0 scannedExamples=0 totalExamples=0 newRankerVersionId=null personalUsersTrained=${personalTrainingNoGlobal.usersTrained} personalExamples=${personalTrainingNoGlobal.totalExamples} personalizationMetricsEvaluated=${metricEvalNoGlobal.evaluated}`
         );
         return {
           candidateOutcomes: outcomeRows.length,
           trainedExamples: 0,
           newRankerVersionId: null,
+          personalizationMetricsEvaluated: metricEvalNoGlobal.evaluated,
         };
       }
 
@@ -423,14 +450,21 @@ export async function recordCandidateOutcomesAndTrainRanker(
       }
 
       const personalTraining = await trainPersonalRankersForDraw({ drawId, gameType });
+      const metricEval = await evaluatePersonalizationMetricsForDraw({
+        drawId,
+        gameType,
+        winningMain,
+        winningSpecial,
+      });
       console.log(
-        `[RankerV2] recordCandidateOutcomesAndTrainRanker gameType=${gameType} drawId=${drawId} outcomesInserted=${outcomeRows.length} generatedExamples=${generatedOnlyTraining.generatedCount} scannedExamples=0 totalExamples=${generatedOnlyTraining.examples.length} newRankerVersionId=${newRankerVersionId ?? "null"} promotionEligible=${promotionStatus.eligible} personalUsersTrained=${personalTraining.usersTrained} personalExamples=${personalTraining.totalExamples} insertResultShape=${describeInsertResult(insertResult)}`
+        `[RankerV2] recordCandidateOutcomesAndTrainRanker gameType=${gameType} drawId=${drawId} outcomesInserted=${outcomeRows.length} generatedExamples=${generatedOnlyTraining.generatedCount} scannedExamples=0 totalExamples=${generatedOnlyTraining.examples.length} newRankerVersionId=${newRankerVersionId ?? "null"} promotionEligible=${promotionStatus.eligible} personalUsersTrained=${personalTraining.usersTrained} personalExamples=${personalTraining.totalExamples} personalizationMetricsEvaluated=${metricEval.evaluated} insertResultShape=${describeInsertResult(insertResult)}`
       );
 
       return {
         candidateOutcomes: outcomeRows.length,
         trainedExamples: generatedOnlyTraining.examples.length,
         newRankerVersionId,
+        personalizationMetricsEvaluated: metricEval.evaluated,
       };
     },
     {
@@ -439,7 +473,12 @@ export async function recordCandidateOutcomesAndTrainRanker(
           `[RankerV2] skipped recordCandidateOutcomesAndTrainRanker due to lock contention drawId=${drawId} gameType=${gameType}`
         );
       },
-      fallbackResult: { candidateOutcomes: 0, trainedExamples: 0, newRankerVersionId: null },
+      fallbackResult: {
+        candidateOutcomes: 0,
+        trainedExamples: 0,
+        newRankerVersionId: null,
+        personalizationMetricsEvaluated: 0,
+      },
     }
   );
 }
