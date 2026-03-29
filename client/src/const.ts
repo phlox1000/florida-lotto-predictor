@@ -1,17 +1,30 @@
 export { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+import { isAuthDisabled, safeBuildUrl, safeOrigin, safeRelativePath } from "./lib/safe-url";
 
 // Generate login URL at runtime so redirect URI reflects the current origin.
 export const getLoginUrl = () => {
-  const oauthPortalUrl = import.meta.env.VITE_OAUTH_PORTAL_URL;
-  const appId = import.meta.env.VITE_APP_ID;
-  const redirectUri = `${window.location.origin}/api/oauth/callback`;
+  if (isAuthDisabled()) {
+    return safeRelativePath("/");
+  }
+
+  const oauthPortalUrl = import.meta.env.VITE_OAUTH_PORTAL_URL as string | undefined;
+  const appId = import.meta.env.VITE_APP_ID as string | undefined;
+  const origin = safeOrigin();
+  const redirectUri = safeBuildUrl("/api/oauth/callback", origin)?.toString() ?? `${origin}/api/oauth/callback`;
   const state = btoa(redirectUri);
+  const authBase = safeBuildUrl("/app-auth", oauthPortalUrl ?? origin);
 
-  const url = new URL(`${oauthPortalUrl}/app-auth`);
-  url.searchParams.set("appId", appId);
-  url.searchParams.set("redirectUri", redirectUri);
-  url.searchParams.set("state", state);
-  url.searchParams.set("type", "signIn");
+  if (!authBase) {
+    // Never hard-crash app startup due to malformed auth env. Fall back to app root.
+    return safeRelativePath("/");
+  }
 
-  return url.toString();
+  if (appId) {
+    authBase.searchParams.set("appId", appId);
+  }
+  authBase.searchParams.set("redirectUri", redirectUri);
+  authBase.searchParams.set("state", state);
+  authBase.searchParams.set("type", "signIn");
+
+  return authBase.toString();
 };
