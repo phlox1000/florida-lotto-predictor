@@ -457,12 +457,14 @@ export async function evaluatePredictionsAgainstDraw(
   let candidateOutcomes = 0;
   let rankerTrainedExamples = 0;
   let rankerVersionId: number | null = null;
+  let personalizationMetricsEvaluated = 0;
   try {
     const { recordCandidateOutcomesAndTrainRanker } = await import("./ranker-v2-db");
     const v2 = await recordCandidateOutcomesAndTrainRanker(drawId, gameType, mainNumbers, specialNumbers);
     candidateOutcomes = v2.candidateOutcomes;
     rankerTrainedExamples = v2.trainedExamples;
     rankerVersionId = v2.newRankerVersionId;
+    personalizationMetricsEvaluated = v2.personalizationMetricsEvaluated;
   } catch (e) {
     console.warn("[Predictions] V2 candidate evaluation failed:", e);
   }
@@ -473,7 +475,7 @@ export async function evaluatePredictionsAgainstDraw(
     candidateOutcomes,
     rankerTrainedExamples,
     rankerVersionId,
-    personalizationMetricsEvaluated: (v2 as any)?.personalizationMetricsEvaluated ?? 0,
+    personalizationMetricsEvaluated,
     scannedTicketsEvaluated,
     scannedTicketOutcomes,
   };
