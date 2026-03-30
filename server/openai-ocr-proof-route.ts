@@ -25,7 +25,31 @@ function parseBody(req: Request): { imageUrl?: string; pdfUrl?: string } {
 }
 
 export function registerOpenAiOcrProofRoute(app: Express) {
+  const activeProofEnabled =
+    process.env.NODE_ENV !== "production" ||
+    process.env.ENABLE_OPENAI_OCR_PROOF_ROUTE === "true";
+
+  const safeStatusPayload = {
+    hasOpenAiApiKey: Boolean(ENV.openAiApiKey),
+    model: ENV.openAiModel,
+    routeMounted: true,
+  };
+
+  // Always expose this safe status endpoint, including production.
+  app.get("/api/debug/openai-ocr-proof", (_req: Request, res: Response) => {
+    res.json(safeStatusPayload);
+  });
+
   app.post("/api/debug/openai-ocr-proof", async (req: Request, res: Response) => {
+    if (!activeProofEnabled) {
+      res.status(403).json({
+        ...safeStatusPayload,
+        error:
+          "Active OCR proof is disabled in production. Use GET /api/debug/openai-ocr-proof for safe status.",
+      });
+      return;
+    }
+
     const { imageUrl, pdfUrl } = parseBody(req);
     if (!imageUrl && !pdfUrl) {
       res.status(400).json({
