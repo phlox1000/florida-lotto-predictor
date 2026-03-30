@@ -7,6 +7,7 @@ import { SignJWT, jwtVerify } from "jose";
 import type { User } from "../../drizzle/schema";
 import * as db from "../db";
 import { ENV } from "./env";
+import { safeServerUrl } from "./url-safe";
 import type {
   ExchangeTokenRequest,
   ExchangeTokenResponse,
@@ -78,7 +79,7 @@ class OAuthService {
 
 const createOAuthHttpClient = (): AxiosInstance =>
   axios.create({
-    baseURL: ENV.oAuthServerUrl,
+    baseURL: safeServerUrl(ENV.oAuthServerUrl)?.toString(),
     timeout: AXIOS_TIMEOUT_MS,
   });
 

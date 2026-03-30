@@ -79,6 +79,7 @@
 import { useEffect, useRef } from "react";
 import { usePersistFn } from "@/hooks/usePersistFn";
 import { cn } from "@/lib/utils";
+import { safeBuildUrl } from "@/lib/safe-url";
 
 declare global {
   interface Window {
@@ -90,12 +91,26 @@ const API_KEY = import.meta.env.VITE_FRONTEND_FORGE_API_KEY;
 const FORGE_BASE_URL =
   import.meta.env.VITE_FRONTEND_FORGE_API_URL ||
   "https://forge.butterfly-effect.dev";
-const MAPS_PROXY_URL = `${FORGE_BASE_URL}/v1/maps/proxy`;
 
 function loadMapScript() {
   return new Promise(resolve => {
+    const mapsProxyUrl = safeBuildUrl("/v1/maps/proxy", FORGE_BASE_URL);
+    if (!mapsProxyUrl) {
+      console.error("Failed to resolve Google Maps proxy URL from configuration");
+      resolve(null);
+      return;
+    }
+    const scriptUrl = safeBuildUrl(
+      `/maps/api/js?key=${encodeURIComponent(String(API_KEY || ""))}&v=weekly&libraries=marker,places,geocoding,geometry`,
+      mapsProxyUrl.toString()
+    );
+    if (!scriptUrl) {
+      console.error("Failed to build Google Maps script URL");
+      resolve(null);
+      return;
+    }
     const script = document.createElement("script");
-    script.src = `${MAPS_PROXY_URL}/maps/api/js?key=${API_KEY}&v=weekly&libraries=marker,places,geocoding,geometry`;
+    script.src = scriptUrl.toString();
     script.async = true;
     script.crossOrigin = "anonymous";
     script.onload = () => {
@@ -127,6 +142,10 @@ export function MapView({
 
   const init = usePersistFn(async () => {
     await loadMapScript();
+    if (!window.google?.maps) {
+      console.error("Google Maps API did not initialize");
+      return;
+    }
     if (!mapContainer.current) {
       console.error("Map container not found");
       return;

@@ -1,4 +1,5 @@
 export { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+import { toCleanString } from "@shared/url-safe";
 import { isAuthDisabled, safeBuildUrl, safeOrigin, safeRelativePath } from "./lib/safe-url";
 
 // Generate login URL at runtime so redirect URI reflects the current origin.
@@ -28,3 +29,15 @@ export const getLoginUrl = () => {
 
   return authBase.toString();
 };
+
+/**
+ * Build-safe client auth config.
+ * NOTE: Vite injects VITE_* values at build time; runtime env edits do not
+ * affect already-built frontend bundles until redeploy/rebuild.
+ * See ENVIRONMENT.md for deployment details.
+ */
+export const CLIENT_AUTH_CONFIG = {
+  oauthPortalUrl: toCleanString(import.meta.env.VITE_OAUTH_PORTAL_URL as string | undefined) || null,
+  appId: toCleanString(import.meta.env.VITE_APP_ID as string | undefined) || null,
+  authDisabled: isAuthDisabled(),
+} as const;

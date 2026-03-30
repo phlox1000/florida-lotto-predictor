@@ -17,6 +17,7 @@
  */
 import { storagePut } from "server/storage";
 import { ENV } from "./env";
+import { requireServerServiceUrl } from "./url-safe";
 
 export type GenerateImageOptions = {
   prompt: string;
@@ -41,14 +42,11 @@ export async function generateImage(
     throw new Error("BUILT_IN_FORGE_API_KEY is not configured");
   }
 
-  // Build the full URL by appending the service path to the base URL
-  const baseUrl = ENV.forgeApiUrl.endsWith("/")
-    ? ENV.forgeApiUrl
-    : `${ENV.forgeApiUrl}/`;
-  const fullUrl = new URL(
-    "images.v1.ImageService/GenerateImage",
-    baseUrl
-  ).toString();
+  const fullUrl = requireServerServiceUrl({
+    servicePath: "images.v1.ImageService/GenerateImage",
+    baseUrl: ENV.forgeApiUrl,
+    envName: "BUILT_IN_FORGE_API_URL",
+  });
 
   const response = await fetch(fullUrl, {
     method: "POST",

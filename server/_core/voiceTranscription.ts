@@ -26,6 +26,7 @@
  * ```
  */
 import { ENV } from "./env";
+import { requireServerServiceUrl } from "./url-safe";
 
 export type TranscribeOptions = {
   audioUrl: string; // URL to the audio file (e.g., S3 URL)
@@ -143,14 +144,11 @@ export async function transcribeAudio(
     formData.append("prompt", prompt);
 
     // Step 4: Call the transcription service
-    const baseUrl = ENV.forgeApiUrl.endsWith("/")
-      ? ENV.forgeApiUrl
-      : `${ENV.forgeApiUrl}/`;
-    
-    const fullUrl = new URL(
-      "v1/audio/transcriptions",
-      baseUrl
-    ).toString();
+    const fullUrl = requireServerServiceUrl({
+      servicePath: "v1/audio/transcriptions",
+      baseUrl: ENV.forgeApiUrl,
+      envName: "BUILT_IN_FORGE_API_URL",
+    });
 
     const response = await fetch(fullUrl, {
       method: "POST",

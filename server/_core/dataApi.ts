@@ -5,6 +5,7 @@
  *   })
  */
 import { ENV } from "./env";
+import { requireServerServiceUrl } from "./url-safe";
 
 export type DataApiCallOptions = {
   query?: Record<string, unknown>;
@@ -24,9 +25,11 @@ export async function callDataApi(
     throw new Error("BUILT_IN_FORGE_API_KEY is not configured");
   }
 
-  // Build the full URL by appending the service path to the base URL
-  const baseUrl = ENV.forgeApiUrl.endsWith("/") ? ENV.forgeApiUrl : `${ENV.forgeApiUrl}/`;
-  const fullUrl = new URL("webdevtoken.v1.WebDevService/CallApi", baseUrl).toString();
+  const fullUrl = requireServerServiceUrl({
+    servicePath: "webdevtoken.v1.WebDevService/CallApi",
+    baseUrl: ENV.forgeApiUrl,
+    envName: "BUILT_IN_FORGE_API_URL",
+  });
 
   const response = await fetch(fullUrl, {
     method: "POST",

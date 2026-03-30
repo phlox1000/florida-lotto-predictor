@@ -1,23 +1,10 @@
-const HOSTNAME_LIKE_RE = /^[a-z0-9.-]+\.[a-z]{2,}(:\d+)?(\/.*)?$/i;
-const ABSOLUTE_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
-
-function toCleanString(value: unknown): string {
-  if (typeof value !== "string") return "";
-  return value.trim();
-}
-
-function normalizeCandidate(candidate: string): string {
-  if (!candidate) return "";
-  if (ABSOLUTE_SCHEME_RE.test(candidate)) return candidate;
-  if (candidate.startsWith("//")) return `https:${candidate}`;
-  if (HOSTNAME_LIKE_RE.test(candidate)) return `https://${candidate}`;
-  return candidate;
-}
-
-export function parseBooleanFlag(value: unknown): boolean {
-  const normalized = toCleanString(value).toLowerCase();
-  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
-}
+import {
+  parseBooleanFlag,
+  safeBuildUrl as sharedSafeBuildUrl,
+  safeJoinPath as sharedSafeJoinPath,
+  safeRelativePath as sharedSafeRelativePath,
+  toCleanString,
+} from "@shared/url-safe";
 
 export function safeOrigin(fallback = "http://localhost"): string {
   if (typeof window !== "undefined" && typeof window.location?.origin === "string") {
@@ -31,36 +18,24 @@ export function safeBuildUrl(
   rawValue: unknown,
   base?: unknown
 ): URL | null {
-  const value = normalizeCandidate(toCleanString(rawValue));
-  if (!value) return null;
-
-  const normalizedBase = normalizeCandidate(toCleanString(base));
-  const origin = safeOrigin();
-
-  const parse = (candidate: string, maybeBase?: string): URL | null => {
-    try {
-      if (maybeBase) return new URL(candidate, maybeBase);
-      return new URL(candidate);
-    } catch {
-      return null;
-    }
-  };
-
-  return (
-    (normalizedBase ? parse(value, normalizedBase) : null) ||
-    parse(value) ||
-    parse(value, origin)
-  );
+  return sharedSafeBuildUrl(rawValue, {
+    base,
+    originFallback: safeOrigin(),
+  });
 }
 
 export function safeRelativePath(rawPath: unknown, fallback = "/"): string {
-  const cleaned = toCleanString(rawPath);
-  if (!cleaned) return fallback;
-  const url = safeBuildUrl(cleaned, safeOrigin());
-  if (!url) return fallback;
-  const currentOrigin = safeOrigin();
-  if (url.origin !== currentOrigin) return fallback;
-  return `${url.pathname}${url.search}${url.hash}` || fallback;
+  return sharedSafeRelativePath(rawPath, {
+    fallback,
+    currentOrigin: safeOrigin(),
+  });
+}
+
+export function safeJoinPath(base: unknown, path: unknown, fallback = "/"): string {
+  return sharedSafeJoinPath(base, path, {
+    fallback,
+    originFallback: safeOrigin(),
+  }) || fallback;
 }
 
 export function isAuthDisabled(): boolean {

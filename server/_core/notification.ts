@@ -1,5 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import { ENV } from "./env";
+import { requireServerServiceUrl } from "./url-safe";
 
 export type NotificationPayload = {
   title: string;
@@ -14,13 +15,11 @@ const isNonEmptyString = (value: unknown): value is string =>
   typeof value === "string" && value.trim().length > 0;
 
 const buildEndpointUrl = (baseUrl: string): string => {
-  const normalizedBase = baseUrl.endsWith("/")
-    ? baseUrl
-    : `${baseUrl}/`;
-  return new URL(
-    "webdevtoken.v1.WebDevService/SendNotification",
-    normalizedBase
-  ).toString();
+  return requireServerServiceUrl({
+    servicePath: "webdevtoken.v1.WebDevService/SendNotification",
+    baseUrl,
+    envName: "BUILT_IN_FORGE_API_URL",
+  });
 };
 
 const validatePayload = (input: NotificationPayload): NotificationPayload => {

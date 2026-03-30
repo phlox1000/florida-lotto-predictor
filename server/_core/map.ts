@@ -8,6 +8,7 @@
  */
 
 import { ENV } from "./env";
+import { requireServerServiceUrl } from "./url-safe";
 
 // ============================================================================
 // Configuration
@@ -58,8 +59,15 @@ export async function makeRequest<T = unknown>(
 ): Promise<T> {
   const { baseUrl, apiKey } = getMapsConfig();
 
-  // Construct full URL: baseUrl + /v1/maps/proxy + endpoint
-  const url = new URL(`${baseUrl}/v1/maps/proxy${endpoint}`);
+  // Construct full URL with validation.
+  const endpointPath = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+  const urlText = requireServerServiceUrl({
+    servicePath: `/v1/maps/proxy${endpointPath}`,
+    baseUrl,
+    envName: "BUILT_IN_FORGE_API_URL",
+  });
+  // Parsed from validated service URL text.
+  const url = new URL(urlText);
 
   // Add API key as query parameter (standard Google Maps API authentication)
   url.searchParams.append("key", apiKey);
