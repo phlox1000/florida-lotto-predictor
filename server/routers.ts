@@ -47,6 +47,7 @@ import {
   evaluateConfirmedScannedTicketsForDraw,
   type TicketOrigin,
 } from "./scanned-ticket-learning";
+import { normalizeConfirmScannedTicketError } from "./scan-confirm-errors";
 import {
   getDrawResults, insertDrawResult, getLatestDrawResults, getAllDrawResults, getDrawResultCount,
   insertPredictions, getUserPredictions, getRecentPredictions,
@@ -869,7 +870,7 @@ export const appRouter = router({
               confirmationStatus: "pending",
             });
           }
-          throw error;
+          throw normalizeConfirmScannedTicketError(error);
         }
       }),
 

@@ -17,20 +17,13 @@ import {
 import { FLORIDA_GAMES, GAME_TYPES, type GameType } from "@shared/lottery";
 import { createContext } from "./_core/context";
 import { getPersonalizationImpactSummary } from "./personalization-metrics";
-
-function guessImageMimeType(fileName: string): string {
-  const lower = fileName.toLowerCase();
-  if (lower.endsWith(".png")) return "image/png";
-  if (lower.endsWith(".webp")) return "image/webp";
-  if (lower.endsWith(".jpeg") || lower.endsWith(".jpg")) return "image/jpeg";
-  return "image/jpeg";
-}
-
-function stripDataUrlPrefix(maybeDataUrl: string): string {
-  const idx = maybeDataUrl.indexOf("base64,");
-  if (idx >= 0) return maybeDataUrl.slice(idx + "base64,".length);
-  return maybeDataUrl;
-}
+import {
+  decodeBase64PayloadToBuffer,
+  detectImageMimeType,
+  isPdfBuffer,
+  llmContentToText,
+  stripDataUrlPrefix,
+} from "./upload-validation";
 
 function parseIsoDateToUtcStart(value: string): number {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
@@ -95,10 +88,17 @@ export function registerUploadRoutes(app: Express) {
         return;
       }
 
-      const normalizedPdfBase64 = stripDataUrlPrefix(String(fileData));
-      const pdfBuffer = Buffer.from(normalizedPdfBase64, "base64");
+      const pdfBuffer = decodeBase64PayloadToBuffer(fileData);
+      if (!pdfBuffer) {
+        res.status(400).json({ error: "Invalid PDF payload. Please upload a valid PDF file." });
+        return;
+      }
       if (pdfBuffer.length > 16 * 1024 * 1024) {
         res.status(400).json({ error: "File too large. Maximum 16MB." });
+        return;
+      }
+      if (!isPdfBuffer(pdfBuffer)) {
+        res.status(400).json({ error: "Unsupported file type. Please upload a valid PDF file." });
         return;
       }
 
@@ -114,7 +114,7 @@ export function registerUploadRoutes(app: Express) {
         status: "processing",
       });
 
-      processPdfWithLLM(uploadId, fileUrl, normalizedPdfBase64, gameType || null)
+      processPdfWithLLM(uploadId, fileUrl, pdfBuffer.toString("base64"), gameType || null)
         .catch(err => console.error("[PDF Upload] Background processing failed:", err));
 
       res.json({
@@ -156,15 +156,22 @@ export function registerUploadRoutes(app: Express) {
         return;
       }
 
-      const base64 = stripDataUrlPrefix(String(fileData));
-      const imgBuffer = Buffer.from(base64, "base64");
+      const imgBuffer = decodeBase64PayloadToBuffer(fileData);
+      if (!imgBuffer) {
+        res.status(400).json({ error: "Invalid image payload. Please upload a valid ticket image." });
+        return;
+      }
       if (imgBuffer.length > 10 * 1024 * 1024) {
         res.status(400).json({ error: "Image too large. Maximum 10MB." });
         return;
       }
 
       // Upload image to S3 so the LLM can access it via URL
-      const mimeType = guessImageMimeType(fileName);
+      const mimeType = detectImageMimeType(imgBuffer);
+      if (!mimeType) {
+        res.status(400).json({ error: "Unsupported image format. Please upload PNG, JPEG, or WEBP." });
+        return;
+      }
       const fileKey = `ticket-scans/${ctx.user.id}-${nanoid(8)}-${fileName}`;
       const { url: fileUrl } = await storagePut(fileKey, imgBuffer, mimeType);
 
@@ -320,7 +327,9 @@ export function registerUploadRoutes(app: Express) {
       });
     } catch (err: any) {
       console.error("[Ticket Scan] Error:", err);
-      res.status(500).json({ error: err?.message || "Ticket scan failed" });
+      res.status(502).json({
+        error: "Failed to scan ticket image. Please try again with a clearer photo.",
+      });
     }
   });
 
@@ -662,9 +671,28 @@ async function parsePdfWithLLMFallback(
   });
 
   const content = result.choices[0]?.message?.content;
-  const text = typeof content === "string" ? content : "";
-  const parsed = JSON.parse(text);
-  return parsed.draws || [];
+  const text = llmContentToText(content);
+  if (!text) {
+    throw new Error("LLM returned empty response for PDF extraction");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("LLM returned invalid JSON for PDF extraction");
+  }
+  const draws = Array.isArray((parsed as any)?.draws) ? (parsed as any).draws : [];
+  return draws.map((draw: any) => ({
+    gameType: String(draw?.gameType || ""),
+    drawDate: String(draw?.drawDate || ""),
+    drawTime: String(draw?.drawTime || "evening").toLowerCase() === "midday" ? "midday" : "evening",
+    mainNumbers: Array.isArray(draw?.mainNumbers)
+      ? draw.mainNumbers.map((n: unknown) => Number(n)).filter(Number.isFinite)
+      : [],
+    specialNumbers: Array.isArray(draw?.specialNumbers)
+      ? draw.specialNumbers.map((n: unknown) => Number(n)).filter(Number.isFinite)
+      : [],
+  }));
 }
 
 // ─── Ticket Image → LLM Vision ─────────────────────────────────────────────
@@ -739,22 +767,34 @@ Important:
   });
 
   const content = result.choices[0]?.message?.content;
-  const text = typeof content === "string" ? content : "";
-  const parsed = JSON.parse(text) as {
+  const text = llmContentToText(content);
+  if (!text) {
+    throw new Error("LLM returned empty response for ticket extraction");
+  }
+  let parsed: {
     gameType: string;
     drawDate: string;
     drawTime: "midday" | "evening";
     mainNumbers: number[];
     specialNumbers: number[];
   };
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("LLM returned invalid JSON for ticket extraction");
+  }
 
   const mainNumbers = (parsed.mainNumbers || []).map((n: any) => Number(n)).filter((n: any) => Number.isFinite(n));
   const specialNumbers = (parsed.specialNumbers || []).map((n: any) => Number(n)).filter((n: any) => Number.isFinite(n));
+  const drawTime = String(parsed.drawTime || "").toLowerCase();
+  if (drawTime !== "midday" && drawTime !== "evening") {
+    throw new Error("LLM returned invalid draw time for ticket extraction");
+  }
 
   return {
     gameType: String(parsed.gameType),
     drawDate: String(parsed.drawDate),
-    drawTime: parsed.drawTime,
+    drawTime: drawTime as "midday" | "evening",
     mainNumbers,
     specialNumbers,
   };
