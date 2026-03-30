@@ -1,6 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { AuthLoginLink } from "@/components/AuthLoginLink";
 import { Button } from "@/components/ui/button";
-import { getLoginUrl } from "@/const";
 import { Dices, History, BarChart3, Shield, Brain, GitCompareArrows, Heart, Settings, Menu, X, Target, TrendingUp, Trophy, Cog, Swords } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
@@ -85,7 +85,7 @@ export default function Navbar() {
             </div>
           ) : (
             <Button size="sm" asChild className="bg-primary text-primary-foreground hover:bg-primary/90">
-              <a href={getLoginUrl()}>Sign In</a>
+              <AuthLoginLink>Sign In</AuthLoginLink>
             </Button>
           )}
         </div>
@@ -138,7 +138,7 @@ export default function Navbar() {
               </Button>
             ) : (
               <Button size="sm" asChild className="w-full bg-primary text-primary-foreground">
-                <a href={getLoginUrl()}>Sign In</a>
+                <AuthLoginLink>Sign In</AuthLoginLink>
               </Button>
             )}
           </div>

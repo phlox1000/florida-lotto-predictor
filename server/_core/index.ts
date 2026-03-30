@@ -8,6 +8,8 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
+import { ENV } from "./env";
+import { validateServerRuntimeConfigOnce } from "./runtime-config";
 import { serveStatic, setupVite } from "./vite";
 import { startAutoFetchSchedule } from "../cron";
 
@@ -31,9 +33,10 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
+  validateServerRuntimeConfigOnce();
   const app = express();
   const server = createServer(app);
-  const uploadsDir = process.env.LOCAL_UPLOADS_DIR || path.join("/tmp", "uploads");
+  const uploadsDir = ENV.localUploadsDir || path.join("/tmp", "uploads");
   if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
@@ -69,7 +72,7 @@ async function startServer() {
     console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
   }
 
-  server.listen(port, () => {
+  server.listen(port, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${port}/`);
     // Start the auto-fetch cron schedule
     startAutoFetchSchedule();

@@ -20,6 +20,18 @@ export function parseBooleanFlag(value: unknown): boolean {
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
+export function parseOptionalBooleanFlag(value: unknown): boolean | null {
+  const normalized = toCleanString(value).toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
+    return true;
+  }
+  if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") {
+    return false;
+  }
+  return null;
+}
+
 export function safeOrigin(
   rawOrigin?: unknown,
   fallback = "http://localhost"

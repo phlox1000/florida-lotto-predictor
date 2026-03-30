@@ -1,10 +1,9 @@
 import {
-  parseBooleanFlag,
   safeBuildUrl as sharedSafeBuildUrl,
   safeJoinPath as sharedSafeJoinPath,
   safeRelativePath as sharedSafeRelativePath,
-  toCleanString,
 } from "@shared/url-safe";
+import { getAuthDisableResolution } from "./runtime-config";
 
 export function safeOrigin(fallback = "http://localhost"): string {
   if (typeof window !== "undefined" && typeof window.location?.origin === "string") {
@@ -39,9 +38,7 @@ export function safeJoinPath(base: unknown, path: unknown, fallback = "/"): stri
 }
 
 export function isAuthDisabled(): boolean {
-  const viteFlag = parseBooleanFlag((import.meta as any)?.env?.VITE_DISABLE_AUTH);
-  const rawFlag = parseBooleanFlag((import.meta as any)?.env?.DISABLE_AUTH);
-  return viteFlag || rawFlag;
+  return getAuthDisableResolution().value;
 }
 
 // Backward-compatible aliases for modules already importing this naming.

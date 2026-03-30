@@ -5,8 +5,9 @@ import { httpBatchLink, TRPCClientError } from "@trpc/client";
 import { createRoot } from "react-dom/client";
 import superjson from "superjson";
 import App from "./App";
-import { getLoginUrl } from "./const";
+import { attemptLoginRedirect } from "./lib/auth-login";
 import { isAuthDisabled } from "./lib/safe-url";
+import { validateClientRuntimeConfigOnce } from "./lib/runtime-config";
 import "./index.css";
 
 const queryClient = new QueryClient();
@@ -20,7 +21,9 @@ const redirectToLoginIfUnauthorized = (error: unknown) => {
   if (!isUnauthorized) return;
   if (isAuthDisabled()) return;
 
-  window.location.href = getLoginUrl();
+  if (!attemptLoginRedirect()) {
+    console.warn("[AUTH] Unauthorized redirect suppressed because login is unavailable");
+  }
 };
 
 queryClient.getQueryCache().subscribe(event => {
@@ -53,6 +56,8 @@ const trpcClient = trpc.createClient({
     }),
   ],
 });
+
+validateClientRuntimeConfigOnce();
 
 createRoot(document.getElementById("root")!).render(
   <trpc.Provider client={trpcClient} queryClient={queryClient}>

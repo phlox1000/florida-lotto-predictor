@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseBooleanFlag,
+  parseOptionalBooleanFlag,
   safeBuildUrl,
   safeJoinPath,
   safeOrigin,
@@ -15,6 +16,13 @@ describe("shared/server URL safety helpers", () => {
     expect(parseBooleanFlag("yes")).toBe(true);
     expect(parseBooleanFlag("false")).toBe(false);
     expect(parseBooleanFlag(undefined)).toBe(false);
+  });
+
+  it("parses optional boolean flags for precedence resolution", () => {
+    expect(parseOptionalBooleanFlag("true")).toBe(true);
+    expect(parseOptionalBooleanFlag("false")).toBe(false);
+    expect(parseOptionalBooleanFlag("")).toBeNull();
+    expect(parseOptionalBooleanFlag("unexpected")).toBeNull();
   });
 
   it("safeBuildUrl handles malformed/missing input without throwing", () => {

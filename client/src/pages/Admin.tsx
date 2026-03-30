@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { trpc } from "@/lib/trpc";
 import { FLORIDA_GAMES, GAME_TYPES, type GameType } from "@shared/lottery";
-import { getLoginUrl } from "@/const";
+import { AuthLoginLink } from "@/components/AuthLoginLink";
 import { Shield, Plus, Download, Database, Trophy, LogIn, RefreshCw, History, BarChart3, Activity, Upload, FileText, CheckCircle, XCircle, Loader2, Clock, Zap, Timer } from "lucide-react";
 import { useState, useMemo, useRef } from "react";
 import { toast } from "sonner";
@@ -671,7 +671,7 @@ export default function Admin() {
               <LogIn className="w-12 h-12 mx-auto mb-4 text-muted-foreground opacity-40" />
               <h2 className="text-xl font-semibold mb-2">Sign in required</h2>
               <p className="text-sm text-muted-foreground mb-6">Admin access is required to manage draw results.</p>
-              <Button asChild className="bg-primary text-primary-foreground"><a href={getLoginUrl()}>Sign In</a></Button>
+              <Button asChild className="bg-primary text-primary-foreground"><AuthLoginLink>Sign In</AuthLoginLink></Button>
             </>
           ) : (
             <>

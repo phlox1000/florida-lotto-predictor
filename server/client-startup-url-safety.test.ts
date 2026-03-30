@@ -35,6 +35,23 @@ describe("client startup URL safety", () => {
     expect(url).toContain("redirectUri=");
   });
 
+  it("runtime config marks malformed oauth portal URL as unavailable", async () => {
+    vi.stubEnv("VITE_OAUTH_PORTAL_URL", "://bad-url");
+    vi.stubEnv("VITE_DISABLE_AUTH", "false");
+    vi.stubEnv("DISABLE_AUTH", "false");
+    const cfg = await import("../client/src/lib/runtime-config");
+    const resolved = cfg.resolveClientAuthConfig(
+      {
+        VITE_OAUTH_PORTAL_URL: "://bad-url",
+        VITE_DISABLE_AUTH: "false",
+        DISABLE_AUTH: "false",
+      },
+      vi.fn()
+    );
+    expect(resolved.canStartLoginFlow).toBe(false);
+    expect(resolved.loginUnavailableReason).toBe("malformed_oauth_portal_url");
+  });
+
   it("bypasses OAuth URL construction when auth is disabled", async () => {
     vi.stubEnv("VITE_OAUTH_PORTAL_URL", "://bad-url");
     vi.stubEnv("VITE_DISABLE_AUTH", "true");
@@ -44,7 +61,7 @@ describe("client startup URL safety", () => {
 
   it("also bypasses OAuth URL construction with DISABLE_AUTH compatibility flag", async () => {
     vi.stubEnv("VITE_OAUTH_PORTAL_URL", "://bad-url");
-    vi.stubEnv("VITE_DISABLE_AUTH", "false");
+    vi.stubEnv("VITE_DISABLE_AUTH", "");
     vi.stubEnv("DISABLE_AUTH", "true");
     const mod = await import("../client/src/const");
     expect(mod.getLoginUrl()).toBe("/");
