@@ -78,4 +78,29 @@ describe("openai-ocr module", () => {
       specialNumbers: [],
     });
   });
+
+  it("fails safely when OpenAI returns malformed JSON", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-key");
+    mockResponsesCreate.mockResolvedValue({
+      id: "resp_test_ticket_bad_json",
+      output: [
+        {
+          content: [
+            {
+              type: "output_text",
+              text: "{ this is not valid json",
+            },
+          ],
+        },
+      ],
+    });
+
+    const mod = await import("./_core/openai-ocr");
+    await expect(
+      mod.extractTicketFromImageWithOpenAI({
+        imageUrl: "https://example.com/ticket.png",
+        gameTypeListHint: "fantasy_5: Fantasy 5",
+      })
+    ).rejects.toThrow();
+  });
 });
