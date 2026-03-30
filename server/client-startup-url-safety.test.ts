@@ -78,4 +78,11 @@ describe("client startup URL safety", () => {
     const hook = await import("../client/src/_core/hooks/useAuth");
     expect(typeof hook.useAuth).toBe("function");
   });
+
+  it("redirect path resolver does not compute oauth url when auth is disabled", async () => {
+    vi.stubEnv("VITE_DISABLE_AUTH", "true");
+    vi.stubEnv("DISABLE_AUTH", "false");
+    const hook = await import("../client/src/_core/hooks/useAuth");
+    expect(hook.resolveAuthRedirectPath(undefined, true)).toBe("/");
+  });
 });

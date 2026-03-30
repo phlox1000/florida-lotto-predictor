@@ -9,10 +9,19 @@ type UseAuthOptions = {
   redirectPath?: string;
 };
 
+export function resolveAuthRedirectPath(
+  options: UseAuthOptions | undefined,
+  authDisabled: boolean
+): string {
+  if (options?.redirectPath) return options.redirectPath;
+  if (authDisabled) return "/";
+  return getLoginUrl();
+}
+
 export function useAuth(options?: UseAuthOptions) {
   const authDisabled = isAuthDisabled();
-  const { redirectOnUnauthenticated = false, redirectPath = getLoginUrl() } =
-    options ?? {};
+  const redirectOnUnauthenticated = options?.redirectOnUnauthenticated ?? false;
+  const redirectPath = resolveAuthRedirectPath(options, authDisabled);
   const utils = trpc.useUtils();
 
   const meQuery = trpc.auth.me.useQuery(undefined, {
