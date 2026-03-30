@@ -24,6 +24,7 @@ export type ResolvedServerAuthConfig = {
   forgeApiUrlIsValid: boolean;
   llmApiUrl: string | null;
   llmApiUrlIsValid: boolean;
+  openAiApiKeyPresent: boolean;
 };
 
 export function resolveServerAuthConfig(
@@ -38,6 +39,7 @@ export function resolveServerAuthConfig(
   const oauthServerUrl = toCleanString(env.OAUTH_SERVER_URL) || null;
   const forgeApiUrl = toCleanString(env.BUILT_IN_FORGE_API_URL) || null;
   const llmApiUrl = toCleanString(env.LLM_API_URL) || null;
+  const openAiApiKeyPresent = toCleanString(env.OPENAI_API_KEY).length > 0;
 
   const oauthServerUrlIsValid = oauthServerUrl
     ? Boolean(safeBuildUrl("webdev.v1.WebDevAuthPublicService/ExchangeToken", { base: oauthServerUrl }))
@@ -71,6 +73,12 @@ export function resolveServerAuthConfig(
     });
   }
 
+  if (!openAiApiKeyPresent) {
+    logger(
+      "[CONFIG] Missing OPENAI_API_KEY; OpenAI OCR extraction paths will fail until configured."
+    );
+  }
+
   return {
     authDisabled,
     authDisableSource,
@@ -80,6 +88,7 @@ export function resolveServerAuthConfig(
     forgeApiUrlIsValid,
     llmApiUrl,
     llmApiUrlIsValid,
+    openAiApiKeyPresent,
   };
 }
 

@@ -1,7 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { nanoid } from "nanoid";
 import { storagePut } from "./storage";
-import { invokeLLM } from "./_core/llm";
 import { ENV } from "./_core/env";
 import {
   insertPdfUpload,
@@ -18,10 +17,13 @@ import { FLORIDA_GAMES, GAME_TYPES, type GameType } from "@shared/lottery";
 import { createContext } from "./_core/context";
 import { getPersonalizationImpactSummary } from "./personalization-metrics";
 import {
+  extractPdfDrawsWithOpenAI,
+  extractTicketFromImageWithOpenAI,
+} from "./_core/openai-ocr";
+import {
   decodeBase64PayloadToBuffer,
   detectImageMimeType,
   isPdfBuffer,
-  llmContentToText,
   stripDataUrlPrefix,
 } from "./upload-validation";
 
@@ -534,28 +536,25 @@ export async function processPdfWithLLM(
       console.log(`[PDF Upload] Deterministic parser found ${draws.length} draws`);
     }
 
-    // Step 4: Optional LLM fallback only when deterministic parsing found nothing
+    // Step 4: Optional OpenAI OCR fallback only when deterministic parsing found nothing
     let fallbackNote: string | null = null;
     if (draws.length === 0) {
-      const hasLlmCredentials = Boolean(
-        ENV.llmApiUrl &&
-        ENV.llmApiUrl.trim().length > 0 &&
-        ENV.llmApiKey &&
-        ENV.llmApiKey.trim().length > 0
+      const hasOpenAiCredentials = Boolean(
+        ENV.openAiApiKey && ENV.openAiApiKey.trim().length > 0
       );
-      if (!hasLlmCredentials) {
-        fallbackNote = "LLM fallback skipped: missing LLM credentials";
-        console.warn("[PDF Upload] Skipping LLM fallback - missing credentials");
+      if (!hasOpenAiCredentials) {
+        fallbackNote = "OpenAI OCR fallback skipped: missing OPENAI_API_KEY";
+        console.warn("[PDF Upload] Skipping OpenAI OCR fallback - missing OPENAI_API_KEY");
       } else if (pdfText.length >= 50000) {
-        fallbackNote = "LLM fallback skipped: extracted text is too large";
-        console.warn("[PDF Upload] Skipping LLM fallback - extracted text too large");
+        fallbackNote = "OpenAI OCR fallback skipped: extracted text is too large";
+        console.warn("[PDF Upload] Skipping OpenAI OCR fallback - extracted text too large");
       } else {
         try {
-          console.log("[PDF Upload] Falling back to LLM for unstructured PDF...");
+          console.log("[PDF Upload] Falling back to OpenAI OCR for unstructured PDF...");
           draws = await parsePdfWithLLMFallback(fileUrl, gameType);
         } catch (fallbackErr) {
-          fallbackNote = "LLM fallback failed";
-          console.warn("[PDF Upload] LLM fallback failed; completing without extracted draws:", fallbackErr);
+          fallbackNote = "OpenAI OCR fallback failed";
+          console.warn("[PDF Upload] OpenAI OCR fallback failed; completing without extracted draws:", fallbackErr);
         }
       }
     }
@@ -608,91 +607,24 @@ export async function processPdfWithLLM(
   }
 }
 
-/** LLM fallback for small/unstructured PDFs */
+/** OpenAI OCR fallback for small/unstructured PDFs */
 async function parsePdfWithLLMFallback(
   fileUrl: string,
   gameType: string | null
 ): Promise<Array<{ gameType: string; drawDate: string; drawTime: string; mainNumbers: number[]; specialNumbers: number[] }>> {
-  const gameHint = gameType && FLORIDA_GAMES[gameType as GameType]
-    ? `This PDF contains ${FLORIDA_GAMES[gameType as GameType].name} results.`
-    : "This PDF contains Florida Lottery winning number results.";
-
   const gameTypeList = GAME_TYPES.map(gt => {
     const cfg = FLORIDA_GAMES[gt];
     return `${gt}: ${cfg.name} (${cfg.mainCount} main numbers${cfg.isDigitGame ? " digits 0-9" : ` 1-${cfg.mainMax}`}${cfg.specialCount > 0 ? `, ${cfg.specialCount} special 1-${cfg.specialMax}` : ""})`;
   }).join("\n");
+  const gameHint = gameType && FLORIDA_GAMES[gameType as GameType]
+    ? `Expected game (if clearly visible): ${FLORIDA_GAMES[gameType as GameType].name}.`
+    : "Game type must be inferred from the PDF content.";
 
-  const result = await invokeLLM({
-    messages: [
-      {
-        role: "system",
-        content: `You are a precise data extraction assistant. Extract ALL lottery drawing results from the provided PDF document. Return ONLY valid JSON. Today is ${new Date().toISOString().split("T")[0]}.\nAvailable game types:\n${gameTypeList}`
-      },
-      {
-        role: "user",
-        content: [
-          { type: "file_url" as const, file_url: { url: fileUrl, mime_type: "application/pdf" as const } },
-          {
-            type: "text" as const,
-            text: `${gameHint}\nExtract ALL lottery drawing results. Return JSON: { "draws": [{ "gameType": "string", "drawDate": "YYYY-MM-DD", "mainNumbers": [numbers], "specialNumbers": [numbers or empty], "drawTime": "evening" }] }`,
-          },
-        ],
-      },
-    ],
-    response_format: {
-      type: "json_schema",
-      json_schema: {
-        name: "pdf_lottery_draws",
-        strict: true,
-        schema: {
-          type: "object",
-          properties: {
-            draws: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  gameType: { type: "string" },
-                  drawDate: { type: "string" },
-                  mainNumbers: { type: "array", items: { type: "number" } },
-                  specialNumbers: { type: "array", items: { type: "number" } },
-                  drawTime: { type: "string" },
-                },
-                required: ["gameType", "drawDate", "mainNumbers", "specialNumbers", "drawTime"],
-                additionalProperties: false,
-              },
-            },
-          },
-          required: ["draws"],
-          additionalProperties: false,
-        },
-      },
-    },
+  return extractPdfDrawsWithOpenAI({
+    pdfUrl: fileUrl,
+    gameHint,
+    gameTypeListHint: gameTypeList,
   });
-
-  const content = result.choices[0]?.message?.content;
-  const text = llmContentToText(content);
-  if (!text) {
-    throw new Error("LLM returned empty response for PDF extraction");
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error("LLM returned invalid JSON for PDF extraction");
-  }
-  const draws = Array.isArray((parsed as any)?.draws) ? (parsed as any).draws : [];
-  return draws.map((draw: any) => ({
-    gameType: String(draw?.gameType || ""),
-    drawDate: String(draw?.drawDate || ""),
-    drawTime: String(draw?.drawTime || "evening").toLowerCase() === "midday" ? "midday" : "evening",
-    mainNumbers: Array.isArray(draw?.mainNumbers)
-      ? draw.mainNumbers.map((n: unknown) => Number(n)).filter(Number.isFinite)
-      : [],
-    specialNumbers: Array.isArray(draw?.specialNumbers)
-      ? draw.specialNumbers.map((n: unknown) => Number(n)).filter(Number.isFinite)
-      : [],
-  }));
 }
 
 // ─── Ticket Image → LLM Vision ─────────────────────────────────────────────
@@ -712,90 +644,9 @@ async function processTicketImageWithLLM(
     return `${gt}: ${cfg.name} (${cfg.mainCount} main numbers${cfg.isDigitGame ? " digits 0-9" : ` 1-${cfg.mainMax}`}${cfg.specialCount > 0 ? `, ${cfg.specialCount} special 1-${cfg.specialMax}` : ""})`;
   }).join("\n");
 
-  const result = await invokeLLM({
-    messages: [
-      {
-        role: "system",
-        content: `You are a precise data extraction assistant. Extract the Florida Lottery ticket numbers from the provided image. Return ONLY valid JSON.
-Today is ${new Date().toISOString().split("T")[0]}.
-Available game types:
-${gameTypeList}`,
-      },
-      {
-        role: "user",
-        content: [
-          {
-            type: "image_url" as const,
-            image_url: { url: fileUrl, detail: "high" },
-          },
-          {
-            type: "text" as const,
-            text: `From this ticket image, determine:
-1. The game type (one of: ${GAME_TYPES.join(", ")})
-2. The draw date (YYYY-MM-DD)
-3. Whether the draw is midday or evening (drawTime must be either "midday" or "evening")
-4. The main number set (mainNumbers must have the exact count required by the selected game)
-5. Any special/bonus number set (specialNumbers must have the exact count required by the selected game, or be [] if that game has no special numbers)
-Return JSON with exactly:
-{ "gameType": "string", "drawDate": "YYYY-MM-DD", "drawTime": "midday" | "evening", "mainNumbers": number[], "specialNumbers": number[] }
-Important:
-- mainNumbers length must match the selected game's mainCount.
-- specialNumbers length must match the selected game's specialCount (or be [] if specialCount is 0).`,
-          },
-        ],
-      },
-    ],
-    response_format: {
-      type: "json_schema",
-      json_schema: {
-        name: "ticket_extraction",
-        strict: true,
-        schema: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            gameType: { type: "string" },
-            drawDate: { type: "string" },
-            drawTime: { type: "string", enum: ["midday", "evening"] },
-            mainNumbers: { type: "array", items: { type: "number" } },
-            specialNumbers: { type: "array", items: { type: "number" } },
-          },
-          required: ["gameType", "drawDate", "drawTime", "mainNumbers", "specialNumbers"],
-        },
-      },
-    },
+  const parsed = await extractTicketFromImageWithOpenAI({
+    imageUrl: fileUrl,
+    gameTypeListHint: gameTypeList,
   });
-
-  const content = result.choices[0]?.message?.content;
-  const text = llmContentToText(content);
-  if (!text) {
-    throw new Error("LLM returned empty response for ticket extraction");
-  }
-  let parsed: {
-    gameType: string;
-    drawDate: string;
-    drawTime: "midday" | "evening";
-    mainNumbers: number[];
-    specialNumbers: number[];
-  };
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error("LLM returned invalid JSON for ticket extraction");
-  }
-
-  const mainNumbers = (parsed.mainNumbers || []).map((n: any) => Number(n)).filter((n: any) => Number.isFinite(n));
-  const specialNumbers = (parsed.specialNumbers || []).map((n: any) => Number(n)).filter((n: any) => Number.isFinite(n));
-  const drawTime = String(parsed.drawTime || "").toLowerCase();
-  if (drawTime !== "midday" && drawTime !== "evening") {
-    throw new Error("LLM returned invalid draw time for ticket extraction");
-  }
-
-  return {
-    gameType: String(parsed.gameType),
-    drawDate: String(parsed.drawDate),
-    drawTime: drawTime as "midday" | "evening",
-    mainNumbers,
-    specialNumbers,
-  };
+  return parsed;
 }

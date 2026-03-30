@@ -41,6 +41,24 @@ describe("server runtime config validation", () => {
     );
   });
 
+  it("warns for missing OPENAI_API_KEY", () => {
+    const warn = vi.fn();
+    resolveServerAuthConfig(
+      {
+        DISABLE_AUTH: "true",
+        OAUTH_SERVER_URL: "",
+        BUILT_IN_FORGE_API_URL: "",
+        LLM_API_URL: "",
+        OPENAI_API_KEY: "",
+      } as NodeJS.ProcessEnv,
+      warn
+    );
+
+    expect(warn).toHaveBeenCalledWith(
+      "[CONFIG] Missing OPENAI_API_KEY; OpenAI OCR extraction paths will fail until configured."
+    );
+  });
+
   it("logs auth disabled only once across repeated startup validation", () => {
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
 
