@@ -49,6 +49,8 @@ async function startServer() {
   // PDF upload route (needs raw body, registered before tRPC)
   const { registerUploadRoutes } = await import("../upload");
   registerUploadRoutes(app);
+  const { registerOpenAiOcrProofRoute } = await import("../openai-ocr-proof-route");
+  registerOpenAiOcrProofRoute(app);
 
   // tRPC API
   app.use(
