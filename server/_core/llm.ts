@@ -1,4 +1,5 @@
 import { ENV } from "./env";
+import { requireServerServiceUrl } from "./url-safe";
 
 export type Role = "system" | "user" | "assistant" | "tool" | "function";
 
@@ -213,7 +214,11 @@ const resolveApiUrl = () => {
   if (!ENV.llmApiUrl || ENV.llmApiUrl.trim().length === 0) {
     throw new Error("LLM_API_URL is not configured");
   }
-  return `${ENV.llmApiUrl.replace(/\/$/, "")}/v1/chat/completions`;
+  return requireServerServiceUrl({
+    servicePath: "v1/chat/completions",
+    baseUrl: ENV.llmApiUrl,
+    envName: "LLM_API_URL",
+  });
 };
 
 const assertApiKey = () => {
