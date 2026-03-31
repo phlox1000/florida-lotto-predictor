@@ -89,3 +89,6 @@ For auth-disabled diagnostics/internal mode:
 - `VITE_DISABLE_AUTH=true`
 - `DISABLE_AUTH=true`
 - OAuth URL envs can be unset, app still loads.
+- For session signing compatibility in backend auth-disabled mode, set one of:
+  - `JWT_SECRET=<strong-random-secret>` (preferred)
+  - `SESSION_SECRET=<strong-random-secret>` (compatibility fallback)
