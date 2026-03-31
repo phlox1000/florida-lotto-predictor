@@ -89,6 +89,8 @@ For auth-disabled diagnostics/internal mode:
 - `VITE_DISABLE_AUTH=true`
 - `DISABLE_AUTH=true`
 - OAuth URL envs can be unset, app still loads.
+- Diagnostic mock role defaults to `admin` so Admin/PDF/testing surfaces remain visible.
+- Optional override: set `VITE_MOCK_USER_ROLE=user` (frontend) and/or `MOCK_USER_ROLE=user` (server) to intentionally hide admin surfaces.
 - For session signing compatibility in backend auth-disabled mode, set one of:
   - `JWT_SECRET=<strong-random-secret>` (preferred)
   - `SESSION_SECRET=<strong-random-secret>` (compatibility fallback)

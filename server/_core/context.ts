@@ -16,13 +16,18 @@ export type TrpcContext = {
 function buildMockUser(): User {
   const now = new Date();
   const mockOpenId = process.env.MOCK_USER_OPENID || "mock-user";
+  const configuredRole = String(
+    process.env.MOCK_USER_ROLE ?? process.env.VITE_MOCK_USER_ROLE ?? ""
+  ).toLowerCase();
+  // In auth-disabled diagnostics, default to admin so admin/test surfaces remain reachable.
+  const role: "admin" | "user" = configuredRole === "user" ? "user" : "admin";
   return {
     id: Number(process.env.MOCK_USER_ID || 1),
     openId: mockOpenId,
     name: process.env.MOCK_USER_NAME || "Mock User",
     email: process.env.MOCK_USER_EMAIL || "mock@example.com",
     loginMethod: "mock",
-    role: process.env.MOCK_USER_ROLE === "admin" ? "admin" : "user",
+    role,
     createdAt: now,
     updatedAt: now,
     lastSignedIn: now,

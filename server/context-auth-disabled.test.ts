@@ -33,6 +33,30 @@ describe("createContext with DISABLE_AUTH", () => {
 
     expect(ctx.user).not.toBeNull();
     expect(ctx.user?.openId).toBe("mock-user");
+    expect(ctx.user?.role).toBe("admin");
     expect(createSessionTokenMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("defaults diagnostic mock role to admin when unset", async () => {
+    vi.stubEnv("DISABLE_AUTH", "true");
+
+    const { createContext } = await import("./_core/context");
+    const req = { headers: {} } as any;
+    const res = { cookie: cookieMock } as any;
+    const ctx = await createContext({ req, res } as any);
+
+    expect(ctx.user?.role).toBe("admin");
+  });
+
+  it("honors explicit diagnostic mock role override to user", async () => {
+    vi.stubEnv("DISABLE_AUTH", "true");
+    vi.stubEnv("MOCK_USER_ROLE", "user");
+
+    const { createContext } = await import("./_core/context");
+    const req = { headers: {} } as any;
+    const res = { cookie: cookieMock } as any;
+    const ctx = await createContext({ req, res } as any);
+
+    expect(ctx.user?.role).toBe("user");
   });
 });
