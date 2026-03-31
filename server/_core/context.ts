@@ -48,15 +48,25 @@ export async function createContext(
 
     if (!hasSessionCookie) {
       // Keep downstream auth shape stable by issuing a normal signed session cookie.
-      const sessionToken = await sdk.createSessionToken(mockUser.openId, {
-        name: mockUser.name || "",
-        expiresInMs: ONE_YEAR_MS,
-      });
-      const cookieOptions = getSessionCookieOptions(opts.req);
-      opts.res.cookie(COOKIE_NAME, sessionToken, {
-        ...cookieOptions,
-        maxAge: ONE_YEAR_MS,
-      });
+      // In auth-disabled mode, session signing must never block request handling.
+      try {
+        const sessionToken = await sdk.createSessionToken(mockUser.openId, {
+          name: mockUser.name || "",
+          expiresInMs: ONE_YEAR_MS,
+        });
+        const cookieOptions = getSessionCookieOptions(opts.req);
+        opts.res.cookie(COOKIE_NAME, sessionToken, {
+          ...cookieOptions,
+          maxAge: ONE_YEAR_MS,
+        });
+      } catch (error) {
+        console.warn(
+          "[AUTH] Failed to issue mock session cookie in DISABLE_AUTH mode; continuing with mock user.",
+          {
+            message: error instanceof Error ? error.message : String(error),
+          }
+        );
+      }
     }
 
     return {
