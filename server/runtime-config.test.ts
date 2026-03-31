@@ -59,6 +59,13 @@ describe("server runtime config validation", () => {
     );
   });
 
+  it("uses SESSION_SECRET fallback for cookie secret when JWT_SECRET missing", async () => {
+    vi.stubEnv("JWT_SECRET", "");
+    vi.stubEnv("SESSION_SECRET", "render-session-secret");
+    const envMod = await import("./_core/env");
+    expect(envMod.ENV.cookieSecret).toBe("render-session-secret");
+  });
+
   it("logs auth disabled only once across repeated startup validation", () => {
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
 
