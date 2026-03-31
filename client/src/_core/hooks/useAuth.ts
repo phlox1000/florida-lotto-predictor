@@ -9,6 +9,15 @@ type UseAuthOptions = {
   redirectPath?: string;
 };
 
+export function resolveDiagnosticMockRole(
+  env: Record<string, unknown> = import.meta.env as Record<string, unknown>
+): "admin" | "user" {
+  const configuredRole = String(env.VITE_MOCK_USER_ROLE ?? "").toLowerCase();
+  if (configuredRole === "user") return "user";
+  // In auth-disabled diagnostics, default to admin so testing surfaces stay visible.
+  return "admin";
+}
+
 export function resolveAuthRedirectPath(
   options: UseAuthOptions | undefined,
   authDisabled: boolean
@@ -61,7 +70,7 @@ export function useAuth(options?: UseAuthOptions) {
           openId: String(import.meta.env.VITE_MOCK_USER_OPENID || "mock-user"),
           name: String(import.meta.env.VITE_MOCK_USER_NAME || "Guest User"),
           email: import.meta.env.VITE_MOCK_USER_EMAIL || null,
-          role: import.meta.env.VITE_MOCK_USER_ROLE === "admin" ? "admin" : "user",
+          role: resolveDiagnosticMockRole(import.meta.env as Record<string, unknown>),
           loginMethod: "mock",
           createdAt: new Date(),
           updatedAt: new Date(),
