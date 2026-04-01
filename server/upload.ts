@@ -517,9 +517,23 @@ export async function processPdfWithLLM(
     let pdfText = "";
     try {
       const pdfParseModule = await import("pdf-parse") as any;
-      const pdfParse = pdfParseModule.default || pdfParseModule;
-      const pdfData = await pdfParse(pdfBuffer);
-      pdfText = pdfData.text || "";
+      if (typeof pdfParseModule?.default === "function") {
+        const pdfData = await pdfParseModule.default(pdfBuffer);
+        pdfText = typeof pdfData?.text === "string" ? pdfData.text : "";
+      } else if (typeof pdfParseModule?.PDFParse === "function") {
+        // pdf-parse v2+ exports PDFParse class instead of default function.
+        const parser = new pdfParseModule.PDFParse({ data: pdfBuffer });
+        try {
+          const pdfData = await parser.getText();
+          pdfText = typeof pdfData?.text === "string" ? pdfData.text : "";
+        } finally {
+          if (typeof parser.destroy === "function") {
+            await parser.destroy();
+          }
+        }
+      } else {
+        throw new Error("Unsupported pdf-parse module shape");
+      }
     } catch (parseErr) {
       console.error("[PDF Upload] pdf-parse failed, will try LLM fallback:", parseErr);
     }

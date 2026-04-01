@@ -20,8 +20,16 @@ vi.mock("./db", () => ({
   evaluatePurchasedTicketsAgainstDraw: vi.fn(),
 }));
 
+const { mockPdfParseDestroy } = vi.hoisted(() => ({
+  mockPdfParseDestroy: vi.fn(),
+}));
+
 vi.mock("pdf-parse", () => ({
   default: mockPdfParse,
+  PDFParse: vi.fn().mockImplementation(() => ({
+    getText: mockPdfParse,
+    destroy: mockPdfParseDestroy,
+  })),
 }));
 
 vi.mock("./storage", () => ({
@@ -41,6 +49,7 @@ import { processPdfWithLLM } from "./upload";
 describe("processPdfWithLLM duplicate handling", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPdfParseDestroy.mockResolvedValue(undefined);
     mockPdfParse.mockResolvedValue({
       text: "01/02/2024\nEVENING\n1\n2\n3\n4\n5\n",
     });
