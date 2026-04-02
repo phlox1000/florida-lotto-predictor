@@ -32,12 +32,29 @@ export function registerOpenAiOcrProofRoute(app: Express) {
   const safeStatusPayload = {
     hasOpenAiApiKey: Boolean(ENV.openAiApiKey),
     model: ENV.openAiModel,
+    openAiBaseUrlConfigured: Boolean(process.env.OPENAI_BASE_URL),
     routeMounted: true,
   };
 
+  const buildSanitizedTrace = () =>
+    getRecentOpenAiOcrLogs(20).map(record => {
+      const detail = (record.detail || {}) as Record<string, unknown>;
+      return {
+        stage: record.stage,
+        timestamp: record.timestamp,
+        model: record.model,
+        endpoint: typeof detail.endpoint === "string" ? detail.endpoint : null,
+        responseId: typeof detail.responseId === "string" ? detail.responseId : null,
+        errorMessage: typeof detail.message === "string" ? detail.message : null,
+      };
+    });
+
   // Always expose this safe status endpoint, including production.
   app.get("/api/debug/openai-ocr-proof", (_req: Request, res: Response) => {
-    res.json(safeStatusPayload);
+    res.json({
+      ...safeStatusPayload,
+      recentOcrTrace: buildSanitizedTrace(),
+    });
   });
 
   app.post("/api/debug/openai-ocr-proof", async (req: Request, res: Response) => {
