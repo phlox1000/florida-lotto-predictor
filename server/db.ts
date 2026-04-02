@@ -74,8 +74,10 @@ export function getDatabaseDiagnostics() {
 }
 
 export async function probeDatabaseConnection() {
-  const db = await getDb();
-  if (!db) {
+  if (!_pool) {
+    await getDb();
+  }
+  if (!_pool) {
     return {
       dbConnected: false,
       lastDbError: _dbLastError ?? "Database not initialized",
@@ -83,7 +85,7 @@ export async function probeDatabaseConnection() {
   }
 
   try {
-    await db.execute(sql`SELECT 1 AS ok`);
+    await _pool.query("SELECT 1 AS ok");
     _dbLastError = null;
     return {
       dbConnected: true,
