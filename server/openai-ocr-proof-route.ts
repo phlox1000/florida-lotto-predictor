@@ -5,6 +5,7 @@ import {
   extractTicketFromImageWithOpenAI,
   getRecentOpenAiOcrLogs,
 } from "./_core/openai-ocr";
+import { getDatabaseDiagnostics, probeDatabaseConnection } from "./db";
 import { FLORIDA_GAMES, GAME_TYPES } from "@shared/lottery";
 
 function buildGameTypeHint(): string {
@@ -59,6 +60,16 @@ export function registerOpenAiOcrProofRoute(app: Express) {
     res.json({
       ...safeStatusPayload,
       recentOcrTrace: buildSanitizedTrace(),
+    });
+  });
+
+  app.get("/api/debug/db-health", async (_req: Request, res: Response) => {
+    const diagnostics = getDatabaseDiagnostics();
+    const probe = await probeDatabaseConnection();
+    res.json({
+      ...diagnostics,
+      dbConnected: probe.dbConnected,
+      lastDbError: probe.lastDbError,
     });
   });
 

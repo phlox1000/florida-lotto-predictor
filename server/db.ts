@@ -24,13 +24,120 @@ import { ENV } from './_core/env';
 import { FLORIDA_GAMES, type GameType } from '@shared/lottery';
 
 let _db: ReturnType<typeof drizzle> | null = null;
+let _dbInitAttempted = false;
+let _dbMissingEnvLogged = false;
+let _dbLastError: string | null = null;
+
+type DatabaseUrlShape = {
+  scheme: string | null;
+  hostPresent: boolean;
+  portPresent: boolean;
+  databasePresent: boolean;
+  sslMode: string | null;
+  parseError: string | null;
+};
+
+function sanitizeDbError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+function getDatabaseUrlShape(): DatabaseUrlShape {
+  const raw = String(process.env.DATABASE_URL || "").trim();
+  if (!raw) {
+    return {
+      scheme: null,
+      hostPresent: false,
+      portPresent: false,
+      databasePresent: false,
+      sslMode: null,
+      parseError: null,
+    };
+  }
+  try {
+    const url = new URL(raw);
+    const dbName = url.pathname.replace(/^\/+/, "");
+    return {
+      scheme: url.protocol.replace(/:$/, "") || null,
+      hostPresent: Boolean(url.hostname),
+      portPresent: Boolean(url.port),
+      databasePresent: dbName.length > 0,
+      sslMode: url.searchParams.get("sslmode") || url.searchParams.get("ssl") || null,
+      parseError: null,
+    };
+  } catch (error) {
+    return {
+      scheme: null,
+      hostPresent: false,
+      portPresent: false,
+      databasePresent: false,
+      sslMode: null,
+      parseError: sanitizeDbError(error),
+    };
+  }
+}
+
+export function getDatabaseDiagnostics() {
+  const shape = getDatabaseUrlShape();
+  return {
+    dbDriver: "drizzle/mysql2",
+    dbConfigured: Boolean(String(process.env.DATABASE_URL || "").trim()),
+    dbInitAttempted: _dbInitAttempted,
+    dbInitialized: Boolean(_db),
+    dbUrlShape: shape,
+    lastDbError: _dbLastError,
+  };
+}
+
+export async function probeDatabaseConnection() {
+  const db = await getDb();
+  if (!db) {
+    return {
+      dbConnected: false,
+      lastDbError: _dbLastError ?? "Database not initialized",
+    };
+  }
+
+  try {
+    await db.execute(sql`SELECT 1 AS ok`);
+    _dbLastError = null;
+    return {
+      dbConnected: true,
+      lastDbError: null,
+    };
+  } catch (error) {
+    _dbLastError = sanitizeDbError(error);
+    console.warn("[Database] Connection probe failed:", {
+      message: _dbLastError,
+    });
+    return {
+      dbConnected: false,
+      lastDbError: _dbLastError,
+    };
+  }
+}
 
 export async function getDb() {
-  if (!_db && process.env.DATABASE_URL) {
+  if (!_db) {
+    _dbInitAttempted = true;
+    const databaseUrl = String(process.env.DATABASE_URL || "").trim();
+    if (!databaseUrl) {
+      _dbLastError = "DATABASE_URL is not configured";
+      if (!_dbMissingEnvLogged) {
+        _dbMissingEnvLogged = true;
+        console.warn("[Database] DATABASE_URL is missing; database features are disabled.");
+      }
+      return null;
+    }
+
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      _db = drizzle(databaseUrl);
+      _dbLastError = null;
     } catch (error) {
-      console.warn("[Database] Failed to connect:", error);
+      _dbLastError = sanitizeDbError(error);
+      console.warn("[Database] Failed to initialize client:", {
+        message: _dbLastError,
+      });
       _db = null;
     }
   }
