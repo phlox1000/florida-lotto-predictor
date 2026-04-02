@@ -1,5 +1,6 @@
 import { eq, desc, and, sql, gte, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
+import type { Pool } from "mysql2/promise";
 import {
   InsertUser, users,
   drawResults, InsertDrawResult,
@@ -20,70 +21,35 @@ import {
   scannedTicketFeatureSnapshots, InsertScannedTicketFeatureSnapshot,
   scannedTicketOutcomes, InsertScannedTicketOutcome,
 } from "../drizzle/schema";
-import { ENV } from './_core/env';
-import { FLORIDA_GAMES, type GameType } from '@shared/lottery';
+import { ENV } from "./_core/env";
+import { FLORIDA_GAMES, type GameType } from "@shared/lottery";
+import {
+  createMySqlPool,
+  getDatabaseUrlShape,
+  type DatabaseUrlShape,
+} from "./_core/db-connection";
 
 let _db: ReturnType<typeof drizzle> | null = null;
+let _pool: Pool | null = null;
 let _dbInitAttempted = false;
 let _dbMissingEnvLogged = false;
 let _dbLastError: string | null = null;
-
-type DatabaseUrlShape = {
-  scheme: string | null;
-  hostPresent: boolean;
-  portPresent: boolean;
-  databasePresent: boolean;
-  sslMode: string | null;
-  parseError: string | null;
-};
+let _dbSslConfigured = false;
 
 function sanitizeDbError(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
 }
 
-function getDatabaseUrlShape(): DatabaseUrlShape {
-  const raw = String(process.env.DATABASE_URL || "").trim();
-  if (!raw) {
-    return {
-      scheme: null,
-      hostPresent: false,
-      portPresent: false,
-      databasePresent: false,
-      sslMode: null,
-      parseError: null,
-    };
-  }
-  try {
-    const url = new URL(raw);
-    const dbName = url.pathname.replace(/^\/+/, "");
-    return {
-      scheme: url.protocol.replace(/:$/, "") || null,
-      hostPresent: Boolean(url.hostname),
-      portPresent: Boolean(url.port),
-      databasePresent: dbName.length > 0,
-      sslMode: url.searchParams.get("sslmode") || url.searchParams.get("ssl") || null,
-      parseError: null,
-    };
-  } catch (error) {
-    return {
-      scheme: null,
-      hostPresent: false,
-      portPresent: false,
-      databasePresent: false,
-      sslMode: null,
-      parseError: sanitizeDbError(error),
-    };
-  }
-}
-
 export function getDatabaseDiagnostics() {
-  const shape = getDatabaseUrlShape();
+  const shape = getDatabaseUrlShape(String(process.env.DATABASE_URL || "").trim());
   return {
     dbDriver: "drizzle/mysql2",
     dbConfigured: Boolean(String(process.env.DATABASE_URL || "").trim()),
     dbInitAttempted: _dbInitAttempted,
     dbInitialized: Boolean(_db),
+    poolInitialized: Boolean(_pool),
+    sslConfigured: _dbSslConfigured,
     dbUrlShape: shape,
     lastDbError: _dbLastError,
   };
@@ -131,8 +97,20 @@ export async function getDb() {
     }
 
     try {
-      _db = drizzle(databaseUrl);
+      const created = createMySqlPool(databaseUrl);
+      _pool = created.pool;
+      _dbSslConfigured = created.sslConfigured;
+      _db = drizzle(_pool);
       _dbLastError = null;
+      console.info("[Database] Initialized MySQL pool for Drizzle.", {
+        dbConfigured: true,
+        scheme: created.shape.scheme,
+        hostPresent: created.shape.hostPresent,
+        portPresent: created.shape.portPresent,
+        databasePresent: created.shape.databasePresent,
+        sslConfigured: _dbSslConfigured,
+        sslMode: created.shape.sslMode,
+      });
     } catch (error) {
       _dbLastError = sanitizeDbError(error);
       console.warn("[Database] Failed to initialize client:", {
