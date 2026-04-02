@@ -327,6 +327,40 @@ function sanitizePreview(value: unknown, limit = 220): string {
   return `${text.slice(0, limit)}…`;
 }
 
+function parseJsonFromModelText(text: string): Record<string, unknown> {
+  const candidates: string[] = [];
+  const trimmed = text.trim();
+  if (trimmed) candidates.push(trimmed);
+
+  const fencedBlockMatch = /```(?:json)?\s*([\s\S]*?)\s*```/i.exec(trimmed);
+  if (fencedBlockMatch?.[1]) {
+    candidates.push(fencedBlockMatch[1].trim());
+  }
+
+  const firstObjStart = trimmed.indexOf("{");
+  const lastObjEnd = trimmed.lastIndexOf("}");
+  if (firstObjStart >= 0 && lastObjEnd > firstObjStart) {
+    candidates.push(trimmed.slice(firstObjStart, lastObjEnd + 1).trim());
+  }
+
+  let lastError: unknown = null;
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (parsed && typeof parsed === "object") {
+        return parsed as Record<string, unknown>;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("OpenAI OCR output did not contain a valid JSON object");
+}
+
 function normalizeDrawTime(raw: unknown): "midday" | "evening" {
   const value = String(raw || "").toLowerCase();
   return value === "midday" ? "midday" : "evening";
@@ -392,7 +426,7 @@ async function runTicketExtractionRequest(
   if (!text) {
     throw new Error("OpenAI OCR returned empty output for ticket extraction");
   }
-  const parsed = JSON.parse(text) as Record<string, unknown>;
+  const parsed = parseJsonFromModelText(text);
   return {
     gameType: String(parsed.gameType || ""),
     drawDate: String(parsed.drawDate || ""),
@@ -449,7 +483,7 @@ async function runPdfExtractionRequest(
   if (!text) {
     throw new Error("OpenAI OCR returned empty output for PDF extraction");
   }
-  const parsed = JSON.parse(text) as Record<string, unknown>;
+  const parsed = parseJsonFromModelText(text);
   const draws = Array.isArray(parsed.draws) ? parsed.draws : [];
   return draws.map((draw: any) => ({
     gameType: String(draw?.gameType || ""),
@@ -470,22 +504,70 @@ export async function extractTicketFromImageWithOpenAI(params: {
 
   try {
     const client = getOpenAiClient();
-    const primaryResult = await runTicketExtractionRequest(client, PRIMARY_OCR_MODEL, params);
-    const primaryValidation = validateTicketExtraction(primaryResult);
-    if (primaryValidation.valid || FALLBACK_OCR_MODEL === PRIMARY_OCR_MODEL) {
+    let primaryResult: OpenAiTicketExtraction | null = null;
+    let primaryValidation: TicketValidationResult | null = null;
+    let primaryError: Error | null = null;
+    try {
+      primaryResult = await runTicketExtractionRequest(client, PRIMARY_OCR_MODEL, params);
+      primaryValidation = validateTicketExtraction(primaryResult);
+    } catch (error) {
+      primaryError = error instanceof Error ? error : new Error(String(error));
+    }
+
+    if (primaryError && FALLBACK_OCR_MODEL !== PRIMARY_OCR_MODEL) {
+      logOcrEvent("ticket_validation_failed", {
+        reasons: ["primary_request_or_parse_failed"],
+        fallbackModel: FALLBACK_OCR_MODEL,
+        message: primaryError.message,
+      }, PRIMARY_OCR_MODEL);
+      logOcrEvent("ticket_fallback_start", {
+        reasons: ["primary_request_or_parse_failed"],
+        fromModel: PRIMARY_OCR_MODEL,
+        toModel: FALLBACK_OCR_MODEL,
+      }, FALLBACK_OCR_MODEL);
+      try {
+        const fallbackResult = await runTicketExtractionRequest(client, FALLBACK_OCR_MODEL, params);
+        const fallbackValidation = validateTicketExtraction(fallbackResult);
+        if (!fallbackValidation.valid) {
+          throw new Error(
+            `Fallback OCR output failed validation: ${fallbackValidation.reasons.join(", ")}`
+          );
+        }
+        logOcrEvent("ticket_fallback_success", {
+          fallbackUsed: true,
+          reason: "primary_request_or_parse_failed",
+        }, FALLBACK_OCR_MODEL);
+        return fallbackResult;
+      } catch (fallbackError) {
+        logOcrEvent("ticket_fallback_failure", {
+          message: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+          fromModel: PRIMARY_OCR_MODEL,
+          toModel: FALLBACK_OCR_MODEL,
+        }, FALLBACK_OCR_MODEL);
+        throw fallbackError;
+      }
+    }
+
+    if (primaryError) {
+      throw primaryError;
+    }
+
+    const primaryResultSafe = primaryResult as OpenAiTicketExtraction;
+    const primaryValidationSafe = primaryValidation as TicketValidationResult;
+    if (primaryValidationSafe.valid || FALLBACK_OCR_MODEL === PRIMARY_OCR_MODEL) {
       logOcrEvent("ticket_fallback_success", {
         fallbackUsed: false,
-        reason: primaryValidation.valid ? "primary_valid" : "fallback_disabled_same_model",
+        reason: primaryValidationSafe.valid ? "primary_valid" : "fallback_disabled_same_model",
       }, PRIMARY_OCR_MODEL);
-      return primaryResult;
+      return primaryResultSafe;
     }
 
     logOcrEvent("ticket_validation_failed", {
-      reasons: primaryValidation.reasons,
+      reasons: primaryValidationSafe.reasons,
       fallbackModel: FALLBACK_OCR_MODEL,
     }, PRIMARY_OCR_MODEL);
     logOcrEvent("ticket_fallback_start", {
-      reasons: primaryValidation.reasons,
+      reasons: primaryValidationSafe.reasons,
       fromModel: PRIMARY_OCR_MODEL,
       toModel: FALLBACK_OCR_MODEL,
     }, FALLBACK_OCR_MODEL);
@@ -500,7 +582,7 @@ export async function extractTicketFromImageWithOpenAI(params: {
       }
       logOcrEvent("ticket_fallback_success", {
         fallbackUsed: true,
-        reason: primaryValidation.reasons.join(","),
+        reason: primaryValidationSafe.reasons.join(","),
       }, FALLBACK_OCR_MODEL);
       return fallbackResult;
     } catch (fallbackError) {
@@ -530,22 +612,70 @@ export async function extractPdfDrawsWithOpenAI(params: {
 
   try {
     const client = getOpenAiClient();
-    const primaryResult = await runPdfExtractionRequest(client, PRIMARY_OCR_MODEL, params);
-    const primaryValidation = validatePdfExtraction(primaryResult);
-    if (primaryValidation.valid || FALLBACK_OCR_MODEL === PRIMARY_OCR_MODEL) {
+    let primaryResult: OpenAiPdfDraw[] | null = null;
+    let primaryValidation: PdfValidationResult | null = null;
+    let primaryError: Error | null = null;
+    try {
+      primaryResult = await runPdfExtractionRequest(client, PRIMARY_OCR_MODEL, params);
+      primaryValidation = validatePdfExtraction(primaryResult);
+    } catch (error) {
+      primaryError = error instanceof Error ? error : new Error(String(error));
+    }
+
+    if (primaryError && FALLBACK_OCR_MODEL !== PRIMARY_OCR_MODEL) {
+      logOcrEvent("pdf_validation_failed", {
+        reasons: ["primary_request_or_parse_failed"],
+        fallbackModel: FALLBACK_OCR_MODEL,
+        message: primaryError.message,
+      }, PRIMARY_OCR_MODEL);
+      logOcrEvent("pdf_fallback_start", {
+        reasons: ["primary_request_or_parse_failed"],
+        fromModel: PRIMARY_OCR_MODEL,
+        toModel: FALLBACK_OCR_MODEL,
+      }, FALLBACK_OCR_MODEL);
+      try {
+        const fallbackResult = await runPdfExtractionRequest(client, FALLBACK_OCR_MODEL, params);
+        const fallbackValidation = validatePdfExtraction(fallbackResult);
+        if (!fallbackValidation.valid) {
+          throw new Error(
+            `Fallback OCR PDF output failed validation: ${fallbackValidation.reasons.join(", ")}`
+          );
+        }
+        logOcrEvent("pdf_fallback_success", {
+          fallbackUsed: true,
+          reason: "primary_request_or_parse_failed",
+        }, FALLBACK_OCR_MODEL);
+        return fallbackResult;
+      } catch (fallbackError) {
+        logOcrEvent("pdf_fallback_failure", {
+          message: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+          fromModel: PRIMARY_OCR_MODEL,
+          toModel: FALLBACK_OCR_MODEL,
+        }, FALLBACK_OCR_MODEL);
+        throw fallbackError;
+      }
+    }
+
+    if (primaryError) {
+      throw primaryError;
+    }
+
+    const primaryResultSafe = primaryResult as OpenAiPdfDraw[];
+    const primaryValidationSafe = primaryValidation as PdfValidationResult;
+    if (primaryValidationSafe.valid || FALLBACK_OCR_MODEL === PRIMARY_OCR_MODEL) {
       logOcrEvent("pdf_fallback_success", {
         fallbackUsed: false,
-        reason: primaryValidation.valid ? "primary_valid" : "fallback_disabled_same_model",
+        reason: primaryValidationSafe.valid ? "primary_valid" : "fallback_disabled_same_model",
       }, PRIMARY_OCR_MODEL);
-      return primaryResult;
+      return primaryResultSafe;
     }
 
     logOcrEvent("pdf_validation_failed", {
-      reasons: primaryValidation.reasons,
+      reasons: primaryValidationSafe.reasons,
       fallbackModel: FALLBACK_OCR_MODEL,
     }, PRIMARY_OCR_MODEL);
     logOcrEvent("pdf_fallback_start", {
-      reasons: primaryValidation.reasons,
+      reasons: primaryValidationSafe.reasons,
       fromModel: PRIMARY_OCR_MODEL,
       toModel: FALLBACK_OCR_MODEL,
     }, FALLBACK_OCR_MODEL);
@@ -560,7 +690,7 @@ export async function extractPdfDrawsWithOpenAI(params: {
       }
       logOcrEvent("pdf_fallback_success", {
         fallbackUsed: true,
-        reason: primaryValidation.reasons.join(","),
+        reason: primaryValidationSafe.reasons.join(","),
       }, FALLBACK_OCR_MODEL);
       return fallbackResult;
     } catch (fallbackError) {

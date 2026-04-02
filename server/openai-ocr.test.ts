@@ -369,4 +369,42 @@ describe("openai-ocr module", () => {
     expect(mockResponsesCreate).toHaveBeenCalledTimes(2);
     expect(mockResponsesCreate.mock.calls[1]?.[0]?.model).toBe("gpt-4.1");
   });
+
+  it("parses fenced JSON from mini response without unnecessary fallback", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-key");
+    vi.stubEnv("OPENAI_OCR_MODEL", "gpt-4.1-mini");
+    vi.stubEnv("OPENAI_OCR_FALLBACK_MODEL", "gpt-4.1");
+    mockResponsesCreate.mockResolvedValue({
+      id: "resp_ticket_fenced_json",
+      output: [
+        {
+          content: [
+            {
+              type: "output_text",
+              text:
+                "```json\n" +
+                JSON.stringify({
+                  gameType: "fantasy_5",
+                  drawDate: "2030-01-05",
+                  drawTime: "evening",
+                  mainNumbers: [1, 2, 3, 4, 5],
+                  specialNumbers: [],
+                }) +
+                "\n```",
+            },
+          ],
+        },
+      ],
+    });
+
+    const mod = await import("./_core/openai-ocr");
+    const result = await mod.extractTicketFromImageWithOpenAI({
+      imageUrl: "https://example.com/ticket.png",
+      gameTypeListHint: "fantasy_5: Fantasy 5",
+    });
+
+    expect(result.mainNumbers).toEqual([1, 2, 3, 4, 5]);
+    expect(mockResponsesCreate).toHaveBeenCalledTimes(1);
+    expect(mockResponsesCreate.mock.calls[0]?.[0]?.model).toBe("gpt-4.1-mini");
+  });
 });
