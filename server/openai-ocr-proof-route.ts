@@ -45,6 +45,11 @@ export function registerOpenAiOcrProofRoute(app: Express) {
         model: record.model,
         endpoint: typeof detail.endpoint === "string" ? detail.endpoint : null,
         responseId: typeof detail.responseId === "string" ? detail.responseId : null,
+        fallbackUsed: typeof detail.fallbackUsed === "boolean" ? detail.fallbackUsed : null,
+        reason: typeof detail.reason === "string" ? detail.reason : null,
+        fromModel: typeof detail.fromModel === "string" ? detail.fromModel : null,
+        toModel: typeof detail.toModel === "string" ? detail.toModel : null,
+        reasons: Array.isArray(detail.reasons) ? detail.reasons : null,
         errorMessage: typeof detail.message === "string" ? detail.message : null,
       };
     });

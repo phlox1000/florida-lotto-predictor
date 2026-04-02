@@ -11,6 +11,7 @@ export const ENV = {
   llmApiKey: process.env.LLM_API_KEY ?? "",
   openAiApiKey: process.env.OPENAI_API_KEY ?? "",
   openAiModel: process.env.OPENAI_OCR_MODEL ?? "gpt-4.1-mini",
+  openAiFallbackModel: process.env.OPENAI_OCR_FALLBACK_MODEL ?? "gpt-4.1",
   disableAuth: process.env.DISABLE_AUTH === "true",
   localUploadsDir: process.env.LOCAL_UPLOADS_DIR || "/tmp/uploads",
 };

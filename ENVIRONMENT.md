@@ -94,3 +94,15 @@ For auth-disabled diagnostics/internal mode:
 - For session signing compatibility in backend auth-disabled mode, set one of:
   - `JWT_SECRET=<strong-random-secret>` (preferred)
   - `SESSION_SECRET=<strong-random-secret>` (compatibility fallback)
+
+## OpenAI OCR model configuration
+
+- `OPENAI_API_KEY`: required for server-side OCR calls to OpenAI.
+- `OPENAI_OCR_MODEL`: primary OCR model (default: `gpt-4.1-mini`).
+- `OPENAI_OCR_FALLBACK_MODEL`: fallback OCR model for weak/invalid first-pass output (default: `gpt-4.1`).
+
+Fallback policy is cost-aware:
+
+- First pass always runs with `OPENAI_OCR_MODEL`.
+- Fallback model runs only when first-pass OCR output fails validation (missing/invalid game type/date/time, count/range mismatches, malformed values, incomplete extraction).
+- If primary and fallback are configured to the same model, fallback escalation is disabled.
