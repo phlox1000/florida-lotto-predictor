@@ -37,7 +37,25 @@ let _dbLastError: string | null = null;
 let _dbSslConfigured = false;
 
 function sanitizeDbError(error: unknown): string {
-  if (error instanceof Error) return error.message;
+  if (error instanceof Error) {
+    const base = error.message || "Unknown database error";
+    const anyErr = error as any;
+    const code = typeof anyErr?.code === "string" ? anyErr.code : null;
+    const errno = Number.isFinite(Number(anyErr?.errno)) ? Number(anyErr.errno) : null;
+    const sqlState = typeof anyErr?.sqlState === "string" ? anyErr.sqlState : null;
+    const causeMessage =
+      anyErr?.cause instanceof Error
+        ? anyErr.cause.message
+        : typeof anyErr?.cause === "string"
+          ? anyErr.cause
+          : null;
+    const parts = [base];
+    if (causeMessage && causeMessage !== base) parts.push(`cause=${causeMessage}`);
+    if (code) parts.push(`code=${code}`);
+    if (errno !== null) parts.push(`errno=${errno}`);
+    if (sqlState) parts.push(`sqlState=${sqlState}`);
+    return parts.join(" | ");
+  }
   return String(error);
 }
 
