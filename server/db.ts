@@ -26,10 +26,10 @@ import { FLORIDA_GAMES, type GameType } from "@shared/lottery";
 import {
   createMySqlPool,
   getDatabaseUrlShape,
-  type DatabaseUrlShape,
 } from "./_core/db-connection";
 
-let _db: ReturnType<typeof drizzle> | null = null;
+type DrizzleDb = ReturnType<typeof drizzle<Record<string, never>, Pool>>;
+let _db: DrizzleDb | null = null;
 let _pool: Pool | null = null;
 let _dbInitAttempted = false;
 let _dbMissingEnvLogged = false;
