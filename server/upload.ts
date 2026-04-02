@@ -27,6 +27,30 @@ import {
   stripDataUrlPrefix,
 } from "./upload-validation";
 
+function firstForwardedValue(value: string | string[] | undefined): string | null {
+  if (!value) return null;
+  const raw = Array.isArray(value) ? value[0] : value;
+  const first = raw.split(",")[0]?.trim();
+  return first || null;
+}
+
+export function resolvePublicFileUrlForOcr(req: Request, fileUrl: string): string {
+  if (typeof fileUrl !== "string" || fileUrl.trim().length === 0) {
+    return fileUrl;
+  }
+  if (/^https?:\/\//i.test(fileUrl)) {
+    return fileUrl;
+  }
+
+  const forwardedProto = firstForwardedValue(req.headers["x-forwarded-proto"]);
+  const forwardedHost = firstForwardedValue(req.headers["x-forwarded-host"]);
+  const host = forwardedHost || req.get("host");
+  if (!host) return fileUrl;
+  const protocol = forwardedProto || req.protocol || "https";
+  const normalizedPath = fileUrl.startsWith("/") ? fileUrl : `/${fileUrl}`;
+  return `${protocol}://${host}${normalizedPath}`;
+}
+
 function parseIsoDateToUtcStart(value: string): number {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
   if (!match) return Number.NaN;
@@ -106,6 +130,7 @@ export function registerUploadRoutes(app: Express) {
 
       const fileKey = `pdf-uploads/${ctx.user.id}-${nanoid(8)}-${fileName}`;
       const { url: fileUrl } = await storagePut(fileKey, pdfBuffer, "application/pdf");
+      const ocrFileUrl = resolvePublicFileUrlForOcr(req, fileUrl);
 
       const uploadId = await insertPdfUpload({
         userId: ctx.user.id,
@@ -116,7 +141,7 @@ export function registerUploadRoutes(app: Express) {
         status: "processing",
       });
 
-      processPdfWithLLM(uploadId, fileUrl, pdfBuffer.toString("base64"), gameType || null)
+      processPdfWithLLM(uploadId, ocrFileUrl, pdfBuffer.toString("base64"), gameType || null)
         .catch(err => console.error("[PDF Upload] Background processing failed:", err));
 
       res.json({
@@ -176,9 +201,10 @@ export function registerUploadRoutes(app: Express) {
       }
       const fileKey = `ticket-scans/${ctx.user.id}-${nanoid(8)}-${fileName}`;
       const { url: fileUrl } = await storagePut(fileKey, imgBuffer, mimeType);
+      const ocrFileUrl = resolvePublicFileUrlForOcr(req, fileUrl);
 
       // Use LLM vision to extract ticket data
-      const extracted = await processTicketImageWithLLM(fileUrl, mimeType);
+      const extracted = await processTicketImageWithLLM(ocrFileUrl, mimeType);
 
       const gameType = extracted.gameType as GameType;
       const cfg = FLORIDA_GAMES[gameType];
@@ -658,8 +684,12 @@ async function processTicketImageWithLLM(
     return `${gt}: ${cfg.name} (${cfg.mainCount} main numbers${cfg.isDigitGame ? " digits 0-9" : ` 1-${cfg.mainMax}`}${cfg.specialCount > 0 ? `, ${cfg.specialCount} special 1-${cfg.specialMax}` : ""})`;
   }).join("\n");
 
+  const absoluteImageUrl = /^https?:\/\//i.test(fileUrl)
+    ? fileUrl
+    : `${String(process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "")}${fileUrl}`;
+
   const parsed = await extractTicketFromImageWithOpenAI({
-    imageUrl: fileUrl,
+    imageUrl: absoluteImageUrl,
     gameTypeListHint: gameTypeList,
   });
   return parsed;
