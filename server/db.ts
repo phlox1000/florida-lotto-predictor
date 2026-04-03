@@ -35,6 +35,114 @@ let _dbInitAttempted = false;
 let _dbMissingEnvLogged = false;
 let _dbLastError: string | null = null;
 let _dbSslConfigured = false;
+let _coreTablesEnsured = false;
+let _coreTablesEnsureError: string | null = null;
+
+const CORE_RUNTIME_TABLE_DDL: string[] = [
+  `CREATE TABLE IF NOT EXISTS users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    openId VARCHAR(64) NOT NULL UNIQUE,
+    name TEXT NULL,
+    email VARCHAR(320) NULL,
+    loginMethod VARCHAR(64) NULL,
+    role ENUM('user','admin') NOT NULL DEFAULT 'user',
+    createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    lastSignedIn TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE TABLE IF NOT EXISTS draw_results (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    gameType VARCHAR(32) NOT NULL,
+    drawDate BIGINT NOT NULL,
+    mainNumbers JSON NOT NULL,
+    specialNumbers JSON NULL,
+    drawTime VARCHAR(16) NULL,
+    source VARCHAR(64) NULL DEFAULT 'manual',
+    createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE TABLE IF NOT EXISTS predictions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    userId INT NULL,
+    gameType VARCHAR(32) NOT NULL,
+    modelName VARCHAR(64) NOT NULL,
+    mainNumbers JSON NOT NULL,
+    specialNumbers JSON NULL,
+    confidenceScore FLOAT NOT NULL,
+    metadata JSON NULL,
+    createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_predictions_user_game_created (userId, gameType, createdAt)
+  )`,
+  `CREATE TABLE IF NOT EXISTS purchased_tickets (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    userId INT NOT NULL,
+    gameType VARCHAR(32) NOT NULL,
+    mainNumbers JSON NOT NULL,
+    specialNumbers JSON NULL,
+    purchaseDate BIGINT NOT NULL,
+    drawDate BIGINT NULL,
+    cost FLOAT NOT NULL,
+    outcome ENUM('pending','loss','win') NOT NULL DEFAULT 'pending',
+    winAmount FLOAT NULL DEFAULT 0,
+    mainHits INT NULL DEFAULT 0,
+    specialHits INT NULL DEFAULT 0,
+    notes TEXT NULL,
+    modelSource VARCHAR(64) NULL,
+    createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_purchased_tickets_user_purchase_date (userId, purchaseDate)
+  )`,
+  `CREATE TABLE IF NOT EXISTS scanned_tickets (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    userId INT NOT NULL,
+    gameType VARCHAR(32) NOT NULL,
+    drawDate BIGINT NOT NULL,
+    drawTime VARCHAR(16) NOT NULL,
+    sourceType VARCHAR(32) NOT NULL DEFAULT 'scanned_ticket',
+    ticketOrigin VARCHAR(32) NOT NULL DEFAULT 'unknown',
+    scanStatus VARCHAR(32) NOT NULL DEFAULT 'parsed',
+    confirmationStatus VARCHAR(32) NOT NULL DEFAULT 'pending',
+    imageUrl TEXT NULL,
+    fileKey VARCHAR(256) NULL,
+    parsedPayload JSON NULL,
+    confirmedPayload JSON NULL,
+    linkedPurchasedTicketId INT NULL,
+    createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_scanned_tickets_user_status (userId, confirmationStatus, scanStatus),
+    INDEX idx_scanned_tickets_game_draw (gameType, drawDate, drawTime)
+  )`,
+  `CREATE TABLE IF NOT EXISTS scanned_ticket_rows (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    scannedTicketId INT NOT NULL,
+    rowIndex INT NOT NULL DEFAULT 0,
+    gameType VARCHAR(32) NOT NULL,
+    drawDate BIGINT NOT NULL,
+    drawTime VARCHAR(16) NOT NULL,
+    parsedMainNumbers JSON NOT NULL,
+    parsedSpecialNumbers JSON NULL,
+    confirmedMainNumbers JSON NULL,
+    confirmedSpecialNumbers JSON NULL,
+    rowStatus VARCHAR(32) NOT NULL DEFAULT 'parsed',
+    createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_scanned_ticket_rows_ticket_row (scannedTicketId, rowIndex),
+    INDEX idx_scanned_ticket_rows_game_draw_status (gameType, drawDate, drawTime, rowStatus),
+    INDEX idx_scanned_ticket_rows_ticket_id (scannedTicketId)
+  )`,
+  `CREATE TABLE IF NOT EXISTS pdf_uploads (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    userId INT NOT NULL,
+    fileName VARCHAR(256) NOT NULL,
+    fileUrl TEXT NOT NULL,
+    fileKey VARCHAR(256) NOT NULL,
+    gameType VARCHAR(32) NULL,
+    status ENUM('pending','processing','completed','failed') NOT NULL DEFAULT 'pending',
+    drawsExtracted INT NULL DEFAULT 0,
+    errorMessage TEXT NULL,
+    createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updatedAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  )`,
+];
 
 function sanitizeDbError(error: unknown): string {
   if (error instanceof Error) {
@@ -68,6 +176,8 @@ export function getDatabaseDiagnostics() {
     dbInitialized: Boolean(_db),
     poolInitialized: Boolean(_pool),
     sslConfigured: _dbSslConfigured,
+    coreTablesEnsured: _coreTablesEnsured,
+    coreTablesEnsureError: _coreTablesEnsureError,
     dbUrlShape: shape,
     lastDbError: _dbLastError,
   };
@@ -163,6 +273,7 @@ export async function getDb() {
         sslConfigured: _dbSslConfigured,
         sslMode: created.shape.sslMode,
       });
+      await ensureCoreRuntimeTables();
     } catch (error) {
       _dbLastError = sanitizeDbError(error);
       console.warn("[Database] Failed to initialize client:", {
@@ -172,6 +283,25 @@ export async function getDb() {
     }
   }
   return _db;
+}
+
+async function ensureCoreRuntimeTables() {
+  if (_coreTablesEnsured) return;
+  if (!_pool) return;
+  try {
+    for (const ddl of CORE_RUNTIME_TABLE_DDL) {
+      await _pool.query(ddl);
+    }
+    _coreTablesEnsured = true;
+    _coreTablesEnsureError = null;
+    console.info("[Database] Core runtime tables ensured.");
+  } catch (error) {
+    _coreTablesEnsureError = sanitizeDbError(error);
+    _dbLastError = _coreTablesEnsureError;
+    console.warn("[Database] Failed ensuring core runtime tables:", {
+      message: _coreTablesEnsureError,
+    });
+  }
 }
 
 function mysqlRowsFromExecute(result: unknown): Array<Record<string, unknown>> {
