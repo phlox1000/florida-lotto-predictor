@@ -103,6 +103,38 @@ export async function probeDatabaseConnection() {
   }
 }
 
+export async function getDatabaseTableColumns(
+  tableNames: string[]
+): Promise<Record<string, string[] | null>> {
+  if (!_pool) {
+    await getDb();
+  }
+  if (!_pool) {
+    return Object.fromEntries(tableNames.map(name => [name, null]));
+  }
+
+  const safeNames = tableNames
+    .map(name => String(name || "").trim())
+    .filter(name => /^[a-z0-9_]+$/i.test(name));
+  const result: Record<string, string[] | null> = {};
+  for (const tableName of safeNames) {
+    try {
+      const [rows] = await _pool.query(
+        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION",
+        [tableName]
+      );
+      const typedRows = Array.isArray(rows) ? (rows as Array<{ COLUMN_NAME?: unknown }>) : [];
+      result[tableName] = typedRows
+        .map(r => (typeof r.COLUMN_NAME === "string" ? r.COLUMN_NAME : null))
+        .filter((v): v is string => Boolean(v));
+    } catch (error) {
+      _dbLastError = sanitizeDbError(error);
+      result[tableName] = null;
+    }
+  }
+  return result;
+}
+
 export async function getDb() {
   if (!_db) {
     _dbInitAttempted = true;

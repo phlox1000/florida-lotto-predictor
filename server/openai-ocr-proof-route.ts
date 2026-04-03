@@ -6,7 +6,12 @@ import {
   extractTicketFromImageWithOpenAI,
   getRecentOpenAiOcrLogs,
 } from "./_core/openai-ocr";
-import { getDatabaseDiagnostics, getDb, probeDatabaseConnection } from "./db";
+import {
+  getDatabaseDiagnostics,
+  getDatabaseTableColumns,
+  getDb,
+  probeDatabaseConnection,
+} from "./db";
 import { purchasedTickets } from "../drizzle/schema";
 import { FLORIDA_GAMES, GAME_TYPES } from "@shared/lottery";
 
@@ -137,6 +142,38 @@ export function registerOpenAiOcrProofRoute(app: Express) {
         dbConnected: false,
         error: message,
         rows: [],
+      });
+    }
+  });
+
+  app.get("/api/debug/db-schema", async (_req: Request, res: Response) => {
+    try {
+      const probe = await probeDatabaseConnection();
+      if (!probe.dbConnected) {
+        res.status(503).json({
+          dbConnected: false,
+          error: probe.lastDbError || "Database is not connected",
+          tables: {},
+        });
+        return;
+      }
+
+      const tables = await getDatabaseTableColumns([
+        "users",
+        "purchased_tickets",
+        "scanned_tickets",
+        "pdf_uploads",
+      ]);
+      res.json({
+        dbConnected: true,
+        tables,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(500).json({
+        dbConnected: false,
+        error: message,
+        tables: {},
       });
     }
   });
