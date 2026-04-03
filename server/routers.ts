@@ -70,6 +70,7 @@ import {
   getModelTrends,
   getTicketAnalytics,
 } from "./db";
+import { TRPCError } from "@trpc/server";
 
 const gameTypeSchema = z.enum(GAME_TYPES);
 
@@ -2020,18 +2021,54 @@ export const appRouter = router({
         modelSource: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        const id = await insertPurchasedTicket({
+        const payload = {
           userId: ctx.user.id,
           gameType: input.gameType,
-          mainNumbers: input.mainNumbers,
-          specialNumbers: input.specialNumbers || [],
+          mainNumbersCount: input.mainNumbers.length,
+          specialNumbersCount: (input.specialNumbers || []).length,
           purchaseDate: input.purchaseDate,
-          drawDate: input.drawDate,
+          drawDate: input.drawDate ?? null,
           cost: input.cost,
-          notes: input.notes,
-          modelSource: input.modelSource,
+          hasNotes: Boolean(input.notes),
+          modelSource: input.modelSource ?? null,
+        };
+        console.info("[DB INSERT START]", {
+          endpoint: "trpc.tracker.logPurchase",
+          operation: "purchased_tickets.insert",
+          payload,
         });
-        return { success: true, id };
+        try {
+          const id = await insertPurchasedTicket({
+            userId: ctx.user.id,
+            gameType: input.gameType,
+            mainNumbers: input.mainNumbers,
+            specialNumbers: input.specialNumbers || [],
+            purchaseDate: input.purchaseDate,
+            drawDate: input.drawDate,
+            cost: input.cost,
+            notes: input.notes,
+            modelSource: input.modelSource,
+          });
+          console.info("[DB INSERT SUCCESS]", {
+            endpoint: "trpc.tracker.logPurchase",
+            operation: "purchased_tickets.insert",
+            id,
+            userId: ctx.user.id,
+          });
+          return { success: true, id };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error("[DB INSERT ERROR]", {
+            endpoint: "trpc.tracker.logPurchase",
+            operation: "purchased_tickets.insert",
+            payload,
+            message,
+          });
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message,
+          });
+        }
       }),
 
     /** Log multiple purchased tickets at once (e.g., from budget selection) */

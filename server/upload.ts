@@ -27,6 +27,22 @@ import {
   stripDataUrlPrefix,
 } from "./upload-validation";
 
+function sanitizeUploadPayload(value: unknown): Record<string, unknown> {
+  const obj = (value && typeof value === "object") ? (value as Record<string, unknown>) : {};
+  return {
+    fileName: typeof obj.fileName === "string" ? obj.fileName : null,
+    fileDataLength:
+      typeof obj.fileData === "string"
+        ? obj.fileData.length
+        : null,
+    gameType: typeof obj.gameType === "string" ? obj.gameType : null,
+    cost:
+      typeof obj.cost === "number" || typeof obj.cost === "string"
+        ? Number(obj.cost)
+        : null,
+  };
+}
+
 function firstForwardedValue(value: string | string[] | undefined): string | null {
   if (!value) return null;
   const raw = Array.isArray(value) ? value[0] : value;
@@ -93,6 +109,11 @@ export function registerUploadRoutes(app: Express) {
   // ─── PDF Upload (Admin) ──────────────────────────────────────────────────
   app.post("/api/upload-pdf", async (req: Request, res: Response) => {
     try {
+      console.info("[DB INSERT START]", {
+        endpoint: "/api/upload-pdf",
+        operation: "pdf_uploads.insert",
+        payload: sanitizeUploadPayload(req.body),
+      });
       const ctx = await createContext({ req, res } as any);
       if (!ctx.user) {
         res.status(401).json({ error: "Authentication required" });
@@ -141,6 +162,13 @@ export function registerUploadRoutes(app: Express) {
         status: "processing",
       });
 
+      console.info("[DB INSERT SUCCESS]", {
+        endpoint: "/api/upload-pdf",
+        operation: "pdf_uploads.insert",
+        uploadId,
+        userId: ctx.user.id,
+      });
+
       processPdfWithLLM(uploadId, ocrFileUrl, pdfBuffer.toString("base64"), gameType || null)
         .catch(err => console.error("[PDF Upload] Background processing failed:", err));
 
@@ -152,6 +180,13 @@ export function registerUploadRoutes(app: Express) {
         message: "PDF uploaded and queued for processing. Numbers will be extracted shortly.",
       });
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[DB INSERT ERROR]", {
+        endpoint: "/api/upload-pdf",
+        operation: "pdf_uploads.insert",
+        payload: sanitizeUploadPayload(req.body),
+        message,
+      });
       console.error("[PDF Upload] Error:", err);
       res.status(500).json({ error: "Upload failed" });
     }
@@ -160,6 +195,11 @@ export function registerUploadRoutes(app: Express) {
   // ─── Ticket Scan (Image → LLM Vision) ──────────────────────────────────
   app.post("/api/upload-ticket", async (req: Request, res: Response) => {
     try {
+      console.info("[DB INSERT START]", {
+        endpoint: "/api/upload-ticket",
+        operation: "scanned_tickets.insert",
+        payload: sanitizeUploadPayload(req.body),
+      });
       const ctx = await createContext({ req, res } as any);
       if (!ctx.user) {
         res.status(401).json({ error: "Authentication required" });
@@ -328,6 +368,14 @@ export function registerUploadRoutes(app: Express) {
         rowStatus: "parsed",
       });
 
+      console.info("[DB INSERT SUCCESS]", {
+        endpoint: "/api/upload-ticket",
+        operation: "scanned_tickets.insert",
+        scannedTicketId,
+        scannedTicketRowId,
+        userId: ctx.user.id,
+      });
+
       res.json({
         success: true,
         scannedTicketId,
@@ -354,6 +402,13 @@ export function registerUploadRoutes(app: Express) {
         imageUrl: fileUrl,
       });
     } catch (err: any) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[DB INSERT ERROR]", {
+        endpoint: "/api/upload-ticket",
+        operation: "scanned_tickets.insert",
+        payload: sanitizeUploadPayload(req.body),
+        message,
+      });
       console.error("[Ticket Scan] Error:", err);
       res.status(502).json({
         error: "Failed to scan ticket image. Please try again with a clearer photo.",

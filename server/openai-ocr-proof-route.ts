@@ -1,11 +1,13 @@
 import type { Express, Request, Response } from "express";
+import { desc } from "drizzle-orm";
 import { ENV } from "./_core/env";
 import {
   extractPdfDrawsWithOpenAI,
   extractTicketFromImageWithOpenAI,
   getRecentOpenAiOcrLogs,
 } from "./_core/openai-ocr";
-import { getDatabaseDiagnostics, probeDatabaseConnection } from "./db";
+import { getDatabaseDiagnostics, getDb, probeDatabaseConnection } from "./db";
+import { purchasedTickets } from "../drizzle/schema";
 import { FLORIDA_GAMES, GAME_TYPES } from "@shared/lottery";
 
 function buildGameTypeHint(): string {
@@ -64,13 +66,79 @@ export function registerOpenAiOcrProofRoute(app: Express) {
   });
 
   app.get("/api/debug/db-health", async (_req: Request, res: Response) => {
-    const diagnostics = getDatabaseDiagnostics();
     const probe = await probeDatabaseConnection();
+    const diagnostics = getDatabaseDiagnostics();
     res.json({
       ...diagnostics,
       dbConnected: probe.dbConnected,
       lastDbError: probe.lastDbError,
     });
+  });
+
+  app.get("/api/debug/db-read", async (_req: Request, res: Response) => {
+    try {
+      console.info("[DB READ START]", {
+        operation: "purchased_tickets.select_latest",
+        limit: 5,
+      });
+      const probe = await probeDatabaseConnection();
+      if (!probe.dbConnected) {
+        console.warn("[DB READ ERROR]", {
+          operation: "purchased_tickets.select_latest",
+          message: probe.lastDbError || "Database is not connected",
+        });
+        res.status(503).json({
+          dbConnected: false,
+          error: probe.lastDbError || "Database is not connected",
+          rows: [],
+        });
+        return;
+      }
+
+      const db = await getDb();
+      if (!db) {
+        res.status(503).json({
+          dbConnected: false,
+          error: "Database client is unavailable",
+          rows: [],
+        });
+        return;
+      }
+
+      const rows = await db
+        .select({
+          id: purchasedTickets.id,
+          userId: purchasedTickets.userId,
+          gameType: purchasedTickets.gameType,
+          purchaseDate: purchasedTickets.purchaseDate,
+          createdAt: purchasedTickets.createdAt,
+        })
+        .from(purchasedTickets)
+        .orderBy(desc(purchasedTickets.id))
+        .limit(5);
+
+      console.info("[DB READ SUCCESS]", {
+        operation: "purchased_tickets.select_latest",
+        rowCount: rows.length,
+      });
+      res.json({
+        dbConnected: true,
+        table: "purchased_tickets",
+        rowCount: rows.length,
+        rows,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[DB READ ERROR]", {
+        operation: "purchased_tickets.select_latest",
+        message,
+      });
+      res.status(500).json({
+        dbConnected: false,
+        error: message,
+        rows: [],
+      });
+    }
   });
 
   app.post("/api/debug/openai-ocr-proof", async (req: Request, res: Response) => {
