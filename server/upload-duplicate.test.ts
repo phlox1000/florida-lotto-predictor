@@ -4,10 +4,12 @@ const {
   mockInsertDrawResult,
   mockUpdatePdfUploadStatus,
   mockPdfParse,
+  mockRecordAiObservability,
 } = vi.hoisted(() => ({
   mockInsertDrawResult: vi.fn(),
   mockUpdatePdfUploadStatus: vi.fn(),
   mockPdfParse: vi.fn(),
+  mockRecordAiObservability: vi.fn(),
 }));
 
 vi.mock("./db", () => ({
@@ -18,6 +20,22 @@ vi.mock("./db", () => ({
   getUserPredictionsByGame: vi.fn(),
   getDrawResultByGameDateTime: vi.fn(),
   evaluatePurchasedTicketsAgainstDraw: vi.fn(),
+  getDatabaseSchemaSanity: vi.fn().mockResolvedValue({
+    checked: true,
+    checkedAt: new Date().toISOString(),
+    requiredTables: [],
+    missingTables: [],
+    lastError: null,
+    personalizationMetricsAvailable: true,
+    personalizationFeaturesActive: true,
+    bootstrap: {
+      attempted: false,
+      applied: false,
+      error: null,
+      mode: "disabled",
+      migrationPreferred: true,
+    },
+  }),
 }));
 
 const { mockPdfParseDestroy } = vi.hoisted(() => ({
@@ -38,6 +56,12 @@ vi.mock("./storage", () => ({
 
 vi.mock("./_core/llm", () => ({
   invokeLLM: vi.fn(),
+}));
+
+vi.mock("./_core/ai-observability", () => ({
+  recordAiObservability: mockRecordAiObservability,
+  safeShortErrorCode: vi.fn((value: unknown) => String(value || "unknown_error")),
+  getRecentAiObservability: vi.fn().mockReturnValue([]),
 }));
 
 vi.mock("./_core/context", () => ({
@@ -81,6 +105,14 @@ describe("processPdfWithLLM duplicate handling", () => {
       2,
       "completed",
       { drawsExtracted: 0, errorMessage: "1 draws skipped (duplicates or invalid)" },
+    );
+    expect(mockRecordAiObservability).toHaveBeenCalledTimes(2);
+    expect(mockRecordAiObservability).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        feature: "upload-pdf-ocr",
+        providerSucceeded: true,
+      })
     );
   });
 });

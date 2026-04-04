@@ -15,6 +15,92 @@ import { Shield, Plus, Download, Database, Trophy, LogIn, RefreshCw, History, Ba
 import { useState, useMemo, useRef } from "react";
 import { toast } from "sonner";
 
+function DebugTruthPanel() {
+  const { data, isLoading, error } = trpc.dataFetch.debugStatus.useQuery(undefined, {
+    retry: false,
+  });
+
+  if (isLoading) {
+    return (
+      <Card className="bg-card border-border/50">
+        <CardHeader>
+          <CardTitle className="text-sm">Runtime Truth Status</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Skeleton className="h-20 w-full" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <Card className="bg-card border-border/50">
+        <CardHeader>
+          <CardTitle className="text-sm">Runtime Truth Status</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs text-muted-foreground">
+            Debug status is unavailable.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const schemaSanity = (data as any).schemaSanity || {};
+  const missingTables = Array.isArray(schemaSanity.missingTables) ? schemaSanity.missingTables : [];
+  const aiRows = Array.isArray((data as any).aiObservability) ? (data as any).aiObservability : [];
+
+  return (
+    <Card className="bg-card border-border/50 mb-6">
+      <CardHeader>
+        <CardTitle className="text-lg flex items-center gap-2">
+          <Activity className="w-5 h-5 text-primary" />
+          Runtime Truth Status
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <Badge
+            variant="outline"
+            className={missingTables.length === 0 ? "border-green-500/40 text-green-400" : "border-red-500/40 text-red-400"}
+          >
+            Schema: {missingTables.length === 0 ? "OK" : "Degraded"}
+          </Badge>
+          <Badge
+            variant="outline"
+            className={schemaSanity.personalizationFeaturesActive ? "border-green-500/40 text-green-400" : "border-amber-500/40 text-amber-400"}
+          >
+            Personalization metrics: {schemaSanity.personalizationFeaturesActive ? "active" : "disabled"}
+          </Badge>
+        </div>
+        {missingTables.length > 0 && (
+          <p className="text-xs text-muted-foreground">
+            Missing required tables: {missingTables.join(", ")}.
+          </p>
+        )}
+        <div className="space-y-1">
+          <p className="text-xs font-medium">Recent AI provider activity</p>
+          {aiRows.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No recent OCR/analysis provider events.</p>
+          ) : (
+            aiRows.slice(-6).reverse().map((row: any, idx: number) => (
+              <div key={`${row.feature || "feature"}-${idx}`} className="text-xs text-muted-foreground flex items-center gap-2">
+                <span className="font-medium text-foreground/80">{row.feature}</span>
+                <span>{row.providerAttempted}</span>
+                <span>{row.providerSucceeded ? "success" : "failed"}</span>
+                <span>{row.fallbackUsed ? "fallback" : "no-fallback"}</span>
+                {row.errorCode ? <span className="text-amber-400">{row.errorCode}</span> : null}
+              </div>
+            ))
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function AddDrawForm() {
   const [gameType, setGameType] = useState<GameType>("fantasy_5");
   const [drawDate, setDrawDate] = useState("");
@@ -696,6 +782,7 @@ export default function Admin() {
 
         {/* Auto-Fetch Status */}
         <AutoFetchStatusCard />
+        <DebugTruthPanel />
 
         {/* Quick Actions: Fetch + Upload (most used) */}
         <div className="grid lg:grid-cols-2 gap-6 mb-6">

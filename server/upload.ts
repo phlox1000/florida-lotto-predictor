@@ -19,7 +19,12 @@ import { getPersonalizationImpactSummary } from "./personalization-metrics";
 import {
   extractPdfDrawsWithOpenAI,
   extractTicketFromImageWithOpenAI,
+  getRecentOpenAiOcrLogs,
 } from "./_core/openai-ocr";
+import {
+  recordAiObservability,
+  safeShortErrorCode,
+} from "./_core/ai-observability";
 import {
   decodeBase64PayloadToBuffer,
   detectImageMimeType,
@@ -300,7 +305,8 @@ export function registerUploadRoutes(app: Express) {
       const ocrFileUrl = resolvePublicFileUrlForOcr(req, fileUrl);
 
       // Use LLM vision to extract ticket data
-      const extracted = await processTicketImageWithLLM(ocrFileUrl, mimeType);
+      const extractedResult = await processTicketImageWithLLM(ocrFileUrl, mimeType);
+      const extracted = extractedResult.extracted;
 
       const gameType = extracted.gameType as GameType;
       const cfg = FLORIDA_GAMES[gameType];
@@ -437,6 +443,7 @@ export function registerUploadRoutes(app: Express) {
         scannedTicketId,
         requiresConfirmation: true,
         cost: numericCost,
+        aiObservability: extractedResult.aiObservability,
         rows: [
           {
             rowId: scannedTicketRowId,
@@ -460,6 +467,7 @@ export function registerUploadRoutes(app: Express) {
           scannedTicketId,
           requiresConfirmation: true,
           cost: numericCost,
+          aiObservability: extractedResult.aiObservability,
           rows: [
             {
               rowId: scannedTicketRowId,
@@ -688,6 +696,7 @@ export async function processPdfWithLLM(
   fileDataBase64: string,
   gameType: string | null
 ) {
+  const startedAt = new Date().toISOString();
   try {
     // Step 1: Extract text from PDF using pdf-parse
     const normalizedPdfBase64 = stripDataUrlPrefix(String(fileDataBase64));
@@ -729,22 +738,44 @@ export async function processPdfWithLLM(
     }
 
     // Step 4: Optional OpenAI OCR fallback only when deterministic parsing found nothing
+    let providerAttempted = "deterministic_pdf_text_parser";
+    let providerSucceeded = draws.length > 0;
+    let fallbackUsed = false;
+    let errorCode: string | null = null;
+    let errorMessage: string | null = null;
     let fallbackNote: string | null = null;
     if (draws.length === 0) {
       const hasOpenAiCredentials = Boolean(
         ENV.openAiApiKey && ENV.openAiApiKey.trim().length > 0
       );
       if (!hasOpenAiCredentials) {
+        providerAttempted = "openai_ocr_fallback";
+        providerSucceeded = false;
+        fallbackUsed = true;
+        errorCode = "missing_openai_api_key";
         fallbackNote = "OpenAI OCR fallback skipped: missing OPENAI_API_KEY";
         console.warn("[PDF Upload] Skipping OpenAI OCR fallback - missing OPENAI_API_KEY");
       } else if (pdfText.length >= 50000) {
+        providerAttempted = "openai_ocr_fallback";
+        providerSucceeded = false;
+        fallbackUsed = true;
+        errorCode = "pdf_text_too_large_for_fallback";
         fallbackNote = "OpenAI OCR fallback skipped: extracted text is too large";
         console.warn("[PDF Upload] Skipping OpenAI OCR fallback - extracted text too large");
       } else {
         try {
+          providerAttempted = "openai_ocr_fallback";
+          fallbackUsed = true;
           console.log("[PDF Upload] Falling back to OpenAI OCR for unstructured PDF...");
           draws = await parsePdfWithLLMFallback(fileUrl, gameType);
+          providerSucceeded = draws.length > 0;
+          if (!providerSucceeded) {
+            errorCode = "openai_ocr_returned_no_draws";
+          }
         } catch (fallbackErr) {
+          providerSucceeded = false;
+          errorCode = safeShortErrorCode((fallbackErr as Error)?.name || "openai_ocr_fallback_failed");
+          errorMessage = String((fallbackErr as Error)?.message || "").slice(0, 220) || null;
           fallbackNote = "OpenAI OCR fallback failed";
           console.warn("[PDF Upload] OpenAI OCR fallback failed; completing without extracted draws:", fallbackErr);
         }
@@ -789,10 +820,37 @@ export async function processPdfWithLLM(
       drawsExtracted: insertedCount,
       errorMessage: completionMessage,
     });
+    const latestOcrLog = getRecentOpenAiOcrLogs(1)[0];
+    recordAiObservability({
+      feature: "upload-pdf-ocr",
+      providerAttempted,
+      providerSucceeded,
+      fallbackUsed,
+      timestamp: startedAt,
+      errorCode,
+      errorMessage,
+      detail: {
+        uploadId,
+        insertedCount,
+        skippedCount,
+        gameType: gameType || null,
+        latestOcrStage: latestOcrLog?.stage ?? null,
+      },
+    });
 
     console.log(`[PDF Upload] Processed upload ${uploadId}: ${insertedCount} draws extracted, ${skippedCount} skipped`);
   } catch (err: any) {
     console.error("[PDF Upload] Processing failed:", err);
+    recordAiObservability({
+      feature: "upload-pdf-ocr",
+      providerAttempted: "deterministic_pdf_text_parser",
+      providerSucceeded: false,
+      fallbackUsed: false,
+      timestamp: startedAt,
+      errorCode: safeShortErrorCode(err?.name || "upload_pdf_processing_failed"),
+      errorMessage: String(err?.message || "Failed to process uploaded PDF").slice(0, 220),
+      detail: { uploadId, gameType: gameType || null },
+    });
     await updatePdfUploadStatus(uploadId, "failed", {
       errorMessage: err?.message || "Failed to extract numbers from PDF",
     });
@@ -825,24 +883,81 @@ async function processTicketImageWithLLM(
   fileUrl: string,
   _mimeType: string
 ): Promise<{
-  gameType: string;
-  drawDate: string;
-  drawTime: "midday" | "evening";
-  mainNumbers: number[];
-  specialNumbers: number[];
+  extracted: {
+    gameType: string;
+    drawDate: string;
+    drawTime: "midday" | "evening";
+    mainNumbers: number[];
+    specialNumbers: number[];
+  };
+  aiObservability: {
+    providerAttempted: string;
+    providerSucceeded: boolean;
+    fallbackUsed: boolean;
+    timestamp: string;
+    errorCode: string | null;
+    errorMessage: string | null;
+  };
 }> {
-  const gameTypeList = GAME_TYPES.map(gt => {
-    const cfg = FLORIDA_GAMES[gt];
-    return `${gt}: ${cfg.name} (${cfg.mainCount} main numbers${cfg.isDigitGame ? " digits 0-9" : ` 1-${cfg.mainMax}`}${cfg.specialCount > 0 ? `, ${cfg.specialCount} special 1-${cfg.specialMax}` : ""})`;
-  }).join("\n");
+  const timestamp = new Date().toISOString();
+  try {
+    const gameTypeList = GAME_TYPES.map(gt => {
+      const cfg = FLORIDA_GAMES[gt];
+      return `${gt}: ${cfg.name} (${cfg.mainCount} main numbers${cfg.isDigitGame ? " digits 0-9" : ` 1-${cfg.mainMax}`}${cfg.specialCount > 0 ? `, ${cfg.specialCount} special 1-${cfg.specialMax}` : ""})`;
+    }).join("\n");
 
-  const absoluteImageUrl = /^https?:\/\//i.test(fileUrl)
-    ? fileUrl
-    : `${String(process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "")}${fileUrl}`;
+    const absoluteImageUrl = /^https?:\/\//i.test(fileUrl)
+      ? fileUrl
+      : `${String(process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "")}${fileUrl}`;
 
-  const parsed = await extractTicketFromImageWithOpenAI({
-    imageUrl: absoluteImageUrl,
-    gameTypeListHint: gameTypeList,
-  });
-  return parsed;
+    const parsed = await extractTicketFromImageWithOpenAI({
+      imageUrl: absoluteImageUrl,
+      gameTypeListHint: gameTypeList,
+    });
+    const latestOcrLog = getRecentOpenAiOcrLogs(1)[0];
+    const fallbackUsed =
+      latestOcrLog?.stage === "ticket_fallback_success"
+        ? Boolean((latestOcrLog.detail as any)?.fallbackUsed)
+        : false;
+    recordAiObservability({
+      feature: "upload-ticket-ocr",
+      providerAttempted: "openai_ocr",
+      providerSucceeded: true,
+      fallbackUsed,
+      timestamp,
+      errorCode: null,
+      errorMessage: null,
+      detail: {
+        latestOcrStage: latestOcrLog?.stage ?? null,
+      },
+    });
+    return {
+      extracted: parsed,
+      aiObservability: {
+        providerAttempted: "openai_ocr",
+        providerSucceeded: true,
+        fallbackUsed,
+        timestamp,
+        errorCode: null,
+        errorMessage: null,
+      },
+    };
+  } catch (error) {
+    const errorCode = safeShortErrorCode((error as Error)?.name || "openai_ticket_ocr_failed");
+    const errorMessage = String((error as Error)?.message || "Ticket OCR failed").slice(0, 220);
+    const latestOcrLog = getRecentOpenAiOcrLogs(1)[0];
+    recordAiObservability({
+      feature: "upload-ticket-ocr",
+      providerAttempted: "openai_ocr",
+      providerSucceeded: false,
+      fallbackUsed: latestOcrLog?.stage === "ticket_fallback_failure" || latestOcrLog?.stage === "ticket_fallback_success",
+      timestamp,
+      errorCode,
+      errorMessage,
+      detail: {
+        latestOcrStage: latestOcrLog?.stage ?? null,
+      },
+    });
+    throw error;
+  }
 }

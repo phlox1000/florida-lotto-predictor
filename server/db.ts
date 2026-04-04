@@ -37,6 +37,13 @@ let _dbLastError: string | null = null;
 let _dbSslConfigured = false;
 let _coreTablesEnsured = false;
 let _coreTablesEnsureError: string | null = null;
+let _schemaSanityChecked = false;
+let _schemaSanityCheckedAt: string | null = null;
+let _schemaSanityMissingTables: string[] = [];
+let _schemaSanityLastError: string | null = null;
+let _personalizationBootstrapAttempted = false;
+let _personalizationBootstrapApplied = false;
+let _personalizationBootstrapError: string | null = null;
 
 const CORE_RUNTIME_TABLE_DDL: string[] = [
   `CREATE TABLE IF NOT EXISTS users (
@@ -144,6 +151,75 @@ const CORE_RUNTIME_TABLE_DDL: string[] = [
   )`,
 ];
 
+const REQUIRED_RUNTIME_TABLES: string[] = [
+  "users",
+  "draw_results",
+  "predictions",
+  "ticket_selections",
+  "model_performance",
+  "favorites",
+  "push_subscriptions",
+  "pdf_uploads",
+  "purchased_tickets",
+  "scanned_tickets",
+  "scanned_ticket_rows",
+  "scanned_ticket_feature_snapshots",
+  "scanned_ticket_outcomes",
+  "ranker_versions",
+  "prediction_candidate_batches",
+  "prediction_candidates",
+  "prediction_feature_snapshots",
+  "prediction_outcomes",
+  "personal_ranker_versions",
+  "personal_ranker_promotion_audit",
+  "personalization_metrics",
+];
+
+const PERSONALIZATION_METRICS_BOOTSTRAP_DDL = `CREATE TABLE IF NOT EXISTS personalization_metrics (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  gameType VARCHAR(32) NOT NULL,
+  requestSource VARCHAR(64) NOT NULL,
+  anonymizedUserId VARCHAR(96) NULL,
+  candidateBatchId INT NULL,
+  globalRankerVersionId INT NULL,
+  personalRankerVersionId INT NULL,
+  abGroup VARCHAR(24) NOT NULL DEFAULT 'treatment',
+  abBucket INT NULL,
+  personalizationEligible INT NOT NULL DEFAULT 0,
+  personalizationApplied INT NOT NULL DEFAULT 0,
+  personalizationBlockedReason VARCHAR(128) NULL,
+  blendWeight FLOAT NOT NULL DEFAULT 0,
+  topN INT NOT NULL DEFAULT 10,
+  topGlobalCandidates JSON NOT NULL,
+  topServedCandidates JSON NOT NULL,
+  selectedCandidateKeys JSON NULL,
+  selectedCandidateKey VARCHAR(256) NULL,
+  selectedCandidateSource VARCHAR(64) NULL,
+  evaluatedDrawResultId INT NULL,
+  baselineSelectedRank INT NULL,
+  personalizedSelectedRank INT NULL,
+  selectedRankLift INT NULL,
+  selectedMainHits INT NULL,
+  selectedSpecialHits INT NULL,
+  selectedRewardScore FLOAT NULL,
+  baselineHitAt5 INT NULL,
+  personalizedHitAt5 INT NULL,
+  baselineHitAt10 INT NULL,
+  personalizedHitAt10 INT NULL,
+  baselinePrecisionAt5 FLOAT NULL,
+  personalizedPrecisionAt5 FLOAT NULL,
+  baselinePrecisionAt10 FLOAT NULL,
+  personalizedPrecisionAt10 FLOAT NULL,
+  precisionLiftAt5 FLOAT NULL,
+  precisionLiftAt10 FLOAT NULL,
+  evaluatedAt TIMESTAMP NULL,
+  createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_personalization_metrics_candidate_batch (candidateBatchId),
+  INDEX idx_personalization_metrics_game_created (gameType, createdAt),
+  INDEX idx_personalization_metrics_eval_state (gameType, evaluatedDrawResultId, createdAt),
+  INDEX idx_personalization_metrics_ab_group (abGroup, gameType, createdAt)
+)`;
+
 function sanitizeDbError(error: unknown): string {
   if (error instanceof Error) {
     const base = error.message || "Unknown database error";
@@ -169,6 +245,10 @@ function sanitizeDbError(error: unknown): string {
 
 export function getDatabaseDiagnostics() {
   const shape = getDatabaseUrlShape(String(process.env.DATABASE_URL || "").trim());
+  const personalizationMetricsAvailable = !_schemaSanityMissingTables.includes("personalization_metrics");
+  const personalizationFeaturesActive = _schemaSanityChecked
+    ? personalizationMetricsAvailable
+    : false;
   return {
     dbDriver: "drizzle/mysql2",
     dbConfigured: Boolean(String(process.env.DATABASE_URL || "").trim()),
@@ -178,9 +258,50 @@ export function getDatabaseDiagnostics() {
     sslConfigured: _dbSslConfigured,
     coreTablesEnsured: _coreTablesEnsured,
     coreTablesEnsureError: _coreTablesEnsureError,
+    schemaSanityChecked: _schemaSanityChecked,
+    schemaSanityCheckedAt: _schemaSanityCheckedAt,
+    schemaSanityMissingTables: _schemaSanityMissingTables,
+    schemaSanityLastError: _schemaSanityLastError,
+    personalizationMetricsAvailable,
+    personalizationFeaturesActive,
+    personalizationBootstrapAttempted: _personalizationBootstrapAttempted,
+    personalizationBootstrapApplied: _personalizationBootstrapApplied,
+    personalizationBootstrapError: _personalizationBootstrapError,
     dbUrlShape: shape,
     lastDbError: _dbLastError,
   };
+}
+
+export function getDatabaseSchemaSanitySnapshot() {
+  const missingTables = [..._schemaSanityMissingTables];
+  const personalizationMetricsAvailable = !missingTables.includes("personalization_metrics");
+  return {
+    checked: _schemaSanityChecked,
+    checkedAt: _schemaSanityCheckedAt,
+    requiredTables: [...REQUIRED_RUNTIME_TABLES],
+    missingTables,
+    lastError: _schemaSanityLastError,
+    personalizationMetricsAvailable,
+    personalizationFeaturesActive: _schemaSanityChecked && personalizationMetricsAvailable,
+    bootstrap: {
+      attempted: _personalizationBootstrapAttempted,
+      applied: _personalizationBootstrapApplied,
+      error: _personalizationBootstrapError,
+      mode:
+        String(process.env.ALLOW_PERSONALIZATION_METRICS_BOOTSTRAP || "").trim() === "true"
+          ? "enabled"
+          : "disabled",
+      migrationPreferred: true,
+    },
+  };
+}
+
+export async function getDatabaseSchemaSanity() {
+  if (!_pool) {
+    await getDb();
+  }
+  await ensureDatabaseSchemaSanity();
+  return getDatabaseSchemaSanitySnapshot();
 }
 
 export async function probeDatabaseConnection() {
@@ -274,6 +395,7 @@ export async function getDb() {
         sslMode: created.shape.sslMode,
       });
       await ensureCoreRuntimeTables();
+      await ensureDatabaseSchemaSanity();
     } catch (error) {
       _dbLastError = sanitizeDbError(error);
       console.warn("[Database] Failed to initialize client:", {
@@ -300,6 +422,81 @@ async function ensureCoreRuntimeTables() {
     _dbLastError = _coreTablesEnsureError;
     console.warn("[Database] Failed ensuring core runtime tables:", {
       message: _coreTablesEnsureError,
+    });
+  }
+}
+
+async function ensureDatabaseSchemaSanity() {
+  if (_schemaSanityChecked || !_pool) return;
+  try {
+    const [rows] = await _pool.query(
+      `SELECT TABLE_NAME
+       FROM INFORMATION_SCHEMA.TABLES
+       WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME IN (${REQUIRED_RUNTIME_TABLES.map(() => "?").join(",")})`,
+      REQUIRED_RUNTIME_TABLES
+    );
+    const tableRows = Array.isArray(rows) ? (rows as Array<{ TABLE_NAME?: unknown }>) : [];
+    const existing = new Set(
+      tableRows
+        .map(r => (typeof r.TABLE_NAME === "string" ? r.TABLE_NAME : ""))
+        .filter(Boolean)
+    );
+    let missing = REQUIRED_RUNTIME_TABLES.filter(table => !existing.has(table));
+
+    if (
+      missing.includes("personalization_metrics") &&
+      String(process.env.ALLOW_PERSONALIZATION_METRICS_BOOTSTRAP || "").trim() === "true"
+    ) {
+      _personalizationBootstrapAttempted = true;
+      try {
+        await _pool.query(PERSONALIZATION_METRICS_BOOTSTRAP_DDL);
+        _personalizationBootstrapApplied = true;
+        _personalizationBootstrapError = null;
+        const [afterRows] = await _pool.query(
+          "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?",
+          ["personalization_metrics"]
+        );
+        const afterTyped = Array.isArray(afterRows)
+          ? (afterRows as Array<{ TABLE_NAME?: unknown }>)
+          : [];
+        if (afterTyped.some(r => r.TABLE_NAME === "personalization_metrics")) {
+          missing = missing.filter(name => name !== "personalization_metrics");
+          console.warn("[SCHEMA_SANITY][BOOTSTRAP_APPLIED]", {
+            table: "personalization_metrics",
+            mode: "minimal_runtime_bootstrap",
+            migrationPreferred: "drizzle/0007_personalization_metrics.sql",
+          });
+        }
+      } catch (error) {
+        _personalizationBootstrapError = sanitizeDbError(error);
+      }
+    }
+
+    _schemaSanityChecked = true;
+    _schemaSanityCheckedAt = new Date().toISOString();
+    _schemaSanityMissingTables = missing;
+    _schemaSanityLastError = null;
+    if (missing.length > 0) {
+      console.error("[SCHEMA_SANITY][MISSING_REQUIRED_TABLES]", {
+        missingTables: missing,
+        requiredTableCount: REQUIRED_RUNTIME_TABLES.length,
+        personalizationMetricsAvailable: !missing.includes("personalization_metrics"),
+        personalizationFeaturesActive: false,
+        migrationPreferredForPersonalizationMetrics: "drizzle/0007_personalization_metrics.sql",
+      });
+    } else {
+      console.info("[SCHEMA_SANITY][OK]", {
+        requiredTableCount: REQUIRED_RUNTIME_TABLES.length,
+      });
+    }
+  } catch (error) {
+    _schemaSanityChecked = true;
+    _schemaSanityCheckedAt = new Date().toISOString();
+    _schemaSanityLastError = sanitizeDbError(error);
+    _schemaSanityMissingTables = [...REQUIRED_RUNTIME_TABLES];
+    console.error("[SCHEMA_SANITY][CHECK_FAILED]", {
+      message: _schemaSanityLastError,
     });
   }
 }

@@ -1,6 +1,7 @@
 import Navbar from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -257,7 +258,7 @@ function generatePrintableTickets(
 
       <div class="meta">
         <span>Generated: ${dateStr} at ${timeStr}</span>
-        <span>Powered by 16 AI Prediction Models</span>
+        <span>Generated from 18 deterministic heuristic models</span>
       </div>
 
       <div class="summary">
@@ -309,6 +310,7 @@ function generatePrintableTickets(
 export default function Predictions() {
   const [selectedGame, setSelectedGame] = useState<GameType>("fantasy_5");
   const [sumRangeFilter, setSumRangeFilter] = useState(false);
+  const [reproSeed, setReproSeed] = useState("");
   const { isAuthenticated } = useAuth();
   const generatePredictions = trpc.predictions.generate.useMutation();
   const generateTickets = trpc.tickets.generate.useMutation();
@@ -317,6 +319,7 @@ export default function Predictions() {
     gameType: selectedGame,
     backupCount: 3,
     sumRangeFilter,
+    seed: reproSeed.trim() || undefined,
   }, {
     enabled: false,
     retry: false,
@@ -325,15 +328,23 @@ export default function Predictions() {
   // Background sync: queue predictions when offline, auto-submit when back online
   const { queuePrediction } = useBackgroundSync(
     useCallback(async (gameType: string) => {
-      await generatePredictions.mutateAsync({ gameType: gameType as GameType, sumRangeFilter });
-    }, [generatePredictions, sumRangeFilter])
+      await generatePredictions.mutateAsync({
+        gameType: gameType as GameType,
+        sumRangeFilter,
+        seed: reproSeed.trim() || undefined,
+      });
+    }, [generatePredictions, sumRangeFilter, reproSeed])
   );
 
   const handleRunModels = useCallback(() => {
     // If offline, queue the request instead
     if (queuePrediction(selectedGame)) return;
-    generatePredictions.mutate({ gameType: selectedGame, sumRangeFilter });
-  }, [selectedGame, sumRangeFilter, queuePrediction, generatePredictions]);
+    generatePredictions.mutate({
+      gameType: selectedGame,
+      sumRangeFilter,
+      seed: reproSeed.trim() || undefined,
+    });
+  }, [selectedGame, sumRangeFilter, queuePrediction, generatePredictions, reproSeed]);
   const addFavorite = trpc.favorites.add.useMutation({
     onSuccess: () => toast.success("Saved to favorites!"),
     onError: () => toast.error("Failed to save. Please sign in first."),
@@ -450,7 +461,12 @@ export default function Predictions() {
             </Button>
             <Button
               variant="outline"
-              onClick={() => generateTickets.mutate({ gameType: selectedGame, budget: 75, maxTickets: 20 })}
+              onClick={() => generateTickets.mutate({
+                gameType: selectedGame,
+                budget: 75,
+                maxTickets: 20,
+                seed: reproSeed.trim() || undefined,
+              })}
               disabled={generateTickets.isPending}
               className="border-accent/50 text-accent hover:bg-accent/10"
             >
@@ -462,6 +478,21 @@ export default function Predictions() {
 
         <Card className="bg-card border-border/50 mb-6">
           <CardContent className="p-4 space-y-4">
+            <div className="grid gap-2 md:grid-cols-[1fr_auto] md:items-end">
+              <div>
+                <Label htmlFor="repro-seed" className="text-xs">Reproducibility Seed (optional)</Label>
+                <Input
+                  id="repro-seed"
+                  value={reproSeed}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setReproSeed(e.target.value)}
+                  placeholder="e.g. backtest-2026-03-25"
+                  className="bg-input h-9 mt-1"
+                />
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Same inputs + same seed replay identical outputs.
+              </p>
+            </div>
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div>
                 <div className="flex items-center gap-2">
@@ -483,6 +514,9 @@ export default function Predictions() {
 
             {playTonightData?.recommendation ? (
               <div className="space-y-4">
+                <p className="text-[11px] text-muted-foreground">
+                  Effective seed: <span className="text-foreground">{playTonightData.effectiveSeed || "none"}</span>
+                </p>
                 <div className="p-3 rounded-lg bg-secondary/30 border border-border/30">
                   <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
                     <div>
@@ -619,6 +653,9 @@ export default function Predictions() {
                 <p className="text-sm text-muted-foreground mb-4">
                   Showing predictions for <span className="text-primary font-medium">{generatePredictions.data?.gameName}</span> from all 18 models
                 </p>
+                <p className="text-[11px] text-muted-foreground mb-3">
+                  Effective seed: <span className="text-foreground">{generatePredictions.data?.effectiveSeed || "none"}</span>
+                </p>
                 <ConsensusPanel predictions={predictions} />
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                   {/* AI Oracle first */}
@@ -673,6 +710,9 @@ export default function Predictions() {
                     </Button>
                   </div>
                 </div>
+                <p className="text-[11px] text-muted-foreground mb-3">
+                  Effective seed: <span className="text-foreground">{ticketData.effectiveSeed || "none"}</span>
+                </p>
                 <div className="space-y-2">
                   {ticketData.tickets.map((t, i) => (
                     <TicketCard key={i} ticket={t as TicketEntry} index={i} onFavorite={handleFavoriteTicket} />
@@ -692,7 +732,11 @@ export default function Predictions() {
               selectedGame={selectedGame}
               modelPredictions={predictions || null}
               quickPickData={generateQuickPick.data || null}
-              onRunModels={() => generatePredictions.mutate({ gameType: selectedGame, sumRangeFilter })}
+              onRunModels={() => generatePredictions.mutate({
+                gameType: selectedGame,
+                sumRangeFilter,
+                seed: reproSeed.trim() || undefined,
+              })}
               onGenerateQuickPick={() => generateQuickPick.mutate({ gameType: selectedGame, count: 5 })}
               isRunningModels={generatePredictions.isPending}
               isGeneratingQP={generateQuickPick.isPending}
@@ -746,7 +790,7 @@ function QuickPickComparison({
             Formula Picks vs Quick Pick
           </h3>
           <p className="text-xs text-muted-foreground mt-1">
-            Compare our 18-model formula predictions against pure random Quick Pick numbers.
+            Compare deterministic model outputs against pure random Quick Pick numbers.
           </p>
         </div>
         <Button onClick={handleRunBoth} disabled={isRunningModels || isGeneratingQP} className="bg-primary text-primary-foreground">
@@ -771,7 +815,7 @@ function QuickPickComparison({
               </div>
               <div>
                 <h4 className="font-semibold text-sm text-primary">Formula Picks</h4>
-                <p className="text-[10px] text-muted-foreground">Top 5 from 18 AI models</p>
+                <p className="text-[10px] text-muted-foreground">Top 5 by model score (descriptive, not guaranteed)</p>
               </div>
             </div>
             {topModels.length > 0 ? (

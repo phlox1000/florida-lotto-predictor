@@ -4,6 +4,29 @@ import {
   resolveServerAuthConfig,
   validateServerRuntimeConfigOnce,
 } from "./_core/runtime-config";
+import {
+  getDatabaseSchemaSanitySnapshot,
+} from "./db";
+
+vi.mock("./db", () => ({
+  getDatabaseSchemaSanity: vi.fn(async () => ({
+    checked: true,
+    checkedAt: new Date().toISOString(),
+    requiredTables: [],
+    missingTables: [],
+    lastError: null,
+    personalizationMetricsAvailable: true,
+    personalizationFeaturesActive: true,
+    bootstrap: {
+      attempted: false,
+      applied: false,
+      error: null,
+      mode: "disabled",
+      migrationPreferred: true,
+    },
+  })),
+  getDatabaseSchemaSanitySnapshot: vi.fn(),
+}));
 
 describe("server runtime config validation", () => {
   beforeEach(() => {
@@ -77,5 +100,27 @@ describe("server runtime config validation", () => {
       call => call[0] === "[AUTH] Disabled via environment flag"
     );
     expect(authLogs.length).toBe(1);
+  });
+
+  it("reports schema sanity snapshot with personalization flag", () => {
+    vi.mocked(getDatabaseSchemaSanitySnapshot).mockReturnValue({
+      checked: true,
+      checkedAt: new Date().toISOString(),
+      requiredTables: ["personalization_metrics"],
+      missingTables: ["personalization_metrics"],
+      lastError: null,
+      personalizationMetricsAvailable: false,
+      personalizationFeaturesActive: false,
+      bootstrap: {
+        attempted: false,
+        applied: false,
+        error: null,
+        mode: "disabled",
+        migrationPreferred: true,
+      },
+    });
+    const snapshot = getDatabaseSchemaSanitySnapshot();
+    expect(snapshot.personalizationMetricsAvailable).toBe(false);
+    expect(snapshot.missingTables).toContain("personalization_metrics");
   });
 });

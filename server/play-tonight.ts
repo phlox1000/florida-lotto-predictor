@@ -277,9 +277,14 @@ export async function buildPlayTonightRecommendation(params: {
   gameType?: GameType;
   backupCount?: number;
   sumRangeFilter?: boolean;
+  seed?: string;
 }) {
   const backupCount = Math.max(1, Math.min(5, params.backupCount ?? 3));
   const sumRangeFilter = params.sumRangeFilter !== false;
+  const effectiveSeed =
+    typeof params.seed === "string" && params.seed.trim().length > 0
+      ? params.seed.trim()
+      : undefined;
 
   const roiByGameMap = new Map<string, { totalSpent: number; totalWon: number }>();
   if (params.userId) {
@@ -308,7 +313,8 @@ export async function buildPlayTonightRecommendation(params: {
   let predictions = runAllModels(
     cfg,
     history,
-    Object.keys(modelWeights).length > 0 ? modelWeights : undefined
+    Object.keys(modelWeights).length > 0 ? modelWeights : undefined,
+    effectiveSeed
   );
   if (sumRangeFilter) {
     predictions = applySumRangeFilter(predictions, cfg, history);
@@ -327,6 +333,7 @@ export async function buildPlayTonightRecommendation(params: {
   if (validPredictions.length === 0) {
     return {
       generatedAt: new Date().toISOString(),
+      effectiveSeed: effectiveSeed || null,
       gameType: selectedGameType,
       gameName: cfg.name,
       nextDrawIso: gameSelection.selected.nextDrawIso,
@@ -434,6 +441,7 @@ export async function buildPlayTonightRecommendation(params: {
 
   return {
     generatedAt: new Date().toISOString(),
+    effectiveSeed: effectiveSeed || null,
     gameType: selectedGameType,
     gameName: cfg.name,
     nextDrawIso: gameSelection.selected.nextDrawIso,

@@ -49,6 +49,13 @@ function ROIDashboard() {
 
   return (
     <div className="space-y-4">
+      <Card className="bg-card border-border/50">
+        <CardContent className="pt-4 pb-4">
+          <p className="text-xs text-muted-foreground">
+            This panel is bookkeeping, not proof of predictive edge. Lottery outcomes are random and ROI can stay negative long-term.
+          </p>
+        </CardContent>
+      </Card>
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card className="bg-card border-border/50">
           <CardContent className="pt-4 pb-4">
@@ -112,7 +119,7 @@ function ROIDashboard() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center gap-2">
               <BarChart3 className="w-4 h-4 text-primary" />
-              ROI by Game
+              ROI by Game (historical ledger)
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -145,7 +152,7 @@ function ROIDashboard() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center gap-2">
               <BarChart3 className="w-4 h-4 text-primary" />
-              Ticket Scanner Analytics
+              Ticket Scanner Analytics (descriptive only)
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -818,7 +825,7 @@ export default function Tracker() {
         <div className="container py-16 text-center">
           <LogIn className="w-12 h-12 mx-auto mb-4 text-muted-foreground opacity-40" />
           <h2 className="text-xl font-semibold mb-2">Sign in to track your tickets</h2>
-          <p className="text-sm text-muted-foreground mb-6">Log your purchases, record wins, and track your ROI over time.</p>
+          <p className="text-sm text-muted-foreground mb-6">Log purchases, record outcomes, and audit your bankroll history with honest ROI accounting.</p>
           <Button asChild className="bg-primary text-primary-foreground"><AuthLoginLink>Sign In</AuthLoginLink></Button>
         </div>
       </div>
@@ -832,7 +839,7 @@ export default function Tracker() {
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Target className="w-6 h-6 text-accent" />
-            Win/Loss Tracker
+            Bankroll Truth Tracker
           </h1>
           <div className="flex items-center gap-2">
             <LogPurchaseDialog />

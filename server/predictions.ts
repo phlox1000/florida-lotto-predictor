@@ -18,6 +18,24 @@ interface HistoryDraw {
   drawDate: number;
 }
 
+let activePredictionSeed: string | null = null;
+
+function hashSeedToTimeComponent(seed: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return Math.abs(hash % 60_000_000);
+}
+
+function currentTimeComponent(): number {
+  if (activePredictionSeed) {
+    return hashSeedToTimeComponent(activePredictionSeed);
+  }
+  return Math.floor(Date.now() / 60000);
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 /** Weighted sampling WITHOUT replacement from a scored pool. No pure randomness. */
@@ -58,7 +76,7 @@ function weightedSampleWithoutReplacement(
  */
 function deterministicSeed(currentPicks: number[], iteration: number): number {
   // Use minute-level timestamp so predictions are consistent within the same minute
-  const timeComponent = Math.floor(Date.now() / 60000);
+  const timeComponent = currentTimeComponent();
   let hash = timeComponent * 2654435761 + iteration * 40503;
   for (const n of currentPicks) {
     hash = ((hash << 5) - hash + n) | 0;
@@ -77,7 +95,7 @@ function deterministicWeightedSelect(
   // Create scored pairs and sort by weight descending
   const pairs = items.map((item, i) => ({ item, weight: weights[i] }));
   // Add a small deterministic perturbation to break ties meaningfully
-  const timeComponent = Math.floor(Date.now() / 60000);
+  const timeComponent = currentTimeComponent();
   for (let i = 0; i < pairs.length; i++) {
     const tieBreaker = Math.abs(((timeComponent + salt) * 2654435761 + pairs[i].item * 40503) % 10000) / 100000;
     pairs[i].weight += tieBreaker;
@@ -157,7 +175,7 @@ function frequencyBaselineModel(cfg: GameConfig, history: HistoryDraw[]): Predic
   if (history.length === 0) {
     // Deterministic spread: evenly space numbers across the range
     const step = Math.max(1, Math.floor(pool.length / cfg.mainCount));
-    const timeOffset = Math.floor(Date.now() / 60000) % step;
+    const timeOffset = currentTimeComponent() % step;
     const main: number[] = [];
     for (let i = 0; i < cfg.mainCount && i * step + timeOffset < pool.length; i++) {
       main.push(pool[i * step + timeOffset]);
@@ -1050,30 +1068,42 @@ function aiOracleModel(
 export function runAllModels(
   cfg: GameConfig,
   history: HistoryDraw[],
-  modelWeights?: Record<string, number>
+  modelWeights?: Record<string, number>,
+  seed?: string
 ): PredictionResult[] {
-  const siblingResults: PredictionResult[] = [
-    frequencyBaselineModel(cfg, history),
-    poissonModel(cfg, history, 50, "poisson_standard"),
-    poissonModel(cfg, history, 20, "poisson_short"),
-    poissonModel(cfg, history, 100, "poisson_long"),
-    hotColdModel(cfg, history, 0.7, "hot_cold_70"),
-    hotColdModel(cfg, history, 0.5, "hot_cold_50"),
-    balancedHotColdModel(cfg, history),
-    gapAnalysisModel(cfg, history),
-    coOccurrenceModel(cfg, history),
-    deltaModel(cfg, history),
-    temporalEchoModel(cfg, history),
-    monteCarloModel(cfg, history),
-    markovChainModel(cfg, history),
-    bayesianModel(cfg, history),
-    quantumEntanglementModel(cfg, history),
-    cdmModel(cfg, history),
-    chiSquareModel(cfg, history),
-  ];
-  // AI Oracle runs last with all sibling results + accuracy-based weights
-  siblingResults.push(aiOracleModel(cfg, history, siblingResults, modelWeights));
-  return siblingResults;
+  const normalizedSeed = typeof seed === "string" && seed.trim().length > 0
+    ? seed.trim()
+    : null;
+  const previousSeed = activePredictionSeed;
+  if (normalizedSeed) {
+    activePredictionSeed = normalizedSeed;
+  }
+  try {
+    const siblingResults: PredictionResult[] = [
+      frequencyBaselineModel(cfg, history),
+      poissonModel(cfg, history, 50, "poisson_standard"),
+      poissonModel(cfg, history, 20, "poisson_short"),
+      poissonModel(cfg, history, 100, "poisson_long"),
+      hotColdModel(cfg, history, 0.7, "hot_cold_70"),
+      hotColdModel(cfg, history, 0.5, "hot_cold_50"),
+      balancedHotColdModel(cfg, history),
+      gapAnalysisModel(cfg, history),
+      coOccurrenceModel(cfg, history),
+      deltaModel(cfg, history),
+      temporalEchoModel(cfg, history),
+      monteCarloModel(cfg, history),
+      markovChainModel(cfg, history),
+      bayesianModel(cfg, history),
+      quantumEntanglementModel(cfg, history),
+      cdmModel(cfg, history),
+      chiSquareModel(cfg, history),
+    ];
+    // AI Oracle runs last with all sibling results + accuracy-based weights
+    siblingResults.push(aiOracleModel(cfg, history, siblingResults, modelWeights));
+    return siblingResults;
+  } finally {
+    activePredictionSeed = previousSeed;
+  }
 }
 
 /**

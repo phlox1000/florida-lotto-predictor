@@ -8,12 +8,14 @@ import {
 } from "./_core/openai-ocr";
 import {
   getDatabaseDiagnostics,
+  getDatabaseSchemaSanitySnapshot,
   getDatabaseTableColumns,
   getDb,
   probeDatabaseConnection,
 } from "./db";
 import { purchasedTickets } from "../drizzle/schema";
 import { FLORIDA_GAMES, GAME_TYPES } from "@shared/lottery";
+import { getRecentAiObservability } from "./_core/ai-observability";
 
 function canAccessDebugRoute(req: Request): boolean {
   if (process.env.NODE_ENV !== "production") return true;
@@ -100,8 +102,11 @@ export function registerOpenAiOcrProofRoute(app: Express) {
 
   // Always expose this safe status endpoint, including production.
   app.get("/api/debug/openai-ocr-proof", (_req: Request, res: Response) => {
+    const schemaSanity = getDatabaseSchemaSanitySnapshot();
     res.json({
       ...safeStatusPayload,
+      schemaSanity,
+      aiObservability: getRecentAiObservability(60),
       recentOcrTrace: buildSanitizedTrace(),
     });
   });

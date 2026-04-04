@@ -5,7 +5,7 @@ import {
   predictionCandidates,
   type InsertPersonalizationMetric,
 } from "../drizzle/schema";
-import { getDb } from "./db";
+import { getDb, getDatabaseSchemaSanitySnapshot } from "./db";
 import { FLORIDA_GAMES, type GameType } from "../shared/lottery";
 import { computeRewardScore } from "./ranker-v2";
 
@@ -42,6 +42,10 @@ export interface PersonalizationRequestMetricInput {
   selectedCandidateKeys: string[];
   selectedCandidateKey: string | null;
   selectedCandidateSource: string | null;
+}
+
+function personalizationMetricsAvailable(): boolean {
+  return getDatabaseSchemaSanitySnapshot().personalizationMetricsAvailable;
 }
 
 function parseIntEnv(name: string, fallback: number): number {
@@ -135,6 +139,10 @@ export function resolveSelectedCandidateSource(params: {
 async function persistPersonalizationRequestMetric(
   input: PersonalizationRequestMetricInput
 ): Promise<void> {
+  if (!personalizationMetricsAvailable()) {
+    console.error("[PersonalizationMetrics] persistence disabled: missing personalization_metrics table");
+    return;
+  }
   const db = await getDb();
   if (!db) return;
 
@@ -276,6 +284,7 @@ export async function evaluatePersonalizationMetricsForDraw(params: {
   winningMain: number[];
   winningSpecial: number[];
 }): Promise<{ evaluated: number }> {
+  if (!personalizationMetricsAvailable()) return { evaluated: 0 };
   const db = await getDb();
   if (!db) return { evaluated: 0 };
 
@@ -418,6 +427,19 @@ export async function getPersonalizationImpactSummary(params?: {
   gameType?: string;
   lookbackDays?: number;
 }) {
+  if (!personalizationMetricsAvailable()) {
+    return {
+      sampleSize: 0,
+      avgLift: null,
+      percentImprovement: null,
+      hitRateAt5: { baseline: null, personalized: null, improvementPercent: null },
+      hitRateAt10: { baseline: null, personalized: null, improvementPercent: null },
+      precisionAt5: { baseline: null, personalized: null, avgLift: null },
+      precisionAt10: { baseline: null, personalized: null, avgLift: null },
+      ab: { controlSampleSize: 0, treatmentSampleSize: 0, treatmentVsControlHitRateImprovementAt5Percent: null },
+      unavailableReason: "missing_personalization_metrics_table",
+    };
+  }
   const db = await getDb();
   if (!db) {
     return {

@@ -69,10 +69,17 @@ import {
   deletePurchasedTicket, getUserROIStats, getROIByGame,
   getModelTrends,
   getTicketAnalytics,
+  getDatabaseSchemaSanity,
 } from "./db";
 import { TRPCError } from "@trpc/server";
 import { checkRateLimit } from "./_core/rate-limit";
 import { buildPlayTonightRecommendation } from "./play-tonight";
+import {
+  recordAiObservability,
+  safeShortErrorCode,
+  getRecentAiObservability,
+} from "./_core/ai-observability";
+import { getRecentOpenAiOcrLogs } from "./_core/openai-ocr";
 
 const gameTypeSchema = z.enum(GAME_TYPES);
 
@@ -107,6 +114,7 @@ async function buildRankedPredictionBundle(params: {
   userId: number | null;
   source: "predictions.generate" | "tickets.generate";
   sumRangeFilterApplied: boolean;
+  seed?: string;
 }) {
   const cfg = FLORIDA_GAMES[params.gameType];
   const historyRows = await getDrawResults(params.gameType, 200);
@@ -123,7 +131,8 @@ async function buildRankedPredictionBundle(params: {
   let predictions = runAllModels(
     cfg,
     history,
-    Object.keys(modelWeights).length > 0 ? modelWeights : undefined
+    Object.keys(modelWeights).length > 0 ? modelWeights : undefined,
+    params.seed
   );
 
   if (params.sumRangeFilterApplied) {
@@ -149,8 +158,11 @@ async function buildRankedPredictionBundle(params: {
     ? await getActivePersonalRankerVersion(params.userId, params.gameType)
     : null;
   const personalExamples = Number(personalState?.trainedExamples || 0);
+  const schemaSanity = await getDatabaseSchemaSanity();
+  const personalizationStorageReady = schemaSanity.personalizationMetricsAvailable;
   const personalizationEligible = Boolean(
     params.userId &&
+    personalizationStorageReady &&
     personalState &&
     personalExamples >= personalizationCfg.minExamplesToApply
   );
@@ -179,6 +191,7 @@ async function buildRankedPredictionBundle(params: {
     };
   const personalizationBlockedReason =
     !params.userId ? "anonymous_user"
+      : !personalizationStorageReady ? "missing_personalization_metrics_table"
       : !personalState ? "no_personal_ranker"
         : !personalizationEligible ? "insufficient_personal_examples"
           : abAssignment.group === "control" ? "ab_control"
@@ -288,6 +301,7 @@ async function buildRankedPredictionBundle(params: {
     personalBlend,
     candidateBatchId,
     personalizationEligible,
+    personalizationStorageReady,
     personalizationBlockedReason,
     personalizationAbGroup: abAssignment.group,
     personalizationAbBucket: abAssignment.bucket,
@@ -309,13 +323,19 @@ export const appRouter = router({
   predictions: router({
     /** Run all 18 models for a game type, using accuracy-based weights when available */
     generate: publicProcedure
-      .input(z.object({ gameType: gameTypeSchema, sumRangeFilter: z.boolean().default(false) }))
+      .input(z.object({
+        gameType: gameTypeSchema,
+        sumRangeFilter: z.boolean().default(false),
+        seed: z.string().trim().min(1).max(128).optional(),
+      }))
       .mutation(async ({ input, ctx }) => {
+        const effectiveSeed = input.seed || undefined;
         const bundle = await buildRankedPredictionBundle({
           gameType: input.gameType,
           userId: ctx.user?.id ?? null,
           source: "predictions.generate",
           sumRangeFilterApplied: input.sumRangeFilter,
+          seed: effectiveSeed,
         });
 
         return {
@@ -324,6 +344,7 @@ export const appRouter = router({
           gameName: bundle.cfg.name,
           weightsUsed: Object.keys(bundle.modelWeights).length > 0,
           sumRangeFilterApplied: input.sumRangeFilter,
+          effectiveSeed: effectiveSeed || null,
           rankerV2: {
             enabled: true,
             algorithm: bundle.rankerState.algorithm,
@@ -336,6 +357,7 @@ export const appRouter = router({
               blendWeight: bundle.personalBlend.blendWeight,
               adjustedCandidates: bundle.personalBlend.adjustedCandidates,
               eligible: bundle.personalizationEligible,
+              storageReady: bundle.personalizationStorageReady,
               blockedReason: bundle.personalizationBlockedReason,
               abGroup: bundle.personalizationAbGroup,
               abBucket: bundle.personalizationAbBucket,
@@ -350,6 +372,7 @@ export const appRouter = router({
         gameType: gameTypeSchema,
         backupCount: z.number().min(1).max(5).default(3),
         sumRangeFilter: z.boolean().default(true),
+        seed: z.string().trim().min(1).max(128).optional(),
       }))
       .query(async ({ input, ctx }) => {
         return buildPlayTonightRecommendation({
@@ -357,6 +380,7 @@ export const appRouter = router({
           gameType: input.gameType,
           backupCount: input.backupCount,
           sumRangeFilter: input.sumRangeFilter,
+          seed: input.seed,
         });
       }),
 
@@ -375,19 +399,28 @@ export const appRouter = router({
       }))
       .mutation(({ input }) => {
         const cfg = FLORIDA_GAMES[input.gameType];
+        const effectiveSeed = `${input.gameType}:${Date.now()}:${input.count}`;
+        let seedState = 0;
+        for (let i = 0; i < effectiveSeed.length; i++) {
+          seedState = ((seedState << 5) - seedState + effectiveSeed.charCodeAt(i)) | 0;
+        }
+        const nextRand = () => {
+          seedState = (seedState * 1664525 + 1013904223) | 0;
+          return Math.abs(seedState % 100000) / 100000;
+        };
         const picks: Array<{ mainNumbers: number[]; specialNumbers: number[] }> = [];
 
         for (let i = 0; i < input.count; i++) {
           let mainNumbers: number[];
           if (cfg.isDigitGame) {
             // Digit games: each position is 0-9 independently
-            mainNumbers = Array.from({ length: cfg.mainCount }, () => Math.floor(Math.random() * 10));
+            mainNumbers = Array.from({ length: cfg.mainCount }, () => Math.floor(nextRand() * 10));
           } else {
             // Standard games: unique random numbers from pool
             const pool = Array.from({ length: cfg.mainMax }, (_, i) => i + 1);
             mainNumbers = [];
             for (let j = 0; j < cfg.mainCount; j++) {
-              const idx = Math.floor(Math.random() * pool.length);
+              const idx = Math.floor(nextRand() * pool.length);
               mainNumbers.push(pool[idx]);
               pool.splice(idx, 1);
             }
@@ -398,7 +431,7 @@ export const appRouter = router({
           if (cfg.specialCount > 0) {
             const specPool = Array.from({ length: cfg.specialMax }, (_, i) => i + 1);
             for (let j = 0; j < cfg.specialCount; j++) {
-              const idx = Math.floor(Math.random() * specPool.length);
+              const idx = Math.floor(nextRand() * specPool.length);
               specialNumbers.push(specPool[idx]);
               specPool.splice(idx, 1);
             }
@@ -412,6 +445,7 @@ export const appRouter = router({
           picks,
           gameType: input.gameType,
           gameName: cfg.name,
+          effectiveSeed,
         };
       }),
 
@@ -473,13 +507,16 @@ export const appRouter = router({
         gameType: gameTypeSchema,
         budget: z.number().min(1).max(75).default(75),
         maxTickets: z.number().min(1).max(20).default(20),
+        seed: z.string().trim().min(1).max(128).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        const effectiveSeed = input.seed || undefined;
         const bundle = await buildRankedPredictionBundle({
           gameType: input.gameType,
           userId: ctx.user?.id ?? null,
           source: "tickets.generate",
           sumRangeFilterApplied: false,
+          seed: effectiveSeed,
         });
         const selection = selectBudgetTickets(
           bundle.cfg,
@@ -507,6 +544,7 @@ export const appRouter = router({
           gameType: input.gameType,
           gameName: bundle.cfg.name,
           ticketPrice: bundle.cfg.ticketPrice,
+          effectiveSeed: effectiveSeed || null,
           rankerV2: {
             enabled: true,
             algorithm: bundle.rankerState.algorithm,
@@ -518,6 +556,7 @@ export const appRouter = router({
               blendWeight: bundle.personalBlend.blendWeight,
               adjustedCandidates: bundle.personalBlend.adjustedCandidates,
               eligible: bundle.personalizationEligible,
+              storageReady: bundle.personalizationStorageReady,
               blockedReason: bundle.personalizationBlockedReason,
               abGroup: bundle.personalizationAbGroup,
               abBucket: bundle.personalizationAbBucket,
@@ -1512,29 +1551,79 @@ export const appRouter = router({
         ).join("\n");
 
         const prompts: Record<string, string> = {
-          model_performance: `You are a lottery analytics expert. Analyze the performance of these prediction models for ${cfg.name}:\n\nModel Performance:\n${perfStr || "No performance data yet."}\n\nCurrent Model Weights (from accuracy tracking):\n${weightsStr || "No weights calculated yet — need more data."}\n\nRecent Draw History:\n${historyStr || "No draw history yet."}\n\nExplain which models performed best and why. Discuss how the auto-weighting system is adjusting. Be specific about statistical patterns. Keep the response concise (3-4 paragraphs).`,
-          pattern_analysis: `You are a lottery number pattern analyst. Analyze the recent draw history for ${cfg.name}:\n\nRecent Draws:\n${historyStr || "No draw history yet."}\n\nIdentify any notable patterns: hot/cold numbers, number gaps, frequency distributions, consecutive number patterns, sum ranges, and odd/even distributions. Keep the response concise (3-4 paragraphs).`,
-          strategy_recommendation: `You are a lottery strategy advisor. Based on the following data for ${cfg.name}, provide personalized betting strategy recommendations:\n\nRecent Draws:\n${historyStr || "No draw history yet."}\n\nModel Performance:\n${perfStr || "No performance data yet."}\n\nModel Weights:\n${weightsStr || "No weights yet."}\n\nBudget constraint: $75 per drawing cycle, 20 tickets maximum.\nProvide specific, actionable recommendations for ticket selection strategy. Include which models to trust more based on their accuracy weights and how to diversify. Keep the response concise (3-4 paragraphs).`,
+          model_performance: `You are a lottery analytics assistant. Summarize observed model performance for ${cfg.name}.\n\nModel Performance:\n${perfStr || "No performance data yet."}\n\nCurrent Model Weights (from historical tracking):\n${weightsStr || "No weights calculated yet — need more data."}\n\nRecent Draw History:\n${historyStr || "No draw history yet."}\n\nBe blunt: this is descriptive analysis, not proof of predictive edge. Keep the response concise (3-4 paragraphs).`,
+          pattern_analysis: `You are a lottery pattern analyst. Analyze recent draw history for ${cfg.name}.\n\nRecent Draws:\n${historyStr || "No draw history yet."}\n\nDescribe observable patterns (hot/cold, gaps, frequency, odd/even, sum ranges) without implying certainty. Keep the response concise (3-4 paragraphs).`,
+          strategy_recommendation: `You are a conservative lottery budgeting assistant. Using this data for ${cfg.name}, suggest practical play-tracking habits only.\n\nRecent Draws:\n${historyStr || "No draw history yet."}\n\nModel Performance:\n${perfStr || "No performance data yet."}\n\nModel Weights:\n${weightsStr || "No weights yet."}\n\nBudget constraint: $75 per drawing cycle, 20 tickets maximum.\nInclude a direct disclaimer that outcomes are random and predictions do not guarantee profits. Keep the response concise (3-4 paragraphs).`,
         };
 
+        const timestamp = new Date().toISOString();
         try {
           const result = await invokeLLM({
             messages: [
-              { role: "system", content: "You are an expert lottery analytics assistant. Provide clear, data-driven analysis. Use markdown formatting for readability. Always include a disclaimer that lottery outcomes are random and no prediction system can guarantee wins." },
+              { role: "system", content: "You are an expert lottery analytics assistant. Use plain language and include a disclaimer that lottery outcomes are random and no prediction system can guarantee wins." },
               { role: "user", content: prompts[input.analysisType] },
             ],
           });
 
           const content = result.choices[0]?.message?.content;
           const text = typeof content === "string" ? content : Array.isArray(content) ? content.map((c: any) => "text" in c ? c.text : "").join("") : "";
+          recordAiObservability({
+            feature: "analysis.generate",
+            providerAttempted: "invokeLLM",
+            providerSucceeded: true,
+            fallbackUsed: false,
+            timestamp,
+            errorCode: null,
+            errorMessage: null,
+            detail: {
+              analysisType: input.analysisType,
+              gameType: input.gameType,
+              responseId: result.id,
+            },
+          });
 
-          return { analysis: text, analysisType: input.analysisType, gameType: input.gameType };
-        } catch (e) {
-          console.error("[Analysis] LLM call failed:", e);
           return {
-            analysis: "Analysis is temporarily unavailable. Please try again later.",
+            analysis: text,
             analysisType: input.analysisType,
             gameType: input.gameType,
+            aiObservability: {
+              providerAttempted: "invokeLLM",
+              providerSucceeded: true,
+              fallbackUsed: false,
+              timestamp,
+              errorCode: null,
+              errorMessage: null,
+            },
+          };
+        } catch (e) {
+          const errorCode = safeShortErrorCode((e as Error)?.name || "analysis_llm_failed");
+          const errorMessage = String((e as Error)?.message || "Analysis provider failed").slice(0, 220);
+          recordAiObservability({
+            feature: "analysis.generate",
+            providerAttempted: "invokeLLM",
+            providerSucceeded: false,
+            fallbackUsed: true,
+            timestamp,
+            errorCode,
+            errorMessage,
+            detail: {
+              analysisType: input.analysisType,
+              gameType: input.gameType,
+            },
+          });
+          console.error("[Analysis] LLM call failed:", e);
+          return {
+            analysis: "Analysis provider unavailable; this fallback response does not indicate model edge. Try again later.",
+            analysisType: input.analysisType,
+            gameType: input.gameType,
+            aiObservability: {
+              providerAttempted: "invokeLLM",
+              providerSucceeded: false,
+              fallbackUsed: true,
+              timestamp,
+              errorCode,
+              errorMessage,
+            },
           };
         }
       }),
@@ -1847,6 +1936,14 @@ export const appRouter = router({
 
   // ─── Data Fetch (auto-fetch lottery results from official FL Lottery files) ──
   dataFetch: router({
+    debugStatus: adminProcedure.query(async () => {
+      const schemaSanity = await getDatabaseSchemaSanity();
+      return {
+        schemaSanity,
+        aiObservability: getRecentAiObservability(60),
+      };
+    }),
+
     /** Get auto-fetch cron status */
     autoFetchStatus: publicProcedure.query(() => {
       const lastResult = getLastAutoFetchResult();

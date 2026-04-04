@@ -4,6 +4,8 @@ import { FLORIDA_GAMES } from "../shared/lottery";
 const {
   mockGetDrawResults,
   mockGetModelWeights,
+  mockGetModelPerformanceStats,
+  mockGetDatabaseSchemaSanity,
   mockGetModelAverageHitsMap,
   mockGetOrCreateActiveRankerVersion,
   mockGetActivePersonalRankerVersion,
@@ -23,6 +25,8 @@ const {
 } = vi.hoisted(() => ({
   mockGetDrawResults: vi.fn(),
   mockGetModelWeights: vi.fn(),
+  mockGetModelPerformanceStats: vi.fn(),
+  mockGetDatabaseSchemaSanity: vi.fn(),
   mockGetModelAverageHitsMap: vi.fn(),
   mockGetOrCreateActiveRankerVersion: vi.fn(),
   mockGetActivePersonalRankerVersion: vi.fn(),
@@ -52,8 +56,9 @@ vi.mock("./db", () => ({
   getRecentPredictions: vi.fn(),
   insertTicketSelection: vi.fn(),
   getUserTicketSelections: vi.fn(),
-  getModelPerformanceStats: vi.fn(),
+  getModelPerformanceStats: mockGetModelPerformanceStats,
   getModelWeights: mockGetModelWeights,
+  getDatabaseSchemaSanity: mockGetDatabaseSchemaSanity,
   evaluatePredictionsAgainstDraw: vi.fn(),
   addFavorite: vi.fn(),
   getUserFavorites: vi.fn(),
@@ -135,6 +140,11 @@ vi.mock("./personalization-metrics", () => ({
 }));
 
 vi.mock("./_core/llm", () => ({ invokeLLM: vi.fn() }));
+vi.mock("./_core/ai-observability", () => ({
+  recordAiObservability: vi.fn(),
+  safeShortErrorCode: (input: unknown) => String(input || "unknown_error").toLowerCase(),
+  getRecentAiObservability: vi.fn().mockReturnValue([]),
+}));
 vi.mock("./_core/notification", () => ({ notifyOwner: vi.fn() }));
 vi.mock("./_core/systemRouter", () => ({ systemRouter: {} }));
 vi.mock("./cron", () => ({
@@ -157,7 +167,39 @@ describe("prediction ranker V2 flow through routers", () => {
     mockGetDrawResults.mockResolvedValue([
       { mainNumbers: [1, 2, 3, 4, 5], specialNumbers: [], drawDate: Date.now() - 86400000 },
     ]);
+    mockGetDatabaseSchemaSanity.mockResolvedValue({
+      checked: true,
+      checkedAt: new Date().toISOString(),
+      requiredTables: [],
+      missingTables: [],
+      lastError: null,
+      personalizationMetricsAvailable: true,
+      personalizationFeaturesActive: true,
+      bootstrap: {
+        attempted: false,
+        applied: false,
+        error: null,
+        mode: "disabled",
+        migrationPreferred: true,
+      },
+    });
     mockGetModelWeights.mockResolvedValue({ frequency_baseline: 0.8, ai_oracle: 0.9 });
+    mockGetModelPerformanceStats.mockResolvedValue([
+      {
+        modelName: "frequency_baseline",
+        totalPredictions: 25,
+        avgMainHits: 1.7,
+        avgSpecialHits: 0,
+        maxMainHits: 3,
+      },
+      {
+        modelName: "ai_oracle",
+        totalPredictions: 25,
+        avgMainHits: 1.9,
+        avgSpecialHits: 0,
+        maxMainHits: 4,
+      },
+    ]);
     mockGetModelAverageHitsMap.mockResolvedValue({ frequency_baseline: 1.6, ai_oracle: 2.2 });
     mockGetOrCreateActiveRankerVersion.mockResolvedValue({
       id: 51,
@@ -316,6 +358,7 @@ describe("prediction ranker V2 flow through routers", () => {
     expect(result.rankerV2.rankerVersionId).toBe(51);
     expect(result.rankerV2.candidateBatchId).toBe(9001);
     expect(result.rankerV2.personalization.applied).toBe(false);
+    expect(result.effectiveSeed).toBeNull();
     expect(result.predictions.length).toBe(2);
     expect(result.predictions[0].metadata).toHaveProperty("ranker");
 
@@ -336,6 +379,55 @@ describe("prediction ranker V2 flow through routers", () => {
     expect(Array.isArray(metricPayload.topServedCandidates)).toBe(true);
   });
 
+  it("predictions.generate is deterministic with same seed", async () => {
+    const caller = appRouter.createCaller({
+      user: null,
+      res: { clearCookie: () => {} } as any,
+      req: {} as any,
+    } as any);
+
+    const first = await caller.predictions.generate({
+      gameType: "fantasy_5",
+      sumRangeFilter: false,
+      seed: "seed-alpha",
+    });
+    const second = await caller.predictions.generate({
+      gameType: "fantasy_5",
+      sumRangeFilter: false,
+      seed: "seed-alpha",
+    });
+
+    expect(first.effectiveSeed).toBe("seed-alpha");
+    expect(second.effectiveSeed).toBe("seed-alpha");
+    expect(first.predictions).toEqual(second.predictions);
+  });
+
+  it("playTonight is deterministic with same seed", async () => {
+    const caller = appRouter.createCaller({
+      user: null,
+      res: { clearCookie: () => {} } as any,
+      req: {} as any,
+    } as any);
+
+    const first = await caller.predictions.playTonight({
+      gameType: "fantasy_5",
+      backupCount: 3,
+      sumRangeFilter: false,
+      seed: "night-seed",
+    });
+    const second = await caller.predictions.playTonight({
+      gameType: "fantasy_5",
+      backupCount: 3,
+      sumRangeFilter: false,
+      seed: "night-seed",
+    });
+
+    expect(first.effectiveSeed).toBe("night-seed");
+    expect(second.effectiveSeed).toBe("night-seed");
+    expect(first.recommendation).toEqual(second.recommendation);
+    expect(first.backups).toEqual(second.backups);
+  });
+
   it("tickets.generate uses ranked predictions and includes ranker metadata", async () => {
     const caller = appRouter.createCaller({
       user: null,
@@ -353,7 +445,77 @@ describe("prediction ranker V2 flow through routers", () => {
     expect(result.rankerV2.enabled).toBe(true);
     expect(result.rankerV2.rankerVersionId).toBe(51);
     expect(result.rankerV2.personalization.applied).toBe(false);
+    expect(result.effectiveSeed).toBeNull();
     expect(result.tickets.length).toBe(1);
+  });
+
+  it("tickets.generate is deterministic with same seed", async () => {
+    const caller = appRouter.createCaller({
+      user: null,
+      res: { clearCookie: () => {} } as any,
+      req: {} as any,
+    } as any);
+
+    const first = await caller.tickets.generate({
+      gameType: "fantasy_5",
+      budget: 10,
+      maxTickets: 5,
+      seed: "ticket-seed",
+    });
+    const second = await caller.tickets.generate({
+      gameType: "fantasy_5",
+      budget: 10,
+      maxTickets: 5,
+      seed: "ticket-seed",
+    });
+
+    expect(first.effectiveSeed).toBe("ticket-seed");
+    expect(second.effectiveSeed).toBe("ticket-seed");
+    expect(first.tickets).toEqual(second.tickets);
+  });
+
+  it("exposes schema-missing personalization status when metrics table unavailable", async () => {
+    mockGetDatabaseSchemaSanity.mockResolvedValueOnce({
+      checked: true,
+      checkedAt: new Date().toISOString(),
+      requiredTables: ["personalization_metrics"],
+      missingTables: ["personalization_metrics"],
+      lastError: null,
+      personalizationMetricsAvailable: false,
+      personalizationFeaturesActive: false,
+      bootstrap: {
+        attempted: false,
+        applied: false,
+        error: null,
+        mode: "disabled",
+        migrationPreferred: true,
+      },
+    });
+
+    const caller = appRouter.createCaller({
+      user: {
+        id: 7,
+        openId: "u7",
+        email: null,
+        name: "Tester",
+        role: "user",
+        loginMethod: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        lastSignedIn: new Date(),
+      },
+      res: { clearCookie: () => {} } as any,
+      req: {} as any,
+    } as any);
+
+    const result = await caller.predictions.generate({
+      gameType: "fantasy_5",
+      sumRangeFilter: false,
+    });
+
+    expect(result.rankerV2.personalization.storageReady).toBe(false);
+    expect(result.rankerV2.personalization.eligible).toBe(false);
+    expect(result.rankerV2.personalization.blockedReason).toBe("missing_personalization_metrics_table");
   });
 
   it("applies personalization only for requesting user", async () => {
@@ -490,5 +652,40 @@ describe("prediction ranker V2 flow through routers", () => {
     expect(result.sampleSize).toBe(12);
     expect(result.avgLift).toBe(1.1);
     expect(result.ab.treatmentSampleSize).toBe(7);
+  });
+
+  it("analysis.generate includes observability payload when provider succeeds", async () => {
+    const llmModule = await import("./_core/llm");
+    const mockInvoke = llmModule.invokeLLM as unknown as ReturnType<typeof vi.fn>;
+    mockInvoke.mockResolvedValueOnce({
+      id: "analysis-ok-1",
+      created: Date.now(),
+      model: "gemini-2.5-flash",
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: "analysis output" },
+          finish_reason: "stop",
+        },
+      ],
+    });
+
+    const caller = appRouter.createCaller({
+      user: null,
+      res: { clearCookie: () => {} } as any,
+      req: {} as any,
+    } as any);
+
+    const result = await caller.analysis.generate({
+      gameType: "fantasy_5",
+      analysisType: "model_performance",
+    });
+
+    expect(result.analysis).toContain("analysis output");
+    expect(result.aiObservability).toMatchObject({
+      providerAttempted: "invokeLLM",
+      providerSucceeded: true,
+      fallbackUsed: false,
+    });
   });
 });

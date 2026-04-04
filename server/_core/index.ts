@@ -12,6 +12,7 @@ import { ENV } from "./env";
 import { validateServerRuntimeConfigOnce } from "./runtime-config";
 import { serveStatic, setupVite } from "./vite";
 import { startAutoFetchSchedule } from "../cron";
+import { getDatabaseSchemaSanity } from "../db";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -34,6 +35,23 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 
 async function startServer() {
   validateServerRuntimeConfigOnce();
+  try {
+    const sanity = await getDatabaseSchemaSanity();
+    if (sanity.missingTables.length > 0) {
+      console.error("[STARTUP][SCHEMA_SANITY][DEGRADED_MODE]", {
+        missingTables: sanity.missingTables,
+        personalizationFeaturesActive: sanity.personalizationFeaturesActive,
+      });
+    } else {
+      console.info("[STARTUP][SCHEMA_SANITY][OK]", {
+        requiredTableCount: sanity.requiredTables.length,
+      });
+    }
+  } catch (error) {
+    console.error("[STARTUP][SCHEMA_SANITY][FAILED]", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
   const app = express();
   const server = createServer(app);
   const uploadsDir = ENV.localUploadsDir || path.join("/tmp", "uploads");
