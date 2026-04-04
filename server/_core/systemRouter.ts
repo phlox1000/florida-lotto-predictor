@@ -52,10 +52,13 @@ export const systemRouter = router({
     const llmKeyConfigured = Boolean(
       ENV.forgeApiKey && ENV.forgeApiKey.trim().length > 0
     );
+    const dbUrl = process.env.DATABASE_URL;
     return {
       liveTables: tables,
       personalizationMetricsExists: tables.includes("personalization_metrics"),
       llmKeyConfigured,
+      databaseUrlConfigured: Boolean(dbUrl && dbUrl.trim().length > 0),
+      databaseUrlPrefix: dbUrl ? dbUrl.slice(0, 20) + "..." : null,
       lastOcrConfidence: _lastOcrConfidence,
       timestamp: new Date().toISOString(),
     };
