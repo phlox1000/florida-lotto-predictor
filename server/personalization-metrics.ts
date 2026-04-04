@@ -1,4 +1,5 @@
 import { eq, and, desc, sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/mysql2";
 import { getDb } from "./db";
 import {
   personalizationMetrics,
@@ -86,9 +87,19 @@ export async function upsertPersonalizationMetric(
  * Used by the debugStatus endpoint to confirm migrations have been applied.
  */
 export async function getLiveTableList(): Promise<string[]> {
-  const db = await getDb();
-  if (!db) return [];
-  const result = await db.execute(sql`SHOW TABLES`);
-  const rows = Array.isArray(result) && Array.isArray(result[0]) ? result[0] : result;
-  return (rows as any[]).map((r: any) => Object.values(r)[0] as string);
+  try {
+    // Try the shared db instance first
+    let db = await getDb();
+    // If shared instance isn't ready, create a direct connection
+    if (!db && process.env.DATABASE_URL) {
+      db = drizzle(process.env.DATABASE_URL);
+    }
+    if (!db) return [];
+    const result = await db.execute(sql`SHOW TABLES`);
+    const rows = Array.isArray(result) && Array.isArray(result[0]) ? result[0] : result;
+    return (rows as any[]).map((r: any) => Object.values(r)[0] as string);
+  } catch (error) {
+    console.warn("[debugStatus] getLiveTableList error:", error);
+    return [];
+  }
 }
