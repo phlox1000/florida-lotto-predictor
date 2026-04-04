@@ -2018,8 +2018,8 @@ export const appRouter = router({
         purchaseDate: z.number(),
         drawDate: z.number().optional(),
         cost: z.number().min(0),
-        notes: z.string().optional(),
-        modelSource: z.string().optional(),
+        notes: z.string().max(1000).optional(),
+        modelSource: z.string().max(120).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const limiter = checkRateLimit({
@@ -2034,6 +2034,12 @@ export const appRouter = router({
             message: `Rate limit exceeded. Retry in ${limiter.retryAfterSeconds}s.`,
           });
         }
+        const sanitizedNotes =
+          typeof input.notes === "string" ? input.notes.trim().slice(0, 1000) : undefined;
+        const sanitizedModelSource =
+          typeof input.modelSource === "string"
+            ? input.modelSource.trim().slice(0, 120)
+            : undefined;
         const payload = {
           userId: ctx.user.id,
           gameType: input.gameType,
@@ -2042,8 +2048,8 @@ export const appRouter = router({
           purchaseDate: input.purchaseDate,
           drawDate: input.drawDate ?? null,
           cost: input.cost,
-          hasNotes: Boolean(input.notes),
-          modelSource: input.modelSource ?? null,
+          hasNotes: Boolean(sanitizedNotes),
+          modelSource: sanitizedModelSource ?? null,
         };
         console.info("[API START]", {
           endpoint: "trpc.tracker.logPurchase",
@@ -2059,8 +2065,8 @@ export const appRouter = router({
             purchaseDate: input.purchaseDate,
             drawDate: input.drawDate,
             cost: input.cost,
-            notes: input.notes,
-            modelSource: input.modelSource,
+            notes: sanitizedNotes,
+            modelSource: sanitizedModelSource,
           });
           console.info("[DB WRITE]", {
             endpoint: "trpc.tracker.logPurchase",
@@ -2068,7 +2074,7 @@ export const appRouter = router({
             id,
             userId: ctx.user.id,
           });
-          return { success: true, id };
+          return { success: true, id, data: { id } };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           console.error("[ERROR]", {
