@@ -15,6 +15,42 @@ import {
 import { purchasedTickets } from "../drizzle/schema";
 import { FLORIDA_GAMES, GAME_TYPES } from "@shared/lottery";
 
+function canAccessDebugRoute(req: Request): boolean {
+  if (process.env.NODE_ENV !== "production") return true;
+  const debugKey = String(process.env.DEBUG_KEY || "").trim();
+  if (!debugKey) return false;
+  const provided = String(req.header("x-debug-key") || "").trim();
+  return provided.length > 0 && provided === debugKey;
+}
+
+function forbidDebug(res: Response) {
+  res.status(403).json({
+    success: false,
+    error: "Forbidden",
+  });
+}
+
+function safeDebugError(error: unknown): string {
+  if (process.env.NODE_ENV === "production") {
+    return "Debug operation failed";
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+function safeDebugMessage(message: string | null | undefined): string {
+  if (process.env.NODE_ENV === "production") {
+    return "Debug operation failed";
+  }
+  return message || "Debug operation failed";
+}
+
+function safeDebugConnectivityMessage(message: string | null | undefined): string {
+  if (process.env.NODE_ENV === "production") {
+    return "Database is not connected";
+  }
+  return message || "Database is not connected";
+}
+
 function buildGameTypeHint(): string {
   return GAME_TYPES.map(gt => {
     const cfg = FLORIDA_GAMES[gt];
@@ -71,31 +107,44 @@ export function registerOpenAiOcrProofRoute(app: Express) {
   });
 
   app.get("/api/debug/db-health", async (_req: Request, res: Response) => {
+    if (!canAccessDebugRoute(_req)) {
+      forbidDebug(res);
+      return;
+    }
     const probe = await probeDatabaseConnection();
     const diagnostics = getDatabaseDiagnostics();
     res.json({
-      ...diagnostics,
-      dbConnected: probe.dbConnected,
-      lastDbError: probe.lastDbError,
+      success: true,
+      data: {
+        dbConnected: probe.dbConnected,
+        dbConfigured: diagnostics.dbConfigured,
+        dbInitialized: diagnostics.dbInitialized,
+        poolInitialized: diagnostics.poolInitialized,
+        coreTablesEnsured: diagnostics.coreTablesEnsured,
+        hasDbError: Boolean(probe.lastDbError),
+      },
     });
   });
 
   app.get("/api/debug/db-read", async (_req: Request, res: Response) => {
+    if (!canAccessDebugRoute(_req)) {
+      forbidDebug(res);
+      return;
+    }
     try {
-      console.info("[DB READ START]", {
+      console.info("[API START]", {
         operation: "purchased_tickets.select_latest",
         limit: 5,
       });
       const probe = await probeDatabaseConnection();
       if (!probe.dbConnected) {
-        console.warn("[DB READ ERROR]", {
+        console.warn("[ERROR]", {
           operation: "purchased_tickets.select_latest",
-          message: probe.lastDbError || "Database is not connected",
+          message: safeDebugConnectivityMessage(probe.lastDbError || "Database is not connected"),
         });
         res.status(503).json({
-          dbConnected: false,
-          error: probe.lastDbError || "Database is not connected",
-          rows: [],
+          success: false,
+          error: safeDebugConnectivityMessage(probe.lastDbError || "Database is not connected"),
         });
         return;
       }
@@ -103,9 +152,8 @@ export function registerOpenAiOcrProofRoute(app: Express) {
       const db = await getDb();
       if (!db) {
         res.status(503).json({
-          dbConnected: false,
+          success: false,
           error: "Database client is unavailable",
-          rows: [],
         });
         return;
       }
@@ -113,7 +161,6 @@ export function registerOpenAiOcrProofRoute(app: Express) {
       const rows = await db
         .select({
           id: purchasedTickets.id,
-          userId: purchasedTickets.userId,
           gameType: purchasedTickets.gameType,
           purchaseDate: purchasedTickets.purchaseDate,
           createdAt: purchasedTickets.createdAt,
@@ -121,39 +168,38 @@ export function registerOpenAiOcrProofRoute(app: Express) {
         .from(purchasedTickets)
         .orderBy(desc(purchasedTickets.id))
         .limit(5);
-
-      console.info("[DB READ SUCCESS]", {
-        operation: "purchased_tickets.select_latest",
-        rowCount: rows.length,
-      });
       res.json({
-        dbConnected: true,
-        table: "purchased_tickets",
-        rowCount: rows.length,
-        rows,
+        success: true,
+        data: {
+          table: "purchased_tickets",
+          rowCount: rows.length,
+          rows,
+        },
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error("[DB READ ERROR]", {
+      const message = safeDebugError(error);
+      console.error("[ERROR]", {
         operation: "purchased_tickets.select_latest",
         message,
       });
       res.status(500).json({
-        dbConnected: false,
+        success: false,
         error: message,
-        rows: [],
       });
     }
   });
 
   app.get("/api/debug/db-schema", async (_req: Request, res: Response) => {
+    if (!canAccessDebugRoute(_req)) {
+      forbidDebug(res);
+      return;
+    }
     try {
       const probe = await probeDatabaseConnection();
       if (!probe.dbConnected) {
         res.status(503).json({
-          dbConnected: false,
-          error: probe.lastDbError || "Database is not connected",
-          tables: {},
+          success: false,
+          error: safeDebugConnectivityMessage(probe.lastDbError || "Database is not connected"),
         });
         return;
       }
@@ -165,15 +211,21 @@ export function registerOpenAiOcrProofRoute(app: Express) {
         "pdf_uploads",
       ]);
       res.json({
-        dbConnected: true,
-        tables,
+        success: true,
+        data: {
+          tables: Object.fromEntries(
+            Object.entries(tables).map(([name, cols]) => [
+              name,
+              { columnCount: Array.isArray(cols) ? cols.length : 0 },
+            ])
+          ),
+        },
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = safeDebugError(error);
       res.status(500).json({
-        dbConnected: false,
+        success: false,
         error: message,
-        tables: {},
       });
     }
   });

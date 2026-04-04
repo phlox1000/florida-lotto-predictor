@@ -26,6 +26,7 @@ import {
   isPdfBuffer,
   stripDataUrlPrefix,
 } from "./upload-validation";
+import { checkRateLimit } from "./_core/rate-limit";
 
 function sanitizeUploadPayload(value: unknown): Record<string, unknown> {
   const obj = (value && typeof value === "object") ? (value as Record<string, unknown>) : {};
@@ -41,6 +42,12 @@ function sanitizeUploadPayload(value: unknown): Record<string, unknown> {
         ? Number(obj.cost)
         : null,
   };
+}
+
+function sanitizeSafeFilename(value: unknown): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return raw.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 128);
 }
 
 function firstForwardedValue(value: string | string[] | undefined): string | null {
@@ -109,18 +116,31 @@ export function registerUploadRoutes(app: Express) {
   // ─── PDF Upload (Admin) ──────────────────────────────────────────────────
   app.post("/api/upload-pdf", async (req: Request, res: Response) => {
     try {
-      console.info("[DB INSERT START]", {
+      const limiter = checkRateLimit({
+        scope: "upload-pdf",
+        req,
+        max: 20,
+        windowMs: 60_000,
+      });
+      if (!limiter.allowed) {
+        res.status(429).json({
+          success: false,
+          error: `Rate limit exceeded. Retry in ${limiter.retryAfterSeconds}s.`,
+        });
+        return;
+      }
+      console.info("[API START]", {
         endpoint: "/api/upload-pdf",
         operation: "pdf_uploads.insert",
         payload: sanitizeUploadPayload(req.body),
       });
       const ctx = await createContext({ req, res } as any);
       if (!ctx.user) {
-        res.status(401).json({ error: "Authentication required" });
+        res.status(401).json({ success: false, error: "Authentication required" });
         return;
       }
       if (ctx.user.role !== "admin") {
-        res.status(403).json({ error: "Admin access required" });
+        res.status(403).json({ success: false, error: "Admin access required" });
         return;
       }
 
@@ -131,45 +151,58 @@ export function registerUploadRoutes(app: Express) {
       };
 
       if (!fileName || !fileData) {
-        res.status(400).json({ error: "fileName and fileData (base64) are required" });
+        res.status(400).json({ success: false, error: "fileName and fileData (base64) are required" });
+        return;
+      }
+      const safeFileName = sanitizeSafeFilename(fileName);
+      if (!safeFileName) {
+        res.status(400).json({ success: false, error: "Invalid fileName" });
+        return;
+      }
+      const normalizedGameType =
+        typeof gameType === "string" && GAME_TYPES.includes(gameType as GameType)
+          ? (gameType as GameType)
+          : undefined;
+      if (typeof gameType === "string" && !normalizedGameType) {
+        res.status(400).json({ success: false, error: "Invalid gameType" });
         return;
       }
 
       const pdfBuffer = decodeBase64PayloadToBuffer(fileData);
       if (!pdfBuffer) {
-        res.status(400).json({ error: "Invalid PDF payload. Please upload a valid PDF file." });
+        res.status(400).json({ success: false, error: "Invalid PDF payload. Please upload a valid PDF file." });
         return;
       }
       if (pdfBuffer.length > 16 * 1024 * 1024) {
-        res.status(400).json({ error: "File too large. Maximum 16MB." });
+        res.status(400).json({ success: false, error: "File too large. Maximum 16MB." });
         return;
       }
       if (!isPdfBuffer(pdfBuffer)) {
-        res.status(400).json({ error: "Unsupported file type. Please upload a valid PDF file." });
+        res.status(400).json({ success: false, error: "Unsupported file type. Please upload a valid PDF file." });
         return;
       }
 
-      const fileKey = `pdf-uploads/${ctx.user.id}-${nanoid(8)}-${fileName}`;
+      const fileKey = `pdf-uploads/${ctx.user.id}-${nanoid(8)}-${safeFileName}`;
       const { url: fileUrl } = await storagePut(fileKey, pdfBuffer, "application/pdf");
       const ocrFileUrl = resolvePublicFileUrlForOcr(req, fileUrl);
 
       const uploadId = await insertPdfUpload({
         userId: ctx.user.id,
-        fileName,
+        fileName: safeFileName,
         fileUrl,
         fileKey,
-        gameType: gameType || null,
+        gameType: normalizedGameType || null,
         status: "processing",
       });
 
-      console.info("[DB INSERT SUCCESS]", {
+      console.info("[DB WRITE]", {
         endpoint: "/api/upload-pdf",
         operation: "pdf_uploads.insert",
         uploadId,
         userId: ctx.user.id,
       });
 
-      processPdfWithLLM(uploadId, ocrFileUrl, pdfBuffer.toString("base64"), gameType || null)
+      processPdfWithLLM(uploadId, ocrFileUrl, pdfBuffer.toString("base64"), normalizedGameType || null)
         .catch(err => console.error("[PDF Upload] Background processing failed:", err));
 
       res.json({
@@ -178,31 +211,49 @@ export function registerUploadRoutes(app: Express) {
         fileUrl,
         status: "processing",
         message: "PDF uploaded and queued for processing. Numbers will be extracted shortly.",
+        data: {
+          uploadId,
+          fileUrl,
+          status: "processing",
+          message: "PDF uploaded and queued for processing. Numbers will be extracted shortly.",
+        },
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error("[DB INSERT ERROR]", {
+      console.error("[ERROR]", {
         endpoint: "/api/upload-pdf",
         operation: "pdf_uploads.insert",
         payload: sanitizeUploadPayload(req.body),
         message,
       });
-      console.error("[PDF Upload] Error:", err);
-      res.status(500).json({ error: "Upload failed" });
+      res.status(500).json({ success: false, error: "Upload failed" });
     }
   });
 
   // ─── Ticket Scan (Image → LLM Vision) ──────────────────────────────────
   app.post("/api/upload-ticket", async (req: Request, res: Response) => {
     try {
-      console.info("[DB INSERT START]", {
+      const limiter = checkRateLimit({
+        scope: "upload-ticket",
+        req,
+        max: 30,
+        windowMs: 60_000,
+      });
+      if (!limiter.allowed) {
+        res.status(429).json({
+          success: false,
+          error: `Rate limit exceeded. Retry in ${limiter.retryAfterSeconds}s.`,
+        });
+        return;
+      }
+      console.info("[API START]", {
         endpoint: "/api/upload-ticket",
         operation: "scanned_tickets.insert",
         payload: sanitizeUploadPayload(req.body),
       });
       const ctx = await createContext({ req, res } as any);
       if (!ctx.user) {
-        res.status(401).json({ error: "Authentication required" });
+        res.status(401).json({ success: false, error: "Authentication required" });
         return;
       }
 
@@ -213,33 +264,38 @@ export function registerUploadRoutes(app: Express) {
       };
 
       if (!fileName || !fileData) {
-        res.status(400).json({ error: "fileName and fileData (base64) are required" });
+        res.status(400).json({ success: false, error: "fileName and fileData (base64) are required" });
+        return;
+      }
+      const safeFileName = sanitizeSafeFilename(fileName);
+      if (!safeFileName) {
+        res.status(400).json({ success: false, error: "Invalid fileName" });
         return;
       }
 
       const numericCost = Number(cost);
       if (!Number.isFinite(numericCost) || numericCost < 0) {
-        res.status(400).json({ error: "cost must be a non-negative number" });
+        res.status(400).json({ success: false, error: "cost must be a non-negative number" });
         return;
       }
 
       const imgBuffer = decodeBase64PayloadToBuffer(fileData);
       if (!imgBuffer) {
-        res.status(400).json({ error: "Invalid image payload. Please upload a valid ticket image." });
+        res.status(400).json({ success: false, error: "Invalid image payload. Please upload a valid ticket image." });
         return;
       }
       if (imgBuffer.length > 10 * 1024 * 1024) {
-        res.status(400).json({ error: "Image too large. Maximum 10MB." });
+        res.status(400).json({ success: false, error: "Image too large. Maximum 10MB." });
         return;
       }
 
       // Upload image to S3 so the LLM can access it via URL
       const mimeType = detectImageMimeType(imgBuffer);
       if (!mimeType) {
-        res.status(400).json({ error: "Unsupported image format. Please upload PNG, JPEG, or WEBP." });
+        res.status(400).json({ success: false, error: "Unsupported image format. Please upload PNG, JPEG, or WEBP." });
         return;
       }
-      const fileKey = `ticket-scans/${ctx.user.id}-${nanoid(8)}-${fileName}`;
+      const fileKey = `ticket-scans/${ctx.user.id}-${nanoid(8)}-${safeFileName}`;
       const { url: fileUrl } = await storagePut(fileKey, imgBuffer, mimeType);
       const ocrFileUrl = resolvePublicFileUrlForOcr(req, fileUrl);
 
@@ -249,19 +305,19 @@ export function registerUploadRoutes(app: Express) {
       const gameType = extracted.gameType as GameType;
       const cfg = FLORIDA_GAMES[gameType];
       if (!cfg) {
-        res.status(400).json({ error: "Could not determine game type from ticket" });
+        res.status(400).json({ success: false, error: "Could not determine game type from ticket" });
         return;
       }
 
       const drawDateTs = parseIsoDateToUtcStart(extracted.drawDate);
       if (!Number.isFinite(drawDateTs)) {
-        res.status(400).json({ error: "Invalid drawDate extracted from ticket" });
+        res.status(400).json({ success: false, error: "Invalid drawDate extracted from ticket" });
         return;
       }
 
       const drawTime = extracted.drawTime.toLowerCase() as "midday" | "evening";
       if (drawTime !== "midday" && drawTime !== "evening") {
-        res.status(400).json({ error: "Invalid drawTime extracted from ticket" });
+        res.status(400).json({ success: false, error: "Invalid drawTime extracted from ticket" });
         return;
       }
 
@@ -270,22 +326,22 @@ export function registerUploadRoutes(app: Express) {
 
       // Validate counts and ranges
       if (ticketMain.length !== cfg.mainCount) {
-        res.status(400).json({ error: `Unexpected main number count (got ${ticketMain.length}, expected ${cfg.mainCount})` });
+        res.status(400).json({ success: false, error: `Unexpected main number count (got ${ticketMain.length}, expected ${cfg.mainCount})` });
         return;
       }
 
       if (cfg.isDigitGame) {
         if (ticketMain.some(n => n < 0 || n > 9)) {
-          res.status(400).json({ error: "Digit game main numbers must be in range 0-9" });
+          res.status(400).json({ success: false, error: "Digit game main numbers must be in range 0-9" });
           return;
         }
       } else {
         if (new Set(ticketMain).size !== ticketMain.length) {
-          res.status(400).json({ error: "Main numbers must be unique for this game" });
+          res.status(400).json({ success: false, error: "Main numbers must be unique for this game" });
           return;
         }
         if (ticketMain.some(n => n < 1 || n > cfg.mainMax)) {
-          res.status(400).json({ error: "Main numbers out of range" });
+          res.status(400).json({ success: false, error: "Main numbers out of range" });
           return;
         }
       }
@@ -293,16 +349,16 @@ export function registerUploadRoutes(app: Express) {
       let normalizedSpecial: number[] = [];
       if (cfg.specialCount > 0) {
         if (ticketSpecial.length !== cfg.specialCount) {
-          res.status(400).json({ error: `Unexpected special number count (got ${ticketSpecial.length}, expected ${cfg.specialCount})` });
+          res.status(400).json({ success: false, error: `Unexpected special number count (got ${ticketSpecial.length}, expected ${cfg.specialCount})` });
           return;
         }
         normalizedSpecial = ticketSpecial;
         if (new Set(normalizedSpecial).size !== normalizedSpecial.length) {
-          res.status(400).json({ error: "Special numbers must be unique" });
+          res.status(400).json({ success: false, error: "Special numbers must be unique" });
           return;
         }
         if (normalizedSpecial.some(n => n < 1 || n > cfg.specialMax)) {
-          res.status(400).json({ error: "Special numbers out of range" });
+          res.status(400).json({ success: false, error: "Special numbers out of range" });
           return;
         }
       }
@@ -368,7 +424,7 @@ export function registerUploadRoutes(app: Express) {
         rowStatus: "parsed",
       });
 
-      console.info("[DB INSERT SUCCESS]", {
+      console.info("[DB WRITE]", {
         endpoint: "/api/upload-ticket",
         operation: "scanned_tickets.insert",
         scannedTicketId,
@@ -400,17 +456,41 @@ export function registerUploadRoutes(app: Express) {
         },
         matchedModel: matchModelSource,
         imageUrl: fileUrl,
+        data: {
+          scannedTicketId,
+          requiresConfirmation: true,
+          cost: numericCost,
+          rows: [
+            {
+              rowId: scannedTicketRowId,
+              rowIndex: 0,
+              mainNumbers: ticketMain,
+              specialNumbers: normalizedSpecial,
+              rowStatus: "parsed",
+            },
+          ],
+          extracted: {
+            gameType,
+            gameName: cfg.name,
+            drawDate: extracted.drawDate,
+            drawTime,
+            mainNumbers: ticketMain,
+            specialNumbers: normalizedSpecial,
+          },
+          matchedModel: matchModelSource,
+          imageUrl: fileUrl,
+        },
       });
     } catch (err: any) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error("[DB INSERT ERROR]", {
+      console.error("[ERROR]", {
         endpoint: "/api/upload-ticket",
         operation: "scanned_tickets.insert",
         payload: sanitizeUploadPayload(req.body),
         message,
       });
-      console.error("[Ticket Scan] Error:", err);
       res.status(502).json({
+        success: false,
         error: "Failed to scan ticket image. Please try again with a clearer photo.",
       });
     }
@@ -419,9 +499,13 @@ export function registerUploadRoutes(app: Express) {
   // ─── Manual Ticket Entry ────────────────────────────────────────────────
   app.post("/api/manual-ticket", async (req: Request, res: Response) => {
     try {
+      console.info("[API START]", {
+        endpoint: "/api/manual-ticket",
+        operation: "purchased_tickets.insert",
+      });
       const ctx = await createContext({ req, res } as any);
       if (!ctx.user) {
-        res.status(401).json({ error: "Authentication required" });
+        res.status(401).json({ success: false, error: "Authentication required" });
         return;
       }
 
@@ -438,18 +522,22 @@ export function registerUploadRoutes(app: Express) {
 
       const cfg = FLORIDA_GAMES[gameType as GameType];
       if (!cfg) {
-        res.status(400).json({ error: "Invalid game type" });
+        res.status(400).json({ success: false, error: "Invalid game type" });
         return;
       }
 
       const drawDateTs = new Date(drawDate).getTime();
       if (!Number.isFinite(drawDateTs)) {
-        res.status(400).json({ error: "Invalid draw date" });
+        res.status(400).json({ success: false, error: "Invalid draw date" });
         return;
       }
 
       const normalizedDrawTime = (drawTime || "evening").toLowerCase() as "midday" | "evening";
-      const ticketNotes = `Draw period: ${normalizedDrawTime}\nManual entry: ${new Date().toISOString()}${notes ? `\n${notes}` : ""}`;
+      const sanitizedNotes =
+        typeof notes === "string" ? notes.trim().slice(0, 1000) : "";
+      const sanitizedModelSource =
+        typeof modelSource === "string" ? modelSource.trim().slice(0, 120) : undefined;
+      const ticketNotes = `Draw period: ${normalizedDrawTime}\nManual entry: ${new Date().toISOString()}${sanitizedNotes ? `\n${sanitizedNotes}` : ""}`;
 
       const ticketId = await insertPurchasedTicket({
         userId: ctx.user.id,
@@ -460,7 +548,7 @@ export function registerUploadRoutes(app: Express) {
         drawDate: drawDateTs,
         cost: Number(cost) || 0,
         notes: ticketNotes,
-        modelSource: modelSource ?? undefined,
+        modelSource: sanitizedModelSource,
       });
 
       // If results already exist for this draw, evaluate immediately
@@ -481,10 +569,19 @@ export function registerUploadRoutes(app: Express) {
         success: true,
         ticketId,
         evaluatedNow,
+        data: {
+          ticketId,
+          evaluatedNow,
+        },
       });
     } catch (err: any) {
-      console.error("[Manual Ticket] Error:", err);
-      res.status(500).json({ error: err?.message || "Manual ticket entry failed" });
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[ERROR]", {
+        endpoint: "/api/manual-ticket",
+        operation: "purchased_tickets.insert",
+        message,
+      });
+      res.status(500).json({ success: false, error: "Manual ticket entry failed" });
     }
   });
 }

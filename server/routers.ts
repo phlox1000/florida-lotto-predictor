@@ -71,6 +71,7 @@ import {
   getTicketAnalytics,
 } from "./db";
 import { TRPCError } from "@trpc/server";
+import { checkRateLimit } from "./_core/rate-limit";
 
 const gameTypeSchema = z.enum(GAME_TYPES);
 
@@ -2021,6 +2022,18 @@ export const appRouter = router({
         modelSource: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        const limiter = checkRateLimit({
+          scope: "tracker-log-purchase",
+          req: ctx.req as any,
+          max: 40,
+          windowMs: 60_000,
+        });
+        if (!limiter.allowed) {
+          throw new TRPCError({
+            code: "TOO_MANY_REQUESTS",
+            message: `Rate limit exceeded. Retry in ${limiter.retryAfterSeconds}s.`,
+          });
+        }
         const payload = {
           userId: ctx.user.id,
           gameType: input.gameType,
@@ -2032,7 +2045,7 @@ export const appRouter = router({
           hasNotes: Boolean(input.notes),
           modelSource: input.modelSource ?? null,
         };
-        console.info("[DB INSERT START]", {
+        console.info("[API START]", {
           endpoint: "trpc.tracker.logPurchase",
           operation: "purchased_tickets.insert",
           payload,
@@ -2049,7 +2062,7 @@ export const appRouter = router({
             notes: input.notes,
             modelSource: input.modelSource,
           });
-          console.info("[DB INSERT SUCCESS]", {
+          console.info("[DB WRITE]", {
             endpoint: "trpc.tracker.logPurchase",
             operation: "purchased_tickets.insert",
             id,
@@ -2058,7 +2071,7 @@ export const appRouter = router({
           return { success: true, id };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          console.error("[DB INSERT ERROR]", {
+          console.error("[ERROR]", {
             endpoint: "trpc.tracker.logPurchase",
             operation: "purchased_tickets.insert",
             payload,
