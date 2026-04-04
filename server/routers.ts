@@ -5,11 +5,13 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, adminProcedure, router } from "./_core/trpc";
 import { invokeLLM } from "./_core/llm";
+import { ENV } from "./_core/env";
 import { notifyOwner } from "./_core/notification";
 import { fetchHistoricalDraws } from "./lib/fl-lottery-scraper";
 import { getLastAutoFetchResult, isAutoFetchActive, getAutoFetchRunning, runAutoFetch } from "./cron";
 import { fetchRecentDraws, fetchAllGamesRecent } from "./lib/lotteryusa-scraper";
 import { runAllModels, selectBudgetTickets, applySumRangeFilter } from "./predictions";
+import { scorePlayTonightTickets } from "./play-tonight";
 import {
   getDrawResults, insertDrawResult, getLatestDrawResults, getAllDrawResults, getDrawResultCount,
   insertPredictions, getUserPredictions, getRecentPredictions,
@@ -171,6 +173,15 @@ export const appRouter = router({
         const allPredictions = runAllModels(cfg, history, Object.keys(modelWeights).length > 0 ? modelWeights : undefined);
         const selection = selectBudgetTickets(cfg, allPredictions, input.budget, input.maxTickets);
 
+        // Apply Play Tonight scoring with transparent breakdown
+        const scoredTickets = scorePlayTonightTickets(
+          selection.tickets,
+          allPredictions,
+          modelWeights,
+          cfg,
+          history.map(h => ({ mainNumbers: h.mainNumbers })),
+        );
+
         if (ctx.user) {
           try {
             await insertTicketSelection({
@@ -186,7 +197,8 @@ export const appRouter = router({
         }
 
         return {
-          ...selection,
+          tickets: scoredTickets,
+          totalCost: selection.totalCost,
           gameType: input.gameType,
           gameName: cfg.name,
           ticketPrice: cfg.ticketPrice,
@@ -806,7 +818,24 @@ export const appRouter = router({
           strategy_recommendation: `You are a lottery strategy advisor. Based on the following data for ${cfg.name}, provide personalized betting strategy recommendations:\n\nRecent Draws:\n${historyStr || "No draw history yet."}\n\nModel Performance:\n${perfStr || "No performance data yet."}\n\nModel Weights:\n${weightsStr || "No weights yet."}\n\nBudget constraint: $75 per drawing cycle, 20 tickets maximum.\nProvide specific, actionable recommendations for ticket selection strategy. Include which models to trust more based on their accuracy weights and how to diversify. Keep the response concise (3-4 paragraphs).`,
         };
 
+        // Check if LLM API key is configured before attempting
+        const hasApiKey = Boolean(ENV.forgeApiKey && ENV.forgeApiKey.trim().length > 0);
+        let providerAttempted = false;
+        let fallbackUsed = false;
+
+        if (!hasApiKey) {
+          console.warn("[Analysis] No LLM API key configured — returning fallback text");
+          fallbackUsed = true;
+          return {
+            analysis: "Analysis is temporarily unavailable. Please configure the LLM API key (BUILT_IN_FORGE_API_KEY) to enable AI-powered analysis.",
+            analysisType: input.analysisType,
+            gameType: input.gameType,
+            observability: { providerAttempted, fallbackUsed },
+          };
+        }
+
         try {
+          providerAttempted = true;
           const result = await invokeLLM({
             messages: [
               { role: "system", content: "You are an expert lottery analytics assistant. Provide clear, data-driven analysis. Use markdown formatting for readability. Always include a disclaimer that lottery outcomes are random and no prediction system can guarantee wins." },
@@ -817,13 +846,20 @@ export const appRouter = router({
           const content = result.choices[0]?.message?.content;
           const text = typeof content === "string" ? content : Array.isArray(content) ? content.map((c: any) => "text" in c ? c.text : "").join("") : "";
 
-          return { analysis: text, analysisType: input.analysisType, gameType: input.gameType };
+          return {
+            analysis: text,
+            analysisType: input.analysisType,
+            gameType: input.gameType,
+            observability: { providerAttempted, fallbackUsed },
+          };
         } catch (e) {
           console.error("[Analysis] LLM call failed:", e);
+          fallbackUsed = true;
           return {
             analysis: "Analysis is temporarily unavailable. Please try again later.",
             analysisType: input.analysisType,
             gameType: input.gameType,
+            observability: { providerAttempted, fallbackUsed },
           };
         }
       }),

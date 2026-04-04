@@ -10,6 +10,7 @@ import {
   pushSubscriptions, InsertPushSubscription,
   pdfUploads, InsertPdfUpload,
   purchasedTickets, InsertPurchasedTicket,
+  personalizationMetrics, InsertPersonalizationMetric,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { FLORIDA_GAMES, type GameType } from '@shared/lottery';

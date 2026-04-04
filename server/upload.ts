@@ -14,6 +14,7 @@ import {
 } from "./db";
 import { FLORIDA_GAMES, GAME_TYPES, type GameType } from "@shared/lottery";
 import { createContext } from "./_core/context";
+import { setLastOcrConfidence } from "./_core/systemRouter";
 
 function guessImageMimeType(fileName: string): string {
   const lower = fileName.toLowerCase();
@@ -247,6 +248,7 @@ export function registerUploadRoutes(app: Express) {
         matchedModel: matchModelSource ?? null,
         evaluatedNow,
         imageUrl: fileUrl,
+        ocrConfidence: extracted.ocrConfidence,
       });
     } catch (err: any) {
       console.error("[Ticket Scan] Error:", err);
@@ -510,12 +512,30 @@ export async function processPdfWithLLM(
           ? fallbackNote
           : null;
 
+    // ─── PDF OCR Confidence Scoring ─────────────────────────────────────────
+    // Expected fields: pdfText extracted, gameType detected, draws parsed, draws inserted
+    const pdfFieldsExpected = 4;
+    let pdfFieldsParsed = 0;
+    if (pdfText.length > 0) pdfFieldsParsed++;           // text extraction succeeded
+    if (detectedGame && FLORIDA_GAMES[detectedGame]) pdfFieldsParsed++; // game type detected
+    if (draws.length > 0) pdfFieldsParsed++;              // draws were parsed
+    if (insertedCount > 0) pdfFieldsParsed++;             // draws were inserted (not all dupes)
+    const pdfOcrConfidence = Math.round((pdfFieldsParsed / pdfFieldsExpected) * 100) / 100;
+
+    setLastOcrConfidence({
+      route: "/api/upload-pdf",
+      confidence: pdfOcrConfidence,
+      fieldsExpected: pdfFieldsExpected,
+      fieldsParsed: pdfFieldsParsed,
+      timestamp: new Date().toISOString(),
+    });
+
     await updatePdfUploadStatus(uploadId, "completed", {
       drawsExtracted: insertedCount,
       errorMessage: completionMessage,
     });
 
-    console.log(`[PDF Upload] Processed upload ${uploadId}: ${insertedCount} draws extracted, ${skippedCount} skipped`);
+    console.log(`[PDF Upload] Processed upload ${uploadId}: ${insertedCount} draws extracted, ${skippedCount} skipped, confidence=${pdfOcrConfidence}`);
   } catch (err: any) {
     console.error("[PDF Upload] Processing failed:", err);
     await updatePdfUploadStatus(uploadId, "failed", {
@@ -603,6 +623,7 @@ async function processTicketImageWithLLM(
   drawTime: "midday" | "evening";
   mainNumbers: number[];
   specialNumbers: number[];
+  ocrConfidence: { score: number; fieldsExpected: number; fieldsParsed: number };
 }> {
   const gameTypeList = GAME_TYPES.map(gt => {
     const cfg = FLORIDA_GAMES[gt];
@@ -676,11 +697,43 @@ Important:
   const mainNumbers = (parsed.mainNumbers || []).map((n: any) => Number(n)).filter((n: any) => Number.isFinite(n));
   const specialNumbers = (parsed.specialNumbers || []).map((n: any) => Number(n)).filter((n: any) => Number.isFinite(n));
 
+  // ─── OCR Confidence Scoring ───────────────────────────────────────────────
+  // Score each expected field: gameType, drawDate, drawTime, mainNumbers, specialNumbers
+  const fieldsExpected = 5;
+  let fieldsParsed = 0;
+  if (parsed.gameType && GAME_TYPES.includes(parsed.gameType as GameType)) fieldsParsed++;
+  if (parsed.drawDate && /^\d{4}-\d{2}-\d{2}$/.test(parsed.drawDate)) fieldsParsed++;
+  if (parsed.drawTime === "midday" || parsed.drawTime === "evening") fieldsParsed++;
+  if (mainNumbers.length > 0) fieldsParsed++;
+  // specialNumbers can legitimately be empty for games with specialCount=0
+  const gt = parsed.gameType as GameType;
+  const gtCfg = FLORIDA_GAMES[gt];
+  if (gtCfg) {
+    if (gtCfg.specialCount === 0 && specialNumbers.length === 0) fieldsParsed++;
+    else if (specialNumbers.length === gtCfg.specialCount) fieldsParsed++;
+  } else if (specialNumbers.length >= 0) {
+    // Unknown game type — give partial credit if array is present
+    fieldsParsed += 0.5;
+  }
+  const ocrConfidenceScore = Math.round((fieldsParsed / fieldsExpected) * 100) / 100;
+
+  const ocrConfidence = { score: ocrConfidenceScore, fieldsExpected, fieldsParsed };
+
+  // Log to in-memory debugStatus store
+  setLastOcrConfidence({
+    route: "/api/upload-ticket",
+    confidence: ocrConfidenceScore,
+    fieldsExpected,
+    fieldsParsed,
+    timestamp: new Date().toISOString(),
+  });
+
   return {
     gameType: String(parsed.gameType),
     drawDate: String(parsed.drawDate),
     drawTime: parsed.drawTime,
     mainNumbers,
     specialNumbers,
+    ocrConfidence,
   };
 }

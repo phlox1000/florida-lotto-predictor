@@ -1,6 +1,25 @@
 import { z } from "zod";
 import { notifyOwner } from "./notification";
 import { adminProcedure, publicProcedure, router } from "./trpc";
+import { getLiveTableList } from "../personalization-metrics";
+import { ENV } from "./env";
+
+/** In-memory store for the latest OCR confidence log (set by upload routes). */
+let _lastOcrConfidence: {
+  route: string;
+  confidence: number;
+  fieldsExpected: number;
+  fieldsParsed: number;
+  timestamp: string;
+} | null = null;
+
+export function setLastOcrConfidence(data: typeof _lastOcrConfidence) {
+  _lastOcrConfidence = data;
+}
+
+export function getLastOcrConfidence() {
+  return _lastOcrConfidence;
+}
 
 export const systemRouter = router({
   health: publicProcedure
@@ -26,4 +45,19 @@ export const systemRouter = router({
         success: delivered,
       } as const;
     }),
+
+  /** Debug status endpoint: reports live table list, LLM config status, and last OCR confidence */
+  debugStatus: publicProcedure.query(async () => {
+    const tables = await getLiveTableList();
+    const llmKeyConfigured = Boolean(
+      ENV.forgeApiKey && ENV.forgeApiKey.trim().length > 0
+    );
+    return {
+      liveTables: tables,
+      personalizationMetricsExists: tables.includes("personalization_metrics"),
+      llmKeyConfigured,
+      lastOcrConfidence: _lastOcrConfidence,
+      timestamp: new Date().toISOString(),
+    };
+  }),
 });

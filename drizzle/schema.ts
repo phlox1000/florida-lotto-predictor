@@ -155,3 +155,18 @@ export const purchasedTickets = mysqlTable("purchased_tickets", {
 
 export type PurchasedTicket = typeof purchasedTickets.$inferSelect;
 export type InsertPurchasedTicket = typeof purchasedTickets.$inferInsert;
+
+/** Personalization metrics for user-specific model/game performance tracking */
+export const personalizationMetrics = mysqlTable("personalization_metrics", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  gameType: varchar("gameType", { length: 32 }).notNull(),
+  metricType: varchar("metricType", { length: 64 }).notNull(),
+  metricValue: float("metricValue").notNull().default(0),
+  metadata: json("metadata"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type PersonalizationMetric = typeof personalizationMetrics.$inferSelect;
+export type InsertPersonalizationMetric = typeof personalizationMetrics.$inferInsert;
