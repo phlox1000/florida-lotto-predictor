@@ -72,6 +72,7 @@ import {
 } from "./db";
 import { TRPCError } from "@trpc/server";
 import { checkRateLimit } from "./_core/rate-limit";
+import { buildPlayTonightRecommendation } from "./play-tonight";
 
 const gameTypeSchema = z.enum(GAME_TYPES);
 
@@ -341,6 +342,22 @@ export const appRouter = router({
             },
           },
         };
+      }),
+
+    /** Personal-use deterministic recommendation for tonight */
+    playTonight: publicProcedure
+      .input(z.object({
+        gameType: gameTypeSchema,
+        backupCount: z.number().min(1).max(5).default(3),
+        sumRangeFilter: z.boolean().default(true),
+      }))
+      .query(async ({ input, ctx }) => {
+        return buildPlayTonightRecommendation({
+          userId: ctx.user?.id ?? null,
+          gameType: input.gameType,
+          backupCount: input.backupCount,
+          sumRangeFilter: input.sumRangeFilter,
+        });
       }),
 
     /** Get user's prediction history */

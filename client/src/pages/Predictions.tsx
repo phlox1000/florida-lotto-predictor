@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { trpc } from "@/lib/trpc";
 import { FLORIDA_GAMES, GAME_TYPES, type GameType, type PredictionResult } from "@shared/lottery";
-import { Zap, DollarSign, Dices, Target, Sparkles, Printer, Heart, ShoppingCart, Filter, Info, Shuffle, ArrowLeftRight } from "lucide-react";
+import { Zap, DollarSign, Dices, Target, Sparkles, Printer, Heart, ShoppingCart, Filter, Info, Shuffle, ArrowLeftRight, Moon, ShieldCheck } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -313,6 +313,14 @@ export default function Predictions() {
   const generatePredictions = trpc.predictions.generate.useMutation();
   const generateTickets = trpc.tickets.generate.useMutation();
   const generateQuickPick = trpc.predictions.quickPick.useMutation();
+  const playTonight = trpc.predictions.playTonight.useQuery({
+    gameType: selectedGame,
+    backupCount: 3,
+    sumRangeFilter,
+  }, {
+    enabled: false,
+    retry: false,
+  });
 
   // Background sync: queue predictions when offline, auto-submit when back online
   const { queuePrediction } = useBackgroundSync(
@@ -360,6 +368,7 @@ export default function Predictions() {
 
   const predictions = generatePredictions.data?.predictions;
   const ticketData = generateTickets.data;
+  const playTonightData = playTonight.data;
 
   const handlePrint = useCallback(() => {
     if (!ticketData) return;
@@ -392,6 +401,24 @@ export default function Predictions() {
       purchaseDate: Date.now(),
     });
   }, [isAuthenticated, ticketData, selectedGame, logBulk]);
+
+  const handleRunPlayTonight = useCallback(() => {
+    void playTonight.refetch();
+  }, [playTonight]);
+
+  const handlePlayTonightFavorite = useCallback(() => {
+    const rec = playTonightData?.recommendation;
+    if (!rec) return;
+    if (!isAuthenticated) { toast.error("Sign in to save favorites"); return; }
+    addFavorite.mutate({
+      gameType: selectedGame,
+      mainNumbers: rec.mainNumbers,
+      specialNumbers: rec.specialNumbers,
+      modelSource: rec.modelSource,
+      confidence: rec.confidence,
+      label: "Play Tonight",
+    });
+  }, [playTonightData, isAuthenticated, addFavorite, selectedGame]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -432,6 +459,121 @@ export default function Predictions() {
             </Button>
           </div>
         </div>
+
+        <Card className="bg-card border-border/50 mb-6">
+          <CardContent className="p-4 space-y-4">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Moon className="w-4 h-4 text-primary" />
+                  <h3 className="text-base font-semibold">Play Tonight</h3>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  One clear recommendation using model consensus, pattern fit, and your tracked outcomes.
+                </p>
+              </div>
+              <Button
+                onClick={handleRunPlayTonight}
+                disabled={playTonight.isFetching}
+                className="bg-primary text-primary-foreground"
+              >
+                {playTonight.isFetching ? "Building..." : "Build Recommendation"}
+              </Button>
+            </div>
+
+            {playTonightData?.recommendation ? (
+              <div className="space-y-4">
+                <div className="p-3 rounded-lg bg-secondary/30 border border-border/30">
+                  <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Top Recommendation</p>
+                      <p className="text-sm font-semibold text-primary">{playTonightData.gameName}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="border-primary/40 text-primary">
+                        Confidence {Math.round(playTonightData.recommendation.confidence * 100)}%
+                      </Badge>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handlePlayTonightFavorite}
+                        className="border-border/60"
+                      >
+                        <Heart className="w-3.5 h-3.5 mr-1" />
+                        Save
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-1.5 flex-wrap mb-2">
+                    {playTonightData.recommendation.mainNumbers.map((n, i) => (
+                      <LottoBall key={`play-tonight-main-${i}`} number={n} />
+                    ))}
+                    {playTonightData.recommendation.specialNumbers.map((n, i) => (
+                      <LottoBall key={`play-tonight-special-${i}`} number={n} variant="special" />
+                    ))}
+                  </div>
+
+                  <p className="text-xs text-muted-foreground">
+                    Draw: {playTonightData.nextDrawIso ? new Date(playTonightData.nextDrawIso).toLocaleString() : "No scheduled draw"}
+                    {" • "}
+                    Source: {playTonightData.recommendation.modelSource.replace(/_/g, " ")}
+                  </p>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-3">
+                  <div className="p-3 rounded-lg bg-secondary/20 border border-border/30">
+                    <p className="text-xs font-semibold mb-2">Why this pick</p>
+                    <ul className="text-xs text-muted-foreground space-y-1">
+                      {playTonightData.recommendation.reasons.map((reason, idx) => (
+                        <li key={`reason-${idx}`}>• {reason}</li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div className="p-3 rounded-lg bg-secondary/20 border border-border/30">
+                    <p className="text-xs font-semibold mb-2">Signal breakdown</p>
+                    <div className="text-xs text-muted-foreground space-y-1">
+                      <p>Consensus: {Math.round(playTonightData.recommendation.breakdown.consensusScore * 100)}%</p>
+                      <p>Pattern fit: {Math.round(playTonightData.recommendation.breakdown.patternFitScore * 100)}%</p>
+                      <p>Model form: {Math.round(playTonightData.recommendation.breakdown.modelFormScore * 100)}%</p>
+                      <p>Personal fit: {Math.round(playTonightData.recommendation.breakdown.personalScore * 100)}%</p>
+                    </div>
+                  </div>
+                </div>
+
+                {playTonightData.backups.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold">Backup picks</p>
+                    {playTonightData.backups.map((backup, idx) => (
+                      <div key={`backup-${idx}`} className="flex items-center justify-between gap-3 p-2 rounded-md bg-secondary/20 border border-border/30">
+                        <div className="flex gap-1.5 flex-wrap">
+                          {backup.mainNumbers.map((n, i) => (
+                            <LottoBall key={`backup-main-${idx}-${i}`} number={n} />
+                          ))}
+                          {backup.specialNumbers.map((n, i) => (
+                            <LottoBall key={`backup-special-${idx}-${i}`} number={n} variant="special" />
+                          ))}
+                        </div>
+                        <Badge variant="outline" className="text-[10px]">
+                          {Math.round(backup.confidence * 100)}%
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="p-2 rounded-md bg-primary/5 border border-primary/20 flex items-center gap-2 text-[11px] text-muted-foreground">
+                  <ShieldCheck className="w-3.5 h-3.5 text-primary" />
+                  Deterministic recommendation for personal use. Lottery outcomes remain random.
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Run “Build Recommendation” to get tonight’s primary pick and backups.
+              </p>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Sum/Range Constraint Filter Toggle */}
         <div className="flex items-center gap-3 mb-6 p-3 rounded-lg bg-secondary/30 border border-border/30">
