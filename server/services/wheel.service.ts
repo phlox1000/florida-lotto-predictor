@@ -1,3 +1,7 @@
+import { FLORIDA_GAMES, type GameType } from "@shared/lottery";
+import { runAllModels } from "../predictions";
+import { getDrawResults, getModelWeights } from "../db";
+
 /** Calculate n choose r (combinations) */
 export function nCr(n: number, r: number): number {
   if (r > n) return 0;
@@ -66,4 +70,70 @@ export function generateAbbreviatedWheel(nums: number[], pick: number): number[]
   }
 
   return result;
+}
+
+/** Aggregate consensus numbers from all models for auto-populating a wheel. */
+export async function getSmartNumbers(gameType: GameType, count: number) {
+  const cfg = FLORIDA_GAMES[gameType];
+  if (cfg.isDigitGame) {
+    return {
+      numbers: [] as number[],
+      modelVotes: {} as Record<number, { count: number; weightedScore: number; models: string[] }>,
+      error: "Smart Wheel is not available for digit games.",
+    };
+  }
+
+  const historyRows = await getDrawResults(gameType, 200);
+  const history = historyRows.map(r => ({
+    mainNumbers: r.mainNumbers as number[],
+    specialNumbers: (r.specialNumbers as number[]) || [],
+    drawDate: r.drawDate,
+  }));
+
+  if (history.length < 10) {
+    return {
+      numbers: [] as number[],
+      modelVotes: {} as Record<number, { count: number; weightedScore: number; models: string[] }>,
+      error: "Need at least 10 historical draws. Use Bulk History in Admin to load data.",
+    };
+  }
+
+  const modelWeights = await getModelWeights(gameType);
+  const allResults = runAllModels(cfg, history, modelWeights);
+
+  const votes = new Map<number, { count: number; weightedScore: number; models: string[] }>();
+  for (const pred of allResults) {
+    if (pred.mainNumbers.length === 0 || pred.metadata?.insufficient_data) continue;
+    for (const n of pred.mainNumbers) {
+      const existing = votes.get(n) || { count: 0, weightedScore: 0, models: [] };
+      existing.count += 1;
+      existing.weightedScore += pred.confidenceScore;
+      existing.models.push(pred.modelName);
+      votes.set(n, existing);
+    }
+  }
+
+  const ranked = [...votes.entries()]
+    .sort((a, b) => b[1].weightedScore - a[1].weightedScore);
+
+  const topNumbers = ranked.slice(0, count).map(e => e[0]).sort((a, b) => a - b);
+
+  const modelVotes: Record<number, { count: number; weightedScore: number; models: string[] }> = {};
+  for (const [num, data] of ranked.slice(0, count)) {
+    modelVotes[num] = {
+      count: data.count,
+      weightedScore: Math.round(data.weightedScore * 100) / 100,
+      models: data.models,
+    };
+  }
+
+  const validModels = allResults.filter(p => p.mainNumbers.length > 0 && !p.metadata?.insufficient_data).length;
+
+  return {
+    numbers: topNumbers,
+    modelVotes,
+    totalModelsUsed: validModels,
+    totalModels: allResults.length,
+    historyUsed: history.length,
+  };
 }

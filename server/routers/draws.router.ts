@@ -1,12 +1,8 @@
 import { z } from "zod";
-import { FLORIDA_GAMES } from "@shared/lottery";
 import { publicProcedure, adminProcedure, router } from "../_core/trpc";
-import { notifyOwner } from "../_core/notification";
-import {
-  getDrawResults, insertDrawResult, getLatestDrawResults,
-  getAllDrawResults, evaluatePredictionsAgainstDraw,
-} from "../db";
+import { getDrawResults, getLatestDrawResults, getAllDrawResults } from "../db";
 import { gameTypeSchema } from "./routerUtils";
+import { addManualDraw } from "../services/draws.service";
 
 export const drawsRouter = router({
   /** Get latest draw results across all games */
@@ -40,34 +36,12 @@ export const drawsRouter = router({
       drawTime: z.string().optional(),
     }))
     .mutation(async ({ input }) => {
-      const result = await insertDrawResult({
+      return addManualDraw({
         gameType: input.gameType,
         drawDate: input.drawDate,
         mainNumbers: input.mainNumbers,
         specialNumbers: input.specialNumbers || [],
         drawTime: input.drawTime,
-        source: "manual",
       });
-
-      const drawId = (result as any)?.[0]?.insertId ?? 0;
-      try {
-        const evalResult = await evaluatePredictionsAgainstDraw(
-          drawId,
-          input.gameType,
-          input.mainNumbers,
-          input.specialNumbers || []
-        );
-
-        if (evalResult.highAccuracy > 3) {
-          await notifyOwner({
-            title: "High Prediction Accuracy Detected",
-            content: `${evalResult.highAccuracy} predictions matched 60%+ of the latest ${FLORIDA_GAMES[input.gameType].name} draw (${input.mainNumbers.join(", ")}). ${evalResult.evaluated} total predictions evaluated.`,
-          });
-        }
-      } catch (e) {
-        console.warn("[Draws] Auto-evaluation failed:", e);
-      }
-
-      return { success: true };
     }),
 });
