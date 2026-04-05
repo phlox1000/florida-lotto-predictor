@@ -3,7 +3,8 @@ import { FLORIDA_GAMES } from "@shared/lottery";
 import { publicProcedure, router } from "../_core/trpc";
 import { runAllModels } from "../predictions";
 import { getDrawResults, getModelWeights } from "../db";
-import { gameTypeSchema, generateCombinations, generateAbbreviatedWheel, nCr } from "./routerUtils";
+import { gameTypeSchema } from "./routerUtils";
+import { generateCombinations, generateAbbreviatedWheel, nCr } from "../services/wheel.service";
 
 export const wheelRouter = router({
   /** Generate wheeling combinations from selected numbers */
