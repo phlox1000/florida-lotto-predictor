@@ -22,7 +22,7 @@ import type { GameType } from "@shared/lottery";
 const BASE_URL = "https://files.floridalottery.com/exptkt";
 
 /** Map game types to their official file codes (HTML history files).
- *  Cash Pop is not included — its official history (cp.pdf) is PDF, not HTML. */
+ *  Cash Pop is handled separately via cashpop-pdf-parser.ts (its source is PDF). */
 const FILE_CODES: Record<string, string> = {
   fantasy_5: "ff",
   powerball: "pb",
@@ -354,6 +354,12 @@ export async function fetchHistoricalDraws(
   gameType: GameType,
   maxDraws: number = 0
 ): Promise<ParsedDraw[]> {
+  // Cash Pop uses a dedicated PDF parser (official source is cp.pdf, not HTML)
+  if (gameType === "cash_pop") {
+    const { fetchCashPopHistory } = await import("./cashpop-pdf-parser");
+    return fetchCashPopHistory(maxDraws);
+  }
+
   const fileCode = FILE_CODES[gameType];
   if (!fileCode) {
     throw new Error(`Unknown game type: ${gameType}`);
