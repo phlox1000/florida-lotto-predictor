@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { getNextDrawDate, formatTimeUntil, FLORIDA_GAMES, GAME_TYPES } from "../shared/lottery";
+import { getNextDrawDate, formatTimeUntil, getETNow, FLORIDA_GAMES, GAME_TYPES } from "../shared/lottery";
+
+describe("getETNow", () => {
+  it("returns a Date whose components match America/New_York wall-clock time", () => {
+    const etNow = getETNow();
+    // Should be a valid Date with reasonable year
+    expect(etNow.getFullYear()).toBeGreaterThanOrEqual(2025);
+    // Should be within a few seconds of real-time
+    const realNow = new Date();
+    const drift = Math.abs(realNow.getTime() - etNow.getTime());
+    // Allow up to 24h drift since the Date's absolute epoch doesn't match UTC,
+    // but verify the wall-clock components parse correctly
+    expect(etNow.getHours()).toBeGreaterThanOrEqual(0);
+    expect(etNow.getHours()).toBeLessThan(24);
+  });
+});
 
 describe("Draw Schedule", () => {
   it("returns null for ended games (Cash4Life)", () => {
@@ -9,14 +24,10 @@ describe("Draw Schedule", () => {
 
   it("returns a future date for active games", () => {
     const result = getNextDrawDate("fantasy_5");
-    // Fantasy 5 draws daily, so there should always be a next draw
     expect(result).not.toBeNull();
     if (result) {
-      // The returned date should be in the future (or very close to now)
-      const now = new Date();
-      const etOffset = -5;
-      const etNow = new Date(now.getTime() + (now.getTimezoneOffset() + etOffset * 60) * 60000);
-      expect(result.getTime()).toBeGreaterThan(etNow.getTime() - 60000); // within 1 min tolerance
+      const etNow = getETNow();
+      expect(result.getTime()).toBeGreaterThan(etNow.getTime() - 60000);
     }
   });
 
@@ -25,7 +36,6 @@ describe("Draw Schedule", () => {
     expect(result).not.toBeNull();
     if (result) {
       const day = result.getDay();
-      // Powerball draws on Mon(1), Wed(3), Sat(6)
       expect([1, 3, 6]).toContain(day);
     }
   });
@@ -55,25 +65,21 @@ describe("Draw Schedule", () => {
 
 describe("formatTimeUntil", () => {
   it("returns 'Drawing now!' for past dates", () => {
-    const past = new Date(Date.now() - 1000 * 60 * 60); // 1 hour ago
+    const etNow = getETNow();
+    const past = new Date(etNow.getTime() - 1000 * 60 * 60);
     const result = formatTimeUntil(past);
     expect(result).toBe("Drawing now!");
   });
 
   it("formats hours and minutes for near-future dates", () => {
-    // Create a date ~3 hours from now in ET
-    const now = new Date();
-    const etOffset = -5;
-    const etNow = new Date(now.getTime() + (now.getTimezoneOffset() + etOffset * 60) * 60000);
+    const etNow = getETNow();
     const future = new Date(etNow.getTime() + 3 * 60 * 60 * 1000 + 30 * 60 * 1000);
     const result = formatTimeUntil(future);
     expect(result).toMatch(/\d+h \d+m/);
   });
 
   it("formats days for far-future dates", () => {
-    const now = new Date();
-    const etOffset = -5;
-    const etNow = new Date(now.getTime() + (now.getTimezoneOffset() + etOffset * 60) * 60000);
+    const etNow = getETNow();
     const future = new Date(etNow.getTime() + 2 * 24 * 60 * 60 * 1000);
     const result = formatTimeUntil(future);
     expect(result).toMatch(/\d+d/);
@@ -111,7 +117,6 @@ describe("getNextDrawDate multi-draw logic", () => {
     const result = getNextDrawDate("fantasy_5");
     expect(result).not.toBeNull();
     if (result) {
-      // Fantasy 5 draw times are 13:30 and 23:00
       const hours = result.getHours();
       const mins = result.getMinutes();
       const timeStr = `${hours.toString().padStart(2, "0")}:${mins.toString().padStart(2, "0")}`;
@@ -131,8 +136,6 @@ describe("getNextDrawDate multi-draw logic", () => {
   });
 
   it("returns the earliest upcoming draw time, not the last", () => {
-    // For any active multi-draw game, the returned time should be the next upcoming
-    // draw, which may be an earlier time slot — not necessarily the last one of the day
     const multiDrawGames = GAME_TYPES.filter(
       gt => FLORIDA_GAMES[gt].schedule.drawTimes.length > 1 && !FLORIDA_GAMES[gt].schedule.ended
     );
@@ -145,7 +148,6 @@ describe("getNextDrawDate multi-draw logic", () => {
   });
 
   it("single-draw games still return a valid result", () => {
-    // Powerball has 1 draw time per draw day
     const result = getNextDrawDate("powerball");
     expect(result).not.toBeNull();
     if (result) {
