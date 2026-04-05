@@ -200,6 +200,10 @@
     text-shadow: 0 0 12px oklch(0.85 0.17 85 / 0.5);
   }
 
+  .font-tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
   /* Lottery ball styling */
   .lotto-ball {
     display: inline-flex;
