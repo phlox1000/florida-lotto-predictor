@@ -12,11 +12,11 @@ export function frequencyBaselineModel(cfg: GameConfig, history: HistoryDraw[]):
   const pool = cfg.isDigitGame ? range(0, 9) : range(1, cfg.mainMax);
 
   if (history.length === 0) {
+    // Fixed spread: evenly space numbers across the pool. No wall-clock dependency.
     const step = Math.max(1, Math.floor(pool.length / cfg.mainCount));
-    const timeOffset = Math.floor(Date.now() / 60000) % step;
     const main: number[] = [];
-    for (let i = 0; i < cfg.mainCount && i * step + timeOffset < pool.length; i++) {
-      main.push(pool[i * step + timeOffset]);
+    for (let i = 0; i < cfg.mainCount && i * step < pool.length; i++) {
+      main.push(pool[i * step]);
     }
     while (main.length < cfg.mainCount) {
       main.push(pool[main.length]);

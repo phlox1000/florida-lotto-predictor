@@ -1,4 +1,5 @@
 import type { GameConfig, PredictionResult } from "../../shared/lottery";
+import type { HistoryDraw } from "./types";
 import { deterministicWeightedSelect } from "./helpers";
 import { generateSpecialFromHistory } from "./specialNumbers";
 
@@ -6,12 +7,17 @@ import { generateSpecialFromHistory } from "./specialNumbers";
  * Budget-aware ticket selector: picks exactly `ticketCount` tickets within `budget`.
  * Uses a multi-step filtering process combining all model outputs.
  * Only uses formula-based model outputs — never generates random tickets.
+ *
+ * @param history - draw history, used for frequency-based special number generation
+ *                  on variation tickets. If omitted, special numbers fall back to
+ *                  uniform selection (legacy behavior for callers not yet updated).
  */
 export function selectBudgetTickets(
   cfg: GameConfig,
   allPredictions: PredictionResult[],
   budget: number = 75,
   maxTickets: number = 20,
+  history: HistoryDraw[] = [],
 ): { tickets: Array<{ mainNumbers: number[]; specialNumbers: number[]; modelSource: string; confidence: number }>; totalCost: number } {
   const ticketPrice = cfg.ticketPrice;
   const affordableCount = Math.min(maxTickets, Math.floor(budget / ticketPrice));
@@ -58,7 +64,8 @@ export function selectBudgetTickets(
       const pool = topNums.slice(0, poolSize);
       const weights = pool.map(n => numberScores.get(n) || 0);
       const main = deterministicWeightedSelect(pool, weights, cfg.mainCount, variationSalt).sort((a, b) => a - b);
-      const special = generateSpecialFromHistory(cfg, allPredictions.length > 0 ? [] : [], variationSalt);
+      // Use actual history for special number frequency analysis
+      const special = generateSpecialFromHistory(cfg, history, variationSalt);
       const key = main.join(",") + "|" + special.join(",");
       if (!usedKeys.has(key)) {
         usedKeys.add(key);

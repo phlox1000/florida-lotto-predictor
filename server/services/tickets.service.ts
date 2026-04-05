@@ -19,7 +19,7 @@ export async function generateTickets(
 
   const modelWeights = await getModelWeights(gameType);
   const allPredictions = runAllModels(cfg, history, Object.keys(modelWeights).length > 0 ? modelWeights : undefined);
-  const selection = selectBudgetTickets(cfg, allPredictions, budget, maxTickets);
+  const selection = selectBudgetTickets(cfg, allPredictions, budget, maxTickets, history);
 
   const scoredTickets = scorePlayTonightTickets(
     selection.tickets,

@@ -1,7 +1,36 @@
 import type { GameConfig, PredictionResult } from "../../shared/lottery";
 import type { DataCheck, HistoryDraw } from "./types";
 
-/** Weighted sampling WITHOUT replacement from a scored pool. No pure randomness. */
+/**
+ * Simple integer hash for mixing numeric inputs into a well-distributed value.
+ * Uses the 32-bit FNV-1a-inspired mixing constants from the original codebase.
+ */
+function mixHash(a: number, b: number): number {
+  let h = a * 2654435761 + b * 40503;
+  h = ((h << 13) ^ h) | 0;
+  h = (h * 1597334677) | 0;
+  return h;
+}
+
+/**
+ * Derive a stable hash from history for use as a base seed.
+ * Uses the last few draws so the seed changes when data changes,
+ * but stays constant for identical input regardless of wall-clock time.
+ */
+export function historyHash(history: HistoryDraw[]): number {
+  let h = history.length * 2654435761;
+  const tail = history.slice(-5);
+  for (const draw of tail) {
+    for (const n of draw.mainNumbers) {
+      h = ((h << 5) - h + n) | 0;
+    }
+    h = ((h << 5) - h + (draw.drawDate || 0)) | 0;
+  }
+  return h;
+}
+
+/** Weighted sampling WITHOUT replacement from a scored pool.
+ *  Selection is driven by weights + a stable seed derived from salt and item state. */
 export function weightedSampleWithoutReplacement(
   items: number[],
   weights: number[],
@@ -15,7 +44,7 @@ export function weightedSampleWithoutReplacement(
       if (!usedIdx.has(j)) totalW += weights[j];
     }
     if (totalW <= 0) break;
-    const seed = deterministicSeed(result, pick);
+    const seed = stableSeed(result, pick);
     let threshold = seed * totalW;
     for (let j = 0; j < items.length; j++) {
       if (usedIdx.has(j)) continue;
@@ -31,21 +60,20 @@ export function weightedSampleWithoutReplacement(
 }
 
 /**
- * Deterministic pseudo-random seed based on current state.
- * Uses a hash of the current timestamp (minute-level granularity for consistency
- * within a prediction run) and the numbers already picked.
+ * Stable pseudo-random seed based on current picks and iteration.
+ * Derived entirely from input state — no wall-clock dependency.
  * Returns a value between 0 and 1.
  */
-export function deterministicSeed(currentPicks: number[], iteration: number): number {
-  const timeComponent = Math.floor(Date.now() / 60000);
-  let hash = timeComponent * 2654435761 + iteration * 40503;
+export function stableSeed(currentPicks: number[], iteration: number): number {
+  let hash = iteration * 2654435761;
   for (const n of currentPicks) {
     hash = ((hash << 5) - hash + n) | 0;
   }
   return Math.abs(hash % 10000) / 10000;
 }
 
-/** Deterministic selection from a scored pool — picks top items by weight with slight variation. */
+/** Deterministic selection from a scored pool — picks top items by weight.
+ *  Uses a small salt-based perturbation for stable tie-breaking (no wall-clock). */
 export function deterministicWeightedSelect(
   items: number[],
   weights: number[],
@@ -53,9 +81,8 @@ export function deterministicWeightedSelect(
   salt: number = 0
 ): number[] {
   const pairs = items.map((item, i) => ({ item, weight: weights[i] }));
-  const timeComponent = Math.floor(Date.now() / 60000);
   for (let i = 0; i < pairs.length; i++) {
-    const tieBreaker = Math.abs(((timeComponent + salt) * 2654435761 + pairs[i].item * 40503) % 10000) / 100000;
+    const tieBreaker = Math.abs(mixHash(salt, pairs[i].item) % 10000) / 100000;
     pairs[i].weight += tieBreaker;
   }
   pairs.sort((a, b) => b.weight - a.weight);
