@@ -427,6 +427,15 @@ function DataHealthDashboard() {
                 <span className="font-mono text-foreground">{d.drawCount} draws</span>
               </div>
               <Progress value={(d.drawCount / maxCount) * 100} className="h-2" />
+              {d.byDrawTime && d.byDrawTime.length > 0 && (
+                <div className="flex flex-wrap gap-x-3 gap-y-0.5 pl-1">
+                  {d.byDrawTime.map(dt => (
+                    <span key={dt.drawTime} className="text-[10px] text-muted-foreground">
+                      {dt.drawTime}: <span className="font-mono text-foreground">{dt.count}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>

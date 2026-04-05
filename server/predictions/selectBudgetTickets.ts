@@ -47,10 +47,15 @@ export function selectBudgetTickets(
 
   const topNums = [...numberScores.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0]);
   if (topNums.length >= cfg.mainCount) {
+    // For single-number games (Cash Pop), use the full scored pool so each
+    // variation can pick a distinct number. For multi-number games, use 3x mainCount.
+    const poolSize = cfg.mainCount === 1
+      ? Math.min(topNums.length, cfg.mainMax)
+      : Math.min(topNums.length, cfg.mainCount * 3);
     let variationSalt = 0;
     while (tickets.length < affordableCount && variationSalt < 200) {
       variationSalt++;
-      const pool = topNums.slice(0, Math.min(topNums.length, cfg.mainCount * 3));
+      const pool = topNums.slice(0, poolSize);
       const weights = pool.map(n => numberScores.get(n) || 0);
       const main = deterministicWeightedSelect(pool, weights, cfg.mainCount, variationSalt).sort((a, b) => a - b);
       const special = generateSpecialFromHistory(cfg, allPredictions.length > 0 ? [] : [], variationSalt);

@@ -170,6 +170,20 @@ export async function getDrawResultCount(gameType: string): Promise<number> {
   return result[0]?.count ?? 0;
 }
 
+/** Get draw counts grouped by drawTime for a specific game (used for Cash Pop coverage). */
+export async function getDrawResultCountByDrawTime(gameType: string): Promise<Array<{ drawTime: string; count: number }>> {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select({
+    drawTime: drawResults.drawTime,
+    count: sql<number>`COUNT(*)`,
+  })
+    .from(drawResults)
+    .where(eq(drawResults.gameType, gameType))
+    .groupBy(drawResults.drawTime);
+  return rows.map(r => ({ drawTime: r.drawTime || "unknown", count: Number(r.count) || 0 }));
+}
+
 // ─── Predictions ────────────────────────────────────────────────────────────────
 export async function insertPredictions(data: InsertPrediction[]) {
   const db = await getDb();

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { FLORIDA_GAMES, GAME_TYPES, getNextDrawDate, formatTimeUntil } from "@shared/lottery";
 import { publicProcedure, router } from "../_core/trpc";
-import { getDrawResultCount } from "../db";
+import { getDrawResultCount, getDrawResultCountByDrawTime } from "../db";
 import { gameTypeSchema } from "./routerUtils";
 
 export const scheduleRouter = router({
@@ -37,14 +37,17 @@ export const scheduleRouter = router({
       };
     }),
 
-  /** Get data health: how many draws we have per game */
+  /** Get data health: how many draws we have per game, with draw-time breakdown for multi-draw games */
   dataHealth: publicProcedure.query(async () => {
     const health = await Promise.all(
-      GAME_TYPES.map(async (gt) => ({
-        gameType: gt,
-        gameName: FLORIDA_GAMES[gt].name,
-        drawCount: await getDrawResultCount(gt),
-      }))
+      GAME_TYPES.map(async (gt) => {
+        const cfg = FLORIDA_GAMES[gt];
+        const drawCount = await getDrawResultCount(gt);
+        const byDrawTime = cfg.drawingsPerDay > 2
+          ? await getDrawResultCountByDrawTime(gt)
+          : undefined;
+        return { gameType: gt, gameName: cfg.name, drawCount, byDrawTime };
+      })
     );
     return health;
   }),
