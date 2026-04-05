@@ -14,3 +14,9 @@
 export { runAllModels } from "./runAllModels";
 export { selectBudgetTickets } from "./selectBudgetTickets";
 export { applySumRangeFilter } from "./sumRangeFilter";
+
+export {
+  MODEL_REGISTRY, MODEL_IDS, MODEL_META_BY_ID,
+  MODEL_DISPLAY_NAMES, MODEL_CATEGORIES,
+  type ModelMeta, type ModelCategory,
+} from "./modelRegistry";
