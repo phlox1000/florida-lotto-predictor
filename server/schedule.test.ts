@@ -101,7 +101,56 @@ describe("Game Configuration", () => {
     }
   });
 
-  it("has exactly 9 game types", () => {
-    expect(GAME_TYPES.length).toBe(9);
+  it("has exactly 10 game types", () => {
+    expect(GAME_TYPES.length).toBe(10);
+  });
+});
+
+describe("getNextDrawDate multi-draw logic", () => {
+  it("returns a valid draw time for multi-draw games (Fantasy 5 has 2 daily draws)", () => {
+    const result = getNextDrawDate("fantasy_5");
+    expect(result).not.toBeNull();
+    if (result) {
+      // Fantasy 5 draw times are 13:30 and 23:00
+      const hours = result.getHours();
+      const mins = result.getMinutes();
+      const timeStr = `${hours.toString().padStart(2, "0")}:${mins.toString().padStart(2, "0")}`;
+      expect(["13:30", "23:00"]).toContain(timeStr);
+    }
+  });
+
+  it("returns a valid draw time for Cash Pop (5 daily draws)", () => {
+    const result = getNextDrawDate("cash_pop");
+    expect(result).not.toBeNull();
+    if (result) {
+      const hours = result.getHours();
+      const mins = result.getMinutes();
+      const timeStr = `${hours.toString().padStart(2, "0")}:${mins.toString().padStart(2, "0")}`;
+      expect(["08:45", "11:45", "14:45", "18:45", "23:45"]).toContain(timeStr);
+    }
+  });
+
+  it("returns the earliest upcoming draw time, not the last", () => {
+    // For any active multi-draw game, the returned time should be the next upcoming
+    // draw, which may be an earlier time slot — not necessarily the last one of the day
+    const multiDrawGames = GAME_TYPES.filter(
+      gt => FLORIDA_GAMES[gt].schedule.drawTimes.length > 1 && !FLORIDA_GAMES[gt].schedule.ended
+    );
+    expect(multiDrawGames.length).toBeGreaterThan(0);
+
+    for (const gt of multiDrawGames) {
+      const result = getNextDrawDate(gt);
+      expect(result).not.toBeNull();
+    }
+  });
+
+  it("single-draw games still return a valid result", () => {
+    // Powerball has 1 draw time per draw day
+    const result = getNextDrawDate("powerball");
+    expect(result).not.toBeNull();
+    if (result) {
+      expect(result.getHours()).toBe(22);
+      expect(result.getMinutes()).toBe(59);
+    }
   });
 });

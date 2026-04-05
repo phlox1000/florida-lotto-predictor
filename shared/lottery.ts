@@ -98,27 +98,24 @@ export function getNextDrawDate(gameType: GameType): Date | null {
 
   const now = new Date();
   // Convert to ET (approximate: UTC-5 for EST, UTC-4 for EDT)
-  // We'll use a simple approach - the server/client can adjust
   const etOffset = -5; // EST; adjust for EDT if needed
   const etNow = new Date(now.getTime() + (now.getTimezoneOffset() + etOffset * 60) * 60000);
 
-  const lastDrawTime = cfg.schedule.drawTimes[cfg.schedule.drawTimes.length - 1];
-  const [drawHour, drawMin] = lastDrawTime.split(":").map(Number);
-
-  // Check today and next 7 days
   for (let dayOffset = 0; dayOffset <= 7; dayOffset++) {
     const candidate = new Date(etNow);
     candidate.setDate(candidate.getDate() + dayOffset);
-    const dayOfWeek = candidate.getDay();
 
-    if (cfg.schedule.drawDays.includes(dayOfWeek)) {
-      candidate.setHours(drawHour, drawMin, 0, 0);
+    if (!cfg.schedule.drawDays.includes(candidate.getDay())) continue;
 
-      // If today but draw time has passed, skip to next draw day
-      if (dayOffset === 0 && candidate <= etNow) continue;
+    // Check each draw time on this day (earliest first — drawTimes is already sorted)
+    for (const drawTime of cfg.schedule.drawTimes) {
+      const [h, m] = drawTime.split(":").map(Number);
+      const drawDate = new Date(candidate);
+      drawDate.setHours(h, m, 0, 0);
 
-      return candidate;
+      if (drawDate > etNow) return drawDate;
     }
+    // All draw times on this day have passed; continue to next day
   }
   return null;
 }
