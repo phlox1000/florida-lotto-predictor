@@ -1,7 +1,7 @@
 /** Game type identifiers */
 export const GAME_TYPES = [
   "fantasy_5", "powerball", "mega_millions", "florida_lotto",
-  "cash4life", "pick_2", "pick_3", "pick_4", "pick_5"
+  "cash4life", "pick_2", "pick_3", "pick_4", "pick_5", "cash_pop"
 ] as const;
 
 export type GameType = typeof GAME_TYPES[number];
@@ -76,6 +76,13 @@ export const FLORIDA_GAMES: Record<GameType, GameConfig> = {
     id: "pick_5", name: "Pick 5", mainCount: 5, mainMax: 9,
     specialCount: 0, specialMax: 0, isDigitGame: true, drawingsPerDay: 2, ticketPrice: 1,
     schedule: { drawDays: [0, 1, 2, 3, 4, 5, 6], drawTimes: ["13:30", "23:00"], description: "Daily, Midday & Evening" },
+  },
+  // Cash Pop: single-number game — pick 1 number from 1-25.
+  // Represented as mainCount=1 within the existing schema.
+  cash_pop: {
+    id: "cash_pop", name: "Cash Pop", mainCount: 1, mainMax: 25,
+    specialCount: 0, specialMax: 0, isDigitGame: false, drawingsPerDay: 1, ticketPrice: 1,
+    schedule: { drawDays: [0, 1, 2, 3, 4, 5, 6], drawTimes: ["21:35"], description: "Daily at 9:35 PM ET" },
   },
 };
 

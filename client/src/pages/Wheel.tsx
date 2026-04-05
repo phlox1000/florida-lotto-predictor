@@ -95,7 +95,7 @@ export default function Wheel() {
   const isDigitGame = cfg.isDigitGame;
 
   const gameOptions = GAME_TYPES
-    .filter(g => !FLORIDA_GAMES[g].isDigitGame && !FLORIDA_GAMES[g].schedule.ended)
+    .filter(g => !FLORIDA_GAMES[g].isDigitGame && !FLORIDA_GAMES[g].schedule.ended && FLORIDA_GAMES[g].mainCount > 1)
     .map(g => FLORIDA_GAMES[g]);
 
   const generateMutation = trpc.wheel.generate.useMutation({

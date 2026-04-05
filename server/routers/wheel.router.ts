@@ -19,6 +19,9 @@ export const wheelRouter = router({
       if (cfg.isDigitGame) {
         return { tickets: [], totalCost: 0, coverage: 0, error: "Wheeling is not available for digit games." };
       }
+      if (cfg.mainCount <= 1) {
+        return { tickets: [], totalCost: 0, coverage: 0, error: "Wheeling is not available for single-number games." };
+      }
 
       const nums = [...input.selectedNumbers].sort((a, b) => a - b);
       const pick = cfg.mainCount;

@@ -82,6 +82,13 @@ export async function getSmartNumbers(gameType: GameType, count: number) {
       error: "Smart Wheel is not available for digit games.",
     };
   }
+  if (cfg.mainCount <= 1) {
+    return {
+      numbers: [] as number[],
+      modelVotes: {} as Record<number, { count: number; weightedScore: number; models: string[] }>,
+      error: "Smart Wheel is not available for single-number games.",
+    };
+  }
 
   const historyRows = await getDrawResults(gameType, 200);
   const history = historyRows.map(r => ({
