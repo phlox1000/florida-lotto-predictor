@@ -4,55 +4,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import Navbar from "@/components/Navbar";
 import { trpc } from "@/lib/trpc";
-import { FLORIDA_GAMES, GAME_TYPES, type GameType, MODEL_NAMES } from "@shared/lottery";
+import { FLORIDA_GAMES, GAME_TYPES, type GameType } from "@shared/lottery";
+import { getModelDisplayName, getModelCategory, getModelColor } from "@shared/modelMetadata";
 import { Trophy, Medal, TrendingUp, Target, Zap, BarChart3, ChevronDown, ChevronUp, Crown, Award, Star, LineChart as LineChartIcon, Eye, EyeOff, Flame, Gamepad2 } from "lucide-react";
 import { useState, useMemo, useCallback } from "react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from "recharts";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { RefreshCw } from "lucide-react";
-
-const MODEL_DISPLAY_NAMES: Record<string, string> = {
-  random: "Frequency Baseline",
-  poisson_standard: "Poisson Standard",
-  poisson_short: "Poisson Short-Window",
-  poisson_long: "Poisson Long-Window",
-  hot_cold_70: "Hot-Cold 70/30",
-  hot_cold_50: "Hot-Cold 50/50",
-  balanced_hot_cold: "Balanced Hot-Cold",
-  gap_analysis: "Gap Analysis",
-  cooccurrence: "Co-Occurrence",
-  delta: "Delta Frequency",
-  temporal_echo: "Temporal Echo",
-  monte_carlo: "Monte Carlo",
-  markov_chain: "Markov Chain",
-  bayesian: "Bayesian Posterior",
-  quantum_entanglement: "Quantum Entanglement",
-  cdm: "CDM (Dirichlet)",
-  chi_square: "Chi-Square Anomaly",
-  ai_oracle: "AI Oracle Ensemble",
-};
-
-const MODEL_CATEGORIES: Record<string, string> = {
-  random: "Statistical",
-  poisson_standard: "Probabilistic",
-  poisson_short: "Probabilistic",
-  poisson_long: "Probabilistic",
-  hot_cold_70: "Trend",
-  hot_cold_50: "Trend",
-  balanced_hot_cold: "Trend",
-  gap_analysis: "Trend",
-  cooccurrence: "Pattern",
-  delta: "Trend",
-  temporal_echo: "Temporal",
-  monte_carlo: "Simulation",
-  markov_chain: "Sequential",
-  bayesian: "Probabilistic",
-  quantum_entanglement: "Pattern",
-  cdm: "Probabilistic",
-  chi_square: "Statistical",
-  ai_oracle: "Ensemble",
-};
 
 function getRankIcon(rank: number) {
   if (rank === 1) return <Crown className="w-5 h-5 text-yellow-400" />;
@@ -91,27 +50,6 @@ function ScoreBar({ value, max, color = "bg-primary" }: { value: number; max: nu
   );
 }
 
-// Color palette for trend lines (18 distinct colors)
-const MODEL_COLORS: Record<string, string> = {
-  random: "#6366f1",
-  poisson_standard: "#8b5cf6",
-  poisson_short: "#a78bfa",
-  poisson_long: "#7c3aed",
-  hot_cold_70: "#22c55e",
-  hot_cold_50: "#4ade80",
-  balanced_hot_cold: "#16a34a",
-  gap_analysis: "#84cc16",
-  cooccurrence: "#f97316",
-  delta: "#eab308",
-  temporal_echo: "#06b6d4",
-  monte_carlo: "#ef4444",
-  markov_chain: "#ec4899",
-  bayesian: "#d946ef",
-  quantum_entanglement: "#f59e0b",
-  cdm: "#14b8a6",
-  chi_square: "#3b82f6",
-  ai_oracle: "#fbbf24",
-};
 
 function ModelTrendsChart() {
   const [selectedGame, setSelectedGame] = useState<string>("all");
@@ -228,8 +166,8 @@ function ModelTrendsChart() {
                       key={model}
                       type="monotone"
                       dataKey={model}
-                      name={MODEL_DISPLAY_NAMES[model] || model}
-                      stroke={MODEL_COLORS[model] || "#888"}
+                      name={getModelDisplayName(model)}
+                      stroke={getModelColor(model)}
                       strokeWidth={model === "ai_oracle" ? 3 : 1.5}
                       dot={false}
                       connectNulls
@@ -250,7 +188,7 @@ function ModelTrendsChart() {
               <div className="flex flex-wrap gap-1.5">
                 {Object.keys(trendsData?.models || {}).map(model => {
                   const isHidden = hiddenModels.has(model);
-                  const color = MODEL_COLORS[model] || "#888";
+                  const color = getModelColor(model);
                   return (
                     <button
                       key={model}
@@ -262,7 +200,7 @@ function ModelTrendsChart() {
                       }`}
                     >
                       <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: isHidden ? "transparent" : color, border: `1.5px solid ${color}` }} />
-                      {MODEL_DISPLAY_NAMES[model] || model}
+                      {getModelDisplayName(model)}
                       {isHidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
                     </button>
                   );
@@ -290,7 +228,7 @@ function HotStreakBanner({ hotStreaks }: { hotStreaks: Array<{ modelName: string
           {hotStreaks.map((s, i) => (
             <div key={i} className="flex items-center gap-1.5 bg-orange-500/10 rounded-lg px-3 py-1.5 border border-orange-500/20">
               <Flame className="w-3.5 h-3.5 text-orange-400" />
-              <span className="text-xs font-medium text-foreground">{MODEL_DISPLAY_NAMES[s.modelName] || s.modelName}</span>
+              <span className="text-xs font-medium text-foreground">{getModelDisplayName(s.modelName)}</span>
               <span className="text-[10px] text-muted-foreground">on {FLORIDA_GAMES[s.gameType as GameType]?.name || s.gameType}</span>
               <Badge className="bg-red-500/20 text-red-400 text-[10px] ml-1">{s.currentStreak} in a row</Badge>
             </div>
@@ -558,8 +496,8 @@ export default function Leaderboard() {
           <div className="space-y-3">
             {sortedModels.map((model, i) => {
               const rank = i + 1;
-              const displayName = MODEL_DISPLAY_NAMES[model.modelName] || model.modelName;
-              const category = MODEL_CATEGORIES[model.modelName] || "Other";
+              const displayName = getModelDisplayName(model.modelName);
+              const category = getModelCategory(model.modelName);
               const isExpanded = expandedModel === model.modelName;
               const isAllView = viewMode === "all" && "compositeScore" in model;
 
