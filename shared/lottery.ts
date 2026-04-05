@@ -79,10 +79,15 @@ export const FLORIDA_GAMES: Record<GameType, GameConfig> = {
   },
   // Cash Pop: single-number game — pick 1 number from 1-25.
   // Represented as mainCount=1 within the existing schema.
+  // Has 5 daily draws; only evening is supported by the scraper currently.
   cash_pop: {
-    id: "cash_pop", name: "Cash Pop", mainCount: 1, mainMax: 25,
-    specialCount: 0, specialMax: 0, isDigitGame: false, drawingsPerDay: 1, ticketPrice: 1,
-    schedule: { drawDays: [0, 1, 2, 3, 4, 5, 6], drawTimes: ["21:35"], description: "Daily at 9:35 PM ET" },
+    id: "cash_pop", name: "Cash Pop", mainCount: 1, mainMax: 15,
+    specialCount: 0, specialMax: 0, isDigitGame: false, drawingsPerDay: 5, ticketPrice: 1,
+    schedule: {
+      drawDays: [0, 1, 2, 3, 4, 5, 6],
+      drawTimes: ["08:45", "11:45", "14:45", "18:45", "23:45"],
+      description: "Daily, 5 draws (Morning, Matinee, Afternoon, Evening, Late Night)",
+    },
   },
 };
 

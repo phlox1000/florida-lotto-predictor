@@ -36,6 +36,8 @@ const GAME_SLUGS: Record<string, { evening: string; midday?: string }> = {
   pick_4:       { evening: "pick-4",       midday: "midday-pick-4" },
   pick_3:       { evening: "pick-3",       midday: "midday-pick-3" },
   pick_2:       { evening: "pick-2",       midday: "pick-2-midday" },
+  // Cash Pop: single-number game. Only evening draw scraped for now.
+  cash_pop:     { evening: "cash-pop-evening" },
 };
 
 /** Number of main balls per game (excluding special balls) */
@@ -49,6 +51,7 @@ const MAIN_COUNTS: Record<string, number> = {
   pick_4: 4,
   pick_3: 3,
   pick_2: 2,
+  cash_pop: 1,
 };
 
 /** Games that have a special ball (PB, MB, CB) */

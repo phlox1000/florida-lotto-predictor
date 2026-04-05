@@ -21,7 +21,8 @@ import type { GameType } from "@shared/lottery";
 
 const BASE_URL = "https://files.floridalottery.com/exptkt";
 
-/** Map game types to their official file codes */
+/** Map game types to their official file codes (HTML history files).
+ *  Cash Pop is not included — its official history (cp.pdf) is PDF, not HTML. */
 const FILE_CODES: Record<string, string> = {
   fantasy_5: "ff",
   powerball: "pb",

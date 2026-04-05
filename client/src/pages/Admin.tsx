@@ -91,7 +91,7 @@ function AddDrawForm() {
             </div>
           </div>
           <div className="space-y-2">
-            <Label>Main Numbers ({gameCfg.mainCount} numbers, {gameCfg.isDigitGame ? "0-9" : `1-${gameCfg.mainMax}`}, comma-separated)</Label>
+            <Label>Main {gameCfg.mainCount === 1 ? "Number" : "Numbers"} ({gameCfg.mainCount} {gameCfg.mainCount === 1 ? "number" : "numbers"}, {gameCfg.isDigitGame ? "0-9" : `1-${gameCfg.mainMax}`}{gameCfg.mainCount > 1 ? ", comma-separated" : ""})</Label>
             <Input value={mainNumbers} onChange={e => setMainNumbers(e.target.value)}
               placeholder={`e.g. ${Array.from({length: gameCfg.mainCount}, (_, i) => i + 1).join(", ")}`}
               className="bg-input" required />
