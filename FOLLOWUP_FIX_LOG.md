@@ -85,3 +85,17 @@ Note: `client/src/pages/Home.tsx` still contains `etOffset` — this is a separa
 
 ---
 
+## Issue 4 — Fix null safety in evaluatePurchasedTicketsAgainstDraw
+
+Changes made to `server/db.ts`:
+- Added null guard: `if (!db) return;` at the top of the function.
+- Replaced all `db!` force-unwraps with `db` (2 occurrences: select and update).
+- Added comment above draw-time filtering section documenting the notes-based filtering behavior.
+
+| Check | Result |
+|-------|--------|
+| `npx tsc --noEmit` | PASS — zero errors |
+| No remaining `db!` in function | Confirmed |
+
+---
+

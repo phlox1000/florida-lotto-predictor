@@ -777,8 +777,10 @@ export async function evaluatePurchasedTicketsAgainstDraw(
   winningSpecial: number[]
 ) {
   const db = await getDb();
+  if (!db) return;
+
   // Get all pending tickets for this game + draw date
-  const tickets = await db!
+  const tickets = await db
     .select()
     .from(purchasedTickets)
     .where(
@@ -796,7 +798,8 @@ export async function evaluatePurchasedTicketsAgainstDraw(
   if (!cfg) return;
 
   for (const ticket of tickets) {
-    // Filter by draw time if present in notes
+    // Note: draw-time filtering relies on ticket.notes containing "draw period: midday"
+    // or "draw period: evening". Tickets logged without this format skip time filtering.
     const notesLower = (ticket.notes || "").toLowerCase();
     if (drawTime === "midday" && notesLower.includes("draw period: evening")) continue;
     if (drawTime === "evening" && notesLower.includes("draw period: midday")) continue;
@@ -817,7 +820,7 @@ export async function evaluatePurchasedTicketsAgainstDraw(
       // We don't know exact prize tiers, so just mark as win
     }
 
-    await db!
+    await db
       .update(purchasedTickets)
       .set({
         mainHits,
