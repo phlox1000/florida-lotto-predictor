@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runAllModels, selectBudgetTickets } from "./predictions";
+import { runAllModels, selectBudgetTickets, weightedSampleWithoutReplacement } from "./predictions";
 import { FLORIDA_GAMES, type GameConfig } from "../shared/lottery";
 
 describe("Prediction Engine", () => {
@@ -238,6 +238,29 @@ describe("Prediction Engine", () => {
       // $10 / $2 = 5 tickets max
       expect(selection.tickets.length).toBeLessThanOrEqual(5);
       expect(selection.totalCost).toBeLessThanOrEqual(10);
+    });
+  });
+
+  describe("Monte Carlo simulation variation", () => {
+    it("monte_carlo produces stable output for identical inputs", () => {
+      const cfg = FLORIDA_GAMES["fantasy_5"];
+      const history = mockHistory(cfg, 50);
+      const r1 = runAllModels(cfg, history).find(p => p.modelName === "monte_carlo");
+      const r2 = runAllModels(cfg, history).find(p => p.modelName === "monte_carlo");
+      expect(r1!.mainNumbers).toEqual(r2!.mainNumbers);
+    });
+
+    it("monte_carlo internal simulations produce varied draws", () => {
+      const cfg = FLORIDA_GAMES["fantasy_5"];
+      const nums = Array.from({ length: cfg.mainMax }, (_, i) => i + 1);
+      const weights = nums.map(() => 1); // uniform weights
+      const draw0 = weightedSampleWithoutReplacement(nums, weights, cfg.mainCount, 0);
+      const draw1 = weightedSampleWithoutReplacement(nums, weights, cfg.mainCount, 1);
+      const draw100 = weightedSampleWithoutReplacement(nums, weights, cfg.mainCount, 100);
+      // At least two of the three should differ
+      const allSame = JSON.stringify(draw0) === JSON.stringify(draw1)
+                   && JSON.stringify(draw1) === JSON.stringify(draw100);
+      expect(allSame).toBe(false);
     });
   });
 });

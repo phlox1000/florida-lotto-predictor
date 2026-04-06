@@ -41,3 +41,24 @@ Remaining `"random"` references are:
 
 ---
 
+## Issue 2 — Fix Monte Carlo so simulations genuinely vary
+
+Changes made to `server/predictions.ts`:
+- Added `simulationIndex: number = 0` parameter to `deterministicSeed()`.
+- Incorporated `simulationIndex * 6364136223846793005` into the hash computation.
+- Added `simulationIndex: number = 0` parameter to `weightedSampleWithoutReplacement()`.
+- Passed `simulationIndex` through to `deterministicSeed()` inside `weightedSampleWithoutReplacement`.
+- Exported `weightedSampleWithoutReplacement` for testing (marked with comment).
+- In `monteCarloModel`, passed loop variable `s` as `simulationIndex`.
+
+Tests added to `server/predictions.test.ts`:
+- `monte_carlo produces stable output for identical inputs` — PASS
+- `monte_carlo internal simulations produce varied draws` — PASS
+
+| Check | Result |
+|-------|--------|
+| `npx vitest run server/predictions.test.ts` | 22 tests passed |
+| `npx tsc --noEmit` | PASS — zero errors |
+
+---
+

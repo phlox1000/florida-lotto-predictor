@@ -21,10 +21,12 @@ interface HistoryDraw {
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 /** Weighted sampling WITHOUT replacement from a scored pool. No pure randomness. */
-function weightedSampleWithoutReplacement(
+// exported for testing only
+export function weightedSampleWithoutReplacement(
   items: number[],
   weights: number[],
-  k: number
+  k: number,
+  simulationIndex: number = 0
 ): number[] {
   const result: number[] = [];
   const usedIdx = new Set<number>();
@@ -35,7 +37,7 @@ function weightedSampleWithoutReplacement(
     }
     if (totalW <= 0) break;
     // Deterministic-seeded selection: use a hash of existing picks to avoid Math.random
-    const seed = deterministicSeed(result, pick);
+    const seed = deterministicSeed(result, pick, simulationIndex);
     let threshold = seed * totalW;
     for (let j = 0; j < items.length; j++) {
       if (usedIdx.has(j)) continue;
@@ -55,11 +57,15 @@ function weightedSampleWithoutReplacement(
  * Uses a hash of the history anchor and the numbers already picked.
  * Returns a value between 0 and 1.
  */
-function deterministicSeed(currentPicks: number[], iteration: number): number {
-  const historyAnchor = currentPicks.length > 0
-    ? currentPicks[0]
-    : 0;
-  let hash = historyAnchor * 2654435761 + iteration * 40503;
+function deterministicSeed(
+  currentPicks: number[],
+  iteration: number,
+  simulationIndex: number = 0
+): number {
+  const historyAnchor = currentPicks.length > 0 ? currentPicks[0] : 0;
+  let hash = historyAnchor * 2654435761
+           + iteration * 40503
+           + simulationIndex * 6364136223846793005;
   for (const n of currentPicks) {
     hash = ((hash << 5) - hash + n) | 0;
   }
@@ -486,7 +492,7 @@ function monteCarloModel(cfg: GameConfig, history: HistoryDraw[]): PredictionRes
   const simulations = 10000;
   for (let s = 0; s < simulations; s++) {
     // Each simulation uses a deterministic seed based on iteration
-    const draw = weightedSampleWithoutReplacement(nums, probs, cfg.mainCount);
+    const draw = weightedSampleWithoutReplacement(nums, probs, cfg.mainCount, s);
     for (const n of draw) wins.set(n, (wins.get(n) || 0) + 1);
   }
 
