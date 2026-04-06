@@ -1216,6 +1216,7 @@ export const appRouter = router({
         try {
           const draws = await fetchRecentDraws(input.gameType as GameType);
           let insertedCount = 0;
+          const errors: string[] = [];
 
           for (const draw of draws) {
             try {
@@ -1227,30 +1228,36 @@ export const appRouter = router({
                 drawTime: draw.drawTime,
                 source: "lotteryusa.com",
               });
-              insertedCount++;
+              if (insertResult.status === "inserted") {
+                insertedCount++;
 
-              // Auto-evaluate predictions against this new draw
-              const drawId = (insertResult as any)?.[0]?.insertId ?? 0;
-              if (drawId) {
-                const evalResult = await evaluatePredictionsAgainstDraw(
-                  drawId, input.gameType, draw.mainNumbers, draw.specialNumbers
-                );
-                if (evalResult.highAccuracy > 3) {
-                  await notifyOwner({
-                    title: "High Prediction Accuracy Detected",
-                    content: `${evalResult.highAccuracy} predictions matched 60%+ of ${FLORIDA_GAMES[input.gameType].name} draw on ${draw.drawDate}. ${evalResult.evaluated} predictions evaluated.`,
-                  });
+                // Auto-evaluate predictions against this new draw
+                const drawId = insertResult.insertId;
+                if (drawId) {
+                  const evalResult = await evaluatePredictionsAgainstDraw(
+                    drawId, input.gameType, draw.mainNumbers, draw.specialNumbers
+                  );
+                  if (evalResult.highAccuracy > 3) {
+                    await notifyOwner({
+                      title: "High Prediction Accuracy Detected",
+                      content: `${evalResult.highAccuracy} predictions matched 60%+ of ${FLORIDA_GAMES[input.gameType].name} draw on ${draw.drawDate}. ${evalResult.evaluated} predictions evaluated.`,
+                    });
+                  }
                 }
               }
+              // status === "duplicate" is silently skipped — this is expected behavior
             } catch (e) {
-              // Duplicate draw, skip silently
+              // Duplicates are handled via insertDrawResult's return status.
+              // Only genuine unexpected failures reach this catch block.
+              console.error("[DataFetch] Unexpected insert error:", e);
+              errors.push(e instanceof Error ? e.message : String(e));
             }
           }
 
-          return { success: true, data: { draws }, insertedCount };
+          return { success: true, data: { draws }, insertedCount, errors };
         } catch (e) {
           console.error("[DataFetch] fetchLatest failed:", e);
-          return { success: false, data: null, insertedCount: 0 };
+          return { success: false, data: null, insertedCount: 0, errors: [e instanceof Error ? e.message : String(e)] };
         }
       }),
 
@@ -1258,6 +1265,7 @@ export const appRouter = router({
     fetchAll: adminProcedure
       .mutation(async () => {
         const results: Record<string, { success: boolean; count: number }> = {};
+        const errors: string[] = [];
 
         try {
           const allGames = await fetchAllGamesRecent();
@@ -1275,31 +1283,38 @@ export const appRouter = router({
                   drawTime: draw.drawTime,
                   source: "lotteryusa.com",
                 });
-                count++;
+                if (insertResult.status === "inserted") {
+                  count++;
 
-                const drawId = (insertResult as any)?.[0]?.insertId ?? 0;
-                if (drawId) {
-                  const evalResult = await evaluatePredictionsAgainstDraw(
-                    drawId, gt, draw.mainNumbers, draw.specialNumbers
-                  );
-                  if (evalResult.highAccuracy > 3) {
-                    await notifyOwner({
-                      title: "High Prediction Accuracy Detected",
-                      content: `${evalResult.highAccuracy} predictions matched 60%+ of ${FLORIDA_GAMES[gt as GameType].name} draw on ${draw.drawDate}.`,
-                    });
+                  const drawId = insertResult.insertId;
+                  if (drawId) {
+                    const evalResult = await evaluatePredictionsAgainstDraw(
+                      drawId, gt, draw.mainNumbers, draw.specialNumbers
+                    );
+                    if (evalResult.highAccuracy > 3) {
+                      await notifyOwner({
+                        title: "High Prediction Accuracy Detected",
+                        content: `${evalResult.highAccuracy} predictions matched 60%+ of ${FLORIDA_GAMES[gt as GameType].name} draw on ${draw.drawDate}.`,
+                      });
+                    }
                   }
                 }
+                // status === "duplicate" is silently skipped — this is expected behavior
               } catch (e) {
-                // Duplicate, skip
+                // Duplicates are handled via insertDrawResult's return status.
+                // Only genuine unexpected failures reach this catch block.
+                console.error("[DataFetch] Unexpected insert error:", e);
+                errors.push(e instanceof Error ? e.message : String(e));
               }
             }
             results[gt] = { success: true, count };
           }
         } catch (e) {
           console.error("[DataFetch] fetchAll failed:", e);
+          errors.push(e instanceof Error ? e.message : String(e));
         }
 
-        return { success: true, results };
+        return { success: true, results, errors };
       }),
 
     /** Get user's PDF upload history */
@@ -1320,10 +1335,11 @@ export const appRouter = router({
           const draws = await fetchHistoricalDraws(input.gameType as GameType, input.drawCount);
           let insertedCount = 0;
           let skippedCount = 0;
+          const errors: string[] = [];
 
           for (const draw of draws) {
             try {
-              await insertDrawResult({
+              const insertResult = await insertDrawResult({
                 gameType: input.gameType,
                 drawDate: new Date(draw.drawDate).getTime(),
                 mainNumbers: draw.mainNumbers,
@@ -1331,8 +1347,18 @@ export const appRouter = router({
                 drawTime: draw.drawTime,
                 source: "lotteryusa.com",
               });
-              insertedCount++;
+              if (insertResult.status === "inserted") {
+                insertedCount++;
+              }
+              // status === "duplicate" is silently skipped — this is expected behavior
+              if (insertResult.status === "duplicate") {
+                skippedCount++;
+              }
             } catch (e) {
+              // Duplicates are handled via insertDrawResult's return status.
+              // Only genuine unexpected failures reach this catch block.
+              console.error("[DataFetch] Unexpected insert error:", e);
+              errors.push(e instanceof Error ? e.message : String(e));
               skippedCount++;
             }
           }
@@ -1344,10 +1370,10 @@ export const appRouter = router({
             });
           }
 
-          return { success: true, insertedCount, skippedCount, totalFound: draws.length };
+          return { success: true, insertedCount, skippedCount, totalFound: draws.length, errors };
         } catch (e) {
           console.error("[DataFetch] fetchHistory failed:", e);
-          return { success: false, insertedCount: 0, skippedCount: 0, totalFound: 0 };
+          return { success: false, insertedCount: 0, skippedCount: 0, totalFound: 0, errors: [e instanceof Error ? e.message : String(e)] };
         }
       }),
   }),

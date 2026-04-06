@@ -68,3 +68,19 @@ Changes made to `server/routers.ts`:
 
 ---
 
+## Issue 4 — Fix silent error swallowing in data fetch flows
+
+Changes made:
+- **`server/routers.ts` — `fetchLatest`:** Added `errors: string[]` array. Uses `insertResult.status` to distinguish duplicates from inserts. Uses `insertResult.insertId` instead of unsafe cast. Catch block now logs and collects real errors. Returns `errors` in response.
+- **`server/routers.ts` — `fetchAll`:** Same pattern applied. Added `errors` array to return value.
+- **`server/routers.ts` — `fetchHistory`:** Same pattern. Duplicates now counted via `insertResult.status === "duplicate"` instead of catch. Errors surfaced in return value.
+- **`server/cron.ts` — `runAutoFetch`:** Uses `insertResult.status` to gate `newDraws++` and evaluation logic. Catch block now logs and pushes to `result.errors` and increments `gameResult.errors`.
+
+All modified catch blocks include the comment: "Duplicates are handled via insertDrawResult's return status. Only genuine unexpected failures reach this catch block."
+
+| Check | Result |
+|-------|--------|
+| `npx tsc --noEmit` | PASS — zero errors |
+
+---
+
