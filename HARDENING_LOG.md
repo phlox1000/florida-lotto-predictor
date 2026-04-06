@@ -51,3 +51,20 @@ New test added to `server/predictions.test.ts`: `selectBudgetTickets grounds spe
 
 ---
 
+## Issue 3 — Fix N+1 query in compare.drawDetail
+
+Changes made to `server/routers.ts`:
+- Replaced per-row `Promise.all(perfRows.map(async ...))` pattern with a single batched query using `inArray`.
+- Added `inArray` to the drizzle-orm dynamic import.
+- Built an in-memory `predMap` lookup from the batched result.
+- Replaced async map with synchronous map using the lookup.
+- Added `// BATCHED` comment above the batched fetch.
+- Response shape is identical — field names unchanged.
+
+| Check | Result |
+|-------|--------|
+| `grep -n ".map(async" server/routers.ts` | Line 777 only (unrelated GAME_TYPES map) — drawDetail section clean |
+| `npx tsc --noEmit` | PASS — zero errors |
+
+---
+

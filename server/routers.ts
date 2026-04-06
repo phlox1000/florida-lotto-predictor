@@ -1048,7 +1048,7 @@ export const appRouter = router({
       .query(async ({ input }) => {
         const { getDb } = await import("./db");
         const { modelPerformance, drawResults, predictions } = await import("../drizzle/schema");
-        const { eq } = await import("drizzle-orm");
+        const { eq, inArray } = await import("drizzle-orm");
         const db = await getDb();
         if (!db) return { draw: null, modelResults: [] };
 
@@ -1066,18 +1066,31 @@ export const appRouter = router({
         }).from(modelPerformance)
           .where(eq(modelPerformance.drawResultId, input.drawId));
 
-        // For each perf record, get the prediction numbers
-        const modelResults = await Promise.all(perfRows.map(async (perf) => {
-          let predNumbers: { main: number[]; special: number[] } = { main: [], special: [] };
-          if (perf.predictionId) {
-            const predRow = await db.select().from(predictions).where(eq(predictions.id, perf.predictionId)).limit(1);
-            if (predRow.length > 0) {
-              predNumbers = {
-                main: predRow[0].mainNumbers as number[],
-                special: (predRow[0].specialNumbers as number[]) || [],
-              };
-            }
-          }
+        // Collect all non-null predictionIds
+        const predictionIds = perfRows
+          .map(p => p.predictionId)
+          .filter((id): id is number => id !== null && id !== undefined);
+
+        // BATCHED: single query replaces N+1 pattern (one query per model row)
+        const predictionRows = predictionIds.length > 0
+          ? await db.select().from(predictions)
+              .where(inArray(predictions.id, predictionIds))
+          : [];
+
+        // Build an in-memory lookup map
+        const predMap = new Map<number, { main: number[]; special: number[] }>();
+        for (const row of predictionRows) {
+          predMap.set(row.id, {
+            main: row.mainNumbers as number[],
+            special: (row.specialNumbers as number[]) || [],
+          });
+        }
+
+        // Synchronous map using the lookup
+        const modelResults = perfRows.map((perf) => {
+          const predNumbers = perf.predictionId
+            ? predMap.get(perf.predictionId) ?? { main: [], special: [] }
+            : { main: [], special: [] };
           return {
             modelName: perf.modelName,
             mainHits: perf.mainHits,
@@ -1085,7 +1098,7 @@ export const appRouter = router({
             predictedMain: predNumbers.main,
             predictedSpecial: predNumbers.special,
           };
-        }));
+        });
 
         return {
           draw: {
