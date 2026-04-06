@@ -239,7 +239,22 @@ export async function getModelPerformanceStats(gameType: string) {
  * Returns a map of modelName -> weight (0-1, higher = better).
  * Models with no performance data get a default weight of 0.5.
  */
+// Simple TTL cache for model weights.
+// Weights change only when new evaluations are written (after draws).
+// 5-minute TTL is safe — weight changes are not time-critical.
+const modelWeightsCache = new Map<string, {
+  weights: Record<string, number>;
+  cachedAt: number;
+}>();
+const MODEL_WEIGHTS_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 export async function getModelWeights(gameType: string): Promise<Record<string, number>> {
+  // Check cache first
+  const cached = modelWeightsCache.get(gameType);
+  if (cached && Date.now() - cached.cachedAt < MODEL_WEIGHTS_TTL_MS) {
+    return cached.weights;
+  }
+
   const stats = await getModelPerformanceStats(gameType);
   const weights: Record<string, number> = {};
 
@@ -257,6 +272,8 @@ export async function getModelWeights(gameType: string): Promise<Record<string, 
     weights[s.modelName] = 0.3 + 0.7 * accuracyNorm * confidenceFactor; // floor at 0.3
   }
 
+  // Cache the result
+  modelWeightsCache.set(gameType, { weights, cachedAt: Date.now() });
   return weights;
 }
 

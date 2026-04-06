@@ -169,3 +169,62 @@ Changes made to `server/routers.ts`:
 
 ---
 
+## Issue 8 — Add lightweight cache for model weights
+
+Changes made to `server/db.ts`:
+- Added `modelWeightsCache` Map and `MODEL_WEIGHTS_TTL_MS` constant (5 minutes) above `getModelWeights()`.
+- Added cache-check at the top of `getModelWeights()`: returns cached weights if within TTL.
+- Added cache-write before return: stores computed weights with timestamp.
+- No changes to `getModelPerformanceStats()` or the weight calculation formula.
+
+| Check | Result |
+|-------|--------|
+| `npx tsc --noEmit` | PASS — zero errors |
+
+---
+
+## Migration Apply Status
+
+File `drizzle/0008_performance_indexes.sql` exists in repo and is registered
+in `_journal.json`. This migration must be applied to the live Render MySQL
+instance manually or via deployment pipeline before the indexes take effect.
+Until applied, the 5 indexes defined in the file do not exist in production.
+
+---
+
+## Final Verification
+
+### 1. `npx tsc --noEmit`
+**PASS** — zero errors
+
+### 2. `npx vitest run`
+**23 files passed, 359 tests passed, 0 failures**
+Baseline was 7 failures (342 passing / 7 failing across 3 files). All 7 pre-existing failures are now fixed.
+
+### 3. `grep -rn '"random"' shared/ server/ client/src/ --include="*.ts" --include="*.tsx"`
+Results — only legacy compatibility alias entries remain, all marked with comments:
+- `server/compare-export.test.ts:80` — test fixture data (legacy model name in test)
+- `server/compare-export.test.ts:109` — test fixture data
+- `server/favorites-push.test.ts:95` — test fixture data
+- `server/new-models.test.ts:36` — comment about deterministic "random" numbers
+- `server/patterns.test.ts:86` — assertion that model source is NOT "random"
+- `client/src/pages/HeadToHead.tsx:11` — comment: "legacy DB rows may exist under 'random'"
+- `client/src/pages/Leaderboard.tsx:15` — comment: "legacy DB rows may exist under 'random'"
+
+**All remaining references are either test fixtures or legacy compatibility comments.**
+
+### 4. `grep -rn 'etOffset' shared/ server/ client/src/ --include="*.ts" --include="*.tsx"`
+- `shared/` — **zero results** (required)
+- `client/src/pages/Home.tsx:55-56` — out-of-scope client-side countdown (not listed in Issue 3 target files). This is a separate DST-vulnerable countdown in the Home page that should be addressed in a future pass.
+
+### 5. `grep -rn 'America/New_York' shared/ --include="*.ts"`
+**PASS** — two results in `shared/lottery.ts` (the `toETDate` helper, lines 84 and 86)
+
+### 6. `ls drizzle/0008_performance_indexes.sql`
+**PASS** — file exists
+
+---
+
+## Known Remaining Issue (Out of Scope)
+
+`client/src/pages/Home.tsx` contains a separate `etOffset = -5` countdown function (`getCountdown`) that suffers from the same DST bug fixed in Issue 3 for `shared/lottery.ts`. This file was not listed in Issue 3's target files, so it was not modified per the standing rule "Do NOT touch files unrelated to each issue." Recommend addressing in a future pass.
