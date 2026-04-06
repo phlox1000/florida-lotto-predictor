@@ -1,12 +1,13 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { getLoginUrl } from "@/const";
-import { Dices, History, BarChart3, Shield, Brain, GitCompareArrows, Heart, Settings, Menu, X, Target, TrendingUp, Trophy, Cog, Swords } from "lucide-react";
+import { Dices, History, BarChart3, Shield, Brain, GitCompareArrows, Heart, Settings, Menu, X, Target, TrendingUp, Trophy, Cog, Swords, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 
 const navItems = [
   { path: "/", label: "Oracle", icon: Dices },
+  { path: "/analyze", label: "Analyze", icon: Sparkles },
   { path: "/predictions", label: "Predictions", icon: BarChart3 },
   { path: "/history", label: "History", icon: History },
   { path: "/analysis", label: "AI Analysis", icon: Brain },
