@@ -118,3 +118,36 @@ Tests added to `server/pdf-parser.test.ts`:
 
 ---
 
+## Issue 6 — Fix the 7 pre-existing failing tests
+
+### Failure 1-5: server/offline-features.test.ts — WhatsNew changelog component (Case A: stale test assertions)
+
+**Root cause:** The WhatsNew component was refactored to import `CHANGELOG` and `ChangelogEntry` from `client/src/lib/version.ts` instead of defining them inline. The tests were asserting raw source text patterns like `const CHANGELOG: ChangelogEntry[]` and `interface ChangelogEntry` that no longer exist in WhatsNew.tsx.
+
+**Fix:** Updated 5 test assertions to match the current component structure:
+- `"defines a CHANGELOG array"` → `"imports CHANGELOG from version module"` — asserts `CHANGELOG` is present (imported)
+- `"has a ChangelogEntry interface"` → `"uses ChangelogEntry shape via version module"` — asserts `entry.version` and `entry.changes` usage in JSX
+- `"supports feature, improvement, and fix change types"` → `"renders feature, improvement, and fix change types"` — unchanged assertion, just renamed
+- `"only shows modal when version is newer"` → updated to assert `lastSeen !== APP_VERSION` (was `lastSeen !== currentVersion`)
+- `"includes multiple version entries"` → `"includes multiple version entries via imported CHANGELOG"` — asserts `entries.map` iteration
+
+### Failure 6: server/h2h-consensus.test.ts — Version 4.4.0 > service worker matches v4.4.0 (Case A: stale test assertion)
+
+**Root cause:** The service worker was updated to v4.5.1 but the test still hardcoded `'4.4.0'`.
+
+**Fix:** Updated the test to dynamically extract the current version from `version.ts` CHANGELOG and assert the service worker contains it. This makes the test version-agnostic for future releases.
+
+### Failure 7: server/ticket-scanner.test.ts — ticketAnalytics returns expected shape (Case B: source code bug)
+
+**Root cause:** `getTicketAnalytics()` in `server/db.ts` used `db!.select()` without a null guard. In the test environment, `getDb()` returns null, causing a TypeError.
+
+**Fix:** Added `if (!db) return { modelsPlayedMost: [], modelsWonMoney: [], hitRateByModel: [], middayVsEvening: { midday: 0, evening: 0 } };` at the top of the function. Replaced `db!` with `db`.
+
+| Check | Result |
+|-------|--------|
+| `npx vitest run` | **23 files passed, 359 tests passed, 0 failures** |
+| `npx tsc --noEmit` | PASS — zero errors |
+| Baseline comparison | 7 failures → 0 failures |
+
+---
+

@@ -834,7 +834,14 @@ export async function evaluatePurchasedTicketsAgainstDraw(
 
 export async function getTicketAnalytics(userId: number) {
   const db = await getDb();
-  const allTickets = await db!
+  if (!db) return {
+    modelsPlayedMost: [] as { model: string; count: number }[],
+    modelsWonMoney: [] as { model: string; profit: number }[],
+    hitRateByModel: [] as { model: string; total: number; wins: number; hitRate: number }[],
+    middayVsEvening: { midday: 0, evening: 0 },
+  };
+
+  const allTickets = await db
     .select()
     .from(purchasedTickets)
     .where(eq(purchasedTickets.userId, userId));
