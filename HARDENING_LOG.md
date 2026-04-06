@@ -84,3 +84,19 @@ All modified catch blocks include the comment: "Duplicates are handled via inser
 
 ---
 
+## Issue 5 — Add transaction safety to evaluation writes
+
+Changes made to `server/db.ts`:
+- Wrapped the `insertModelPerformance` call inside `evaluatePredictionsAgainstDraw` with `db.transaction()`.
+- Inside the transaction, replaced `insertModelPerformance(perfRecords)` with `tx.insert(modelPerformance).values(perfRecords)`.
+- Added TRANSACTION comment explaining atomicity requirement.
+- All read queries remain outside the transaction.
+- Return shape `{ evaluated, highAccuracy }` preserved.
+- Null guard for `db` preserved.
+
+| Check | Result |
+|-------|--------|
+| `npx tsc --noEmit` | PASS — zero errors |
+
+---
+

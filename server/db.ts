@@ -313,7 +313,11 @@ export async function evaluatePredictionsAgainstDraw(
   }
 
   if (perfRecords.length > 0) {
-    await insertModelPerformance(perfRecords);
+    // TRANSACTION: all evaluation rows for this draw are written atomically.
+    // A partial write would corrupt leaderboard stats for this draw result.
+    await db.transaction(async (tx) => {
+      await tx.insert(modelPerformance).values(perfRecords);
+    });
   }
 
   return { evaluated: perfRecords.length, highAccuracy };
