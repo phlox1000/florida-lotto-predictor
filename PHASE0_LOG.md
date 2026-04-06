@@ -76,3 +76,9 @@ No repo file changes required. No commit for this action.
 
 ---
 
+## Action 4 — Document backend stability protocol
+
+Created `server/BACKEND_STABILITY.md` with the full governance document covering allowed changes, coordination requirements, and the process for coordinated changes during the mobile development phase.
+
+---
+
