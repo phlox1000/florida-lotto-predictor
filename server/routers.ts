@@ -4,6 +4,8 @@ import { FLORIDA_GAMES, GAME_TYPES, type GameType, getNextDrawDate, formatTimeUn
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, adminProcedure, router } from "./_core/trpc";
+import { TRPCError } from "@trpc/server";
+import { checkRateLimit } from "./lib/rateLimiter";
 import { invokeLLM } from "./_core/llm";
 import { ENV } from "./_core/env";
 import { notifyOwner } from "./_core/notification";
@@ -45,6 +47,15 @@ export const appRouter = router({
     generate: publicProcedure
       .input(z.object({ gameType: gameTypeSchema, sumRangeFilter: z.boolean().default(false) }))
       .mutation(async ({ input, ctx }) => {
+        const ip = ctx.req?.ip ?? ctx.req?.headers?.["x-forwarded-for"] ?? "unknown";
+        const rl = checkRateLimit(String(ip), 10, 60_000); // 10 per minute per IP
+        if (!rl.allowed) {
+          throw new TRPCError({
+            code: "TOO_MANY_REQUESTS",
+            message: "Too many requests. Please wait before generating again.",
+          });
+        }
+
         const cfg = FLORIDA_GAMES[input.gameType];
         const historyRows = await getDrawResults(input.gameType, 200);
         const history = historyRows.map(r => ({
@@ -161,6 +172,15 @@ export const appRouter = router({
         maxTickets: z.number().min(1).max(20).default(20),
       }))
       .mutation(async ({ input, ctx }) => {
+        const ip = ctx.req?.ip ?? ctx.req?.headers?.["x-forwarded-for"] ?? "unknown";
+        const rl = checkRateLimit(String(ip), 10, 60_000); // 10 per minute per IP
+        if (!rl.allowed) {
+          throw new TRPCError({
+            code: "TOO_MANY_REQUESTS",
+            message: "Too many requests. Please wait before generating again.",
+          });
+        }
+
         const cfg = FLORIDA_GAMES[input.gameType];
         const historyRows = await getDrawResults(input.gameType, 200);
         const history = historyRows.map(r => ({

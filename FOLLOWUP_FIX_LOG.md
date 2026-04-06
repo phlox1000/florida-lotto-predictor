@@ -151,3 +151,21 @@ Tests added to `server/pdf-parser.test.ts`:
 
 ---
 
+## Issue 7 — Add rate limiting to generation endpoints
+
+Files created:
+- `server/lib/rateLimiter.ts` — in-memory rate limiter with Map-based tracking, 5-minute cleanup interval.
+
+Changes made to `server/routers.ts`:
+- Added imports: `TRPCError` from `@trpc/server`, `checkRateLimit` from `./lib/rateLimiter`.
+- Added rate limit check (10 req/min/IP) at the top of `predictions.generate` mutation handler.
+- Added rate limit check (10 req/min/IP) at the top of `tickets.generate` mutation handler.
+- No other endpoints were modified.
+
+| Check | Result |
+|-------|--------|
+| `npx tsc --noEmit` | PASS — zero errors |
+| TRPCError import resolves | Confirmed |
+
+---
+
