@@ -100,3 +100,34 @@ Changes made to `server/db.ts`:
 
 ---
 
+## Issue 6 — Add missing database indexes
+
+Created `drizzle/0008_performance_indexes.sql` with 5 indexes:
+- `dr_game_date_idx` on `draw_results (gameType, drawDate)`
+- `mp_model_game_idx` on `model_performance (modelName, gameType)`
+- `mp_draw_idx` on `model_performance (drawResultId)`
+- `p_game_created_idx` on `predictions (gameType, createdAt)`
+- `p_user_idx` on `predictions (userId, createdAt)`
+
+Updated `drizzle/meta/_journal.json` with new entry at idx 5, tag `0008_performance_indexes`.
+
+No unique constraint added on `draw_results(gameType, drawDate, drawTime)` — application-level duplicate detection preserved as instructed.
+
+| Check | Result |
+|-------|--------|
+| `ls drizzle/0008_performance_indexes.sql` | File exists |
+| `npx tsc --noEmit` | PASS — zero errors |
+
+---
+
+## Final Verification
+
+| # | Check | Result |
+|---|-------|--------|
+| 1 | `npx tsc --noEmit` | PASS — zero errors |
+| 2 | `npx vitest run` | 3 failed / 20 passed (23 files); 7 failed / 344 passed (351 tests). All failures are **pre-existing** (same 3 files, same 7 tests as baseline). The 2 new tests from Issues 1 and 2 both pass. Net new test count: +2 (from 342 to 344 passing). |
+| 3 | `grep -n "Date.now()" server/predictions.ts` | Zero results |
+| 4 | `grep -n ".map(async" server/routers.ts \| grep -i "prediction"` | Zero results |
+| 5 | `ls drizzle/0008_performance_indexes.sql` | File exists |
+
+All 5 verification checks pass.
