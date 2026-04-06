@@ -6,7 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import Navbar from "@/components/Navbar";
 import { trpc } from "@/lib/trpc";
-import { FLORIDA_GAMES, GAME_TYPES, type GameType } from "@shared/lottery";
+import { FLORIDA_GAMES, GAME_TYPES, type GameType, formatTimeUntil } from "@shared/lottery";
 import { Zap, TrendingUp, Brain, Trophy, ArrowRight, Sparkles, Clock, Timer, AlertCircle } from "lucide-react";
 import { useState, useMemo, useEffect } from "react";
 import { useLocation } from "wouter";
@@ -48,21 +48,8 @@ function DrawScheduleCountdown() {
 
   const endedGames = data.filter(g => g.schedule.ended);
 
-  // Recalculate countdown live
-  const getCountdown = (nextDrawIso: string) => {
-    const target = new Date(nextDrawIso);
-    const now = new Date();
-    const etOffset = -5;
-    const etNow = new Date(now.getTime() + (now.getTimezoneOffset() + etOffset * 60) * 60000);
-    const diff = target.getTime() - etNow.getTime();
-    if (diff <= 0) return "Drawing now!";
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-    if (days > 0) return `${days}d ${hours}h ${minutes}m`;
-    if (hours > 0) return `${hours}h ${minutes}m`;
-    return `${minutes}m`;
-  };
+  // Countdown uses formatTimeUntil from shared/lottery.ts (DST-aware via America/New_York)
+  const getCountdown = (nextDrawIso: string) => formatTimeUntil(new Date(nextDrawIso));
 
   return (
     <div className="space-y-3">
