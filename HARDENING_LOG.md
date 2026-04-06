@@ -35,3 +35,19 @@ New test added to `server/predictions.test.ts`: `runAllModels produces stable ou
 
 ---
 
+## Issue 2 — Fix special-number bug in budget ticket generation
+
+Changes made:
+- **A.** `server/predictions.ts` — Updated `selectBudgetTickets` signature to accept `history: HistoryDraw[] = []` as fifth parameter.
+- **B.** `server/predictions.ts` — Replaced broken `allPredictions.length > 0 ? [] : []` with `history` in Phase 2 `generateSpecialFromHistory` call.
+- **C.** `server/routers.ts` — Updated `selectBudgetTickets` call in `tickets.generate` to pass `history` as fifth argument.
+
+New test added to `server/predictions.test.ts`: `selectBudgetTickets grounds special numbers in history`
+
+| Check | Result |
+|-------|--------|
+| `npx vitest run server/predictions.test.ts` | PASS — 20 tests passed |
+| `npx tsc --noEmit` | PASS — zero errors |
+
+---
+

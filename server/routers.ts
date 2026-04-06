@@ -171,7 +171,7 @@ export const appRouter = router({
 
         const modelWeights = await getModelWeights(input.gameType);
         const allPredictions = runAllModels(cfg, history, Object.keys(modelWeights).length > 0 ? modelWeights : undefined);
-        const selection = selectBudgetTickets(cfg, allPredictions, input.budget, input.maxTickets);
+        const selection = selectBudgetTickets(cfg, allPredictions, input.budget, input.maxTickets, history);
 
         // Apply Play Tonight scoring with transparent breakdown
         const scoredTickets = scorePlayTonightTickets(

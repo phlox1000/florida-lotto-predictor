@@ -215,6 +215,22 @@ describe("Prediction Engine", () => {
       }
     });
 
+    it("selectBudgetTickets grounds special numbers in history", () => {
+      const cfg = FLORIDA_GAMES["powerball"];
+      const history = Array.from({ length: 20 }, (_, i) => ({
+        mainNumbers: [1, 2, 3, 4, 5],
+        specialNumbers: [3], // always 3 to make assertion clear
+        drawDate: Date.now() - i * 86400000,
+      }));
+      const predictions = runAllModels(cfg, history);
+      const result = selectBudgetTickets(cfg, predictions, 75, 20, history);
+      const allSpecial = result.tickets.flatMap(t => t.specialNumbers);
+      // At least some tickets should have special numbers from history
+      expect(allSpecial.length).toBeGreaterThan(0);
+      // The most frequent special number (3) should appear in selections
+      expect(allSpecial).toContain(3);
+    });
+
     it("respects lower budget constraint", () => {
       const history = mockHistory(powerball, 100);
       const preds = runAllModels(powerball, history);

@@ -1088,6 +1088,7 @@ export function selectBudgetTickets(
   allPredictions: PredictionResult[],
   budget: number = 75,
   maxTickets: number = 20,
+  history: HistoryDraw[] = [],
 ): { tickets: Array<{ mainNumbers: number[]; specialNumbers: number[]; modelSource: string; confidence: number }>; totalCost: number } {
   const ticketPrice = cfg.ticketPrice;
   const affordableCount = Math.min(maxTickets, Math.floor(budget / ticketPrice));
@@ -1135,7 +1136,7 @@ export function selectBudgetTickets(
       const pool = topNums.slice(0, Math.min(topNums.length, cfg.mainCount * 3));
       const weights = pool.map(n => numberScores.get(n) || 0);
       const main = deterministicWeightedSelect(pool, weights, cfg.mainCount, variationSalt).sort((a, b) => a - b);
-      const special = generateSpecialFromHistory(cfg, allPredictions.length > 0 ? [] : [], variationSalt);
+      const special = generateSpecialFromHistory(cfg, history, variationSalt);
       const key = main.join(",") + "|" + special.join(",");
       if (!usedKeys.has(key)) {
         usedKeys.add(key);
