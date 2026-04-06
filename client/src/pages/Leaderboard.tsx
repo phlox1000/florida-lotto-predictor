@@ -12,7 +12,9 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { RefreshCw } from "lucide-react";
 
+// Note: legacy DB rows may exist under "random" — display maps handle both keys
 const MODEL_DISPLAY_NAMES: Record<string, string> = {
+  frequency_baseline: "Frequency Baseline",
   random: "Frequency Baseline",
   poisson_standard: "Poisson Standard",
   poisson_short: "Poisson Short-Window",
@@ -34,6 +36,7 @@ const MODEL_DISPLAY_NAMES: Record<string, string> = {
 };
 
 const MODEL_CATEGORIES: Record<string, string> = {
+  frequency_baseline: "Statistical",
   random: "Statistical",
   poisson_standard: "Probabilistic",
   poisson_short: "Probabilistic",
@@ -93,6 +96,7 @@ function ScoreBar({ value, max, color = "bg-primary" }: { value: number; max: nu
 
 // Color palette for trend lines (18 distinct colors)
 const MODEL_COLORS: Record<string, string> = {
+  frequency_baseline: "#6366f1",
   random: "#6366f1",
   poisson_standard: "#8b5cf6",
   poisson_short: "#a78bfa",

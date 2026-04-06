@@ -8,8 +8,10 @@ import { FLORIDA_GAMES, type GameType, MODEL_NAMES } from "@shared/lottery";
 import { Swords, Trophy, Crown, Minus, ArrowRight, BarChart3, Target, Zap, Shield } from "lucide-react";
 import { useState, useMemo } from "react";
 
+// Note: legacy DB rows may exist under "random" — display maps handle both keys
 const MODEL_DISPLAY: Record<string, string> = {
-  random: "Frequency Baseline", poisson_standard: "Poisson Standard", poisson_short: "Poisson Short-Window",
+  frequency_baseline: "Frequency Baseline", random: "Frequency Baseline",
+  poisson_standard: "Poisson Standard", poisson_short: "Poisson Short-Window",
   poisson_long: "Poisson Long-Window", hot_cold_70: "Hot-Cold 70/30", hot_cold_50: "Hot-Cold 50/50",
   balanced_hot_cold: "Balanced Hot-Cold", gap_analysis: "Gap Analysis", cooccurrence: "Co-Occurrence",
   delta: "Delta Frequency", temporal_echo: "Temporal Echo", monte_carlo: "Monte Carlo",

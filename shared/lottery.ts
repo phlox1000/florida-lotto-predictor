@@ -131,7 +131,7 @@ export function formatTimeUntil(target: Date): string {
 }
 
 export const MODEL_NAMES = [
-  "random",
+  "frequency_baseline",
   "poisson_standard",
   "poisson_short",
   "poisson_long",
