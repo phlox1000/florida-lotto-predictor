@@ -80,15 +80,18 @@ export const FLORIDA_GAMES: Record<GameType, GameConfig> = {
 };
 
 /** Get the next draw date/time for a game (in ET) */
+function toETDate(utcDate: Date): Date {
+  // Uses the runtime's Intl support to correctly apply America/New_York
+  // offset including DST transitions. Works in both Node.js and modern browsers.
+  const etStr = utcDate.toLocaleString("en-US", { timeZone: "America/New_York" });
+  return new Date(etStr);
+}
+
 export function getNextDrawDate(gameType: GameType): Date | null {
   const cfg = FLORIDA_GAMES[gameType];
   if (cfg.schedule.ended || cfg.schedule.drawDays.length === 0) return null;
 
-  const now = new Date();
-  // Convert to ET (approximate: UTC-5 for EST, UTC-4 for EDT)
-  // We'll use a simple approach - the server/client can adjust
-  const etOffset = -5; // EST; adjust for EDT if needed
-  const etNow = new Date(now.getTime() + (now.getTimezoneOffset() + etOffset * 60) * 60000);
+  const etNow = toETDate(new Date());
 
   const lastDrawTime = cfg.schedule.drawTimes[cfg.schedule.drawTimes.length - 1];
   const [drawHour, drawMin] = lastDrawTime.split(":").map(Number);
@@ -113,10 +116,7 @@ export function getNextDrawDate(gameType: GameType): Date | null {
 
 /** Format time remaining until a date */
 export function formatTimeUntil(target: Date): string {
-  const now = new Date();
-  // Adjust for ET
-  const etOffset = -5;
-  const etNow = new Date(now.getTime() + (now.getTimezoneOffset() + etOffset * 60) * 60000);
+  const etNow = toETDate(new Date());
   const diff = target.getTime() - etNow.getTime();
 
   if (diff <= 0) return "Drawing now!";

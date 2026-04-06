@@ -62,3 +62,26 @@ Tests added to `server/predictions.test.ts`:
 
 ---
 
+## Issue 3 — Fix DST-aware countdown and next-draw logic
+
+Changes made to `shared/lottery.ts`:
+- Added private `toETDate()` helper using `Intl` / `America/New_York` timezone.
+- Replaced `etOffset = -5` block in `getNextDrawDate()` with `toETDate(new Date())`.
+- Replaced `etOffset = -5` block in `formatTimeUntil()` with `toETDate(new Date())`.
+- Removed all `etOffset` variable references from `shared/lottery.ts`.
+
+Changes made to `server/schedule.test.ts`:
+- Removed `etOffset` references from existing tests.
+- Added 4 new tests as specified in instructions.
+
+Note: `client/src/pages/Home.tsx` still contains `etOffset` — this is a separate client-side usage not in scope for this issue.
+
+| Check | Result |
+|-------|--------|
+| `npx vitest run server/schedule.test.ts` | 15 tests passed |
+| `npx tsc --noEmit` | PASS — zero errors |
+| `grep -rn 'etOffset' shared/` | Zero results |
+| `grep -rn 'America/New_York' shared/` | 2 results (toETDate helper) |
+
+---
+

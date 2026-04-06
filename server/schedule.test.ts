@@ -11,13 +11,17 @@ describe("Draw Schedule", () => {
     const result = getNextDrawDate("fantasy_5");
     // Fantasy 5 draws daily, so there should always be a next draw
     expect(result).not.toBeNull();
-    if (result) {
-      // The returned date should be in the future (or very close to now)
-      const now = new Date();
-      const etOffset = -5;
-      const etNow = new Date(now.getTime() + (now.getTimezoneOffset() + etOffset * 60) * 60000);
-      expect(result.getTime()).toBeGreaterThan(etNow.getTime() - 60000); // within 1 min tolerance
-    }
+    expect(result!.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("getNextDrawDate returns a future date for an active game", () => {
+    const next = getNextDrawDate("fantasy_5");
+    expect(next).not.toBeNull();
+    expect(next!.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("getNextDrawDate returns null for ended game", () => {
+    expect(getNextDrawDate("cash4life")).toBeNull();
   });
 
   it("returns a date for Powerball (draws Mon/Wed/Sat)", () => {
@@ -60,21 +64,25 @@ describe("formatTimeUntil", () => {
     expect(result).toBe("Drawing now!");
   });
 
+  it("formatTimeUntil returns a non-empty string for a future date", () => {
+    const future = new Date(Date.now() + 3 * 60 * 60 * 1000);
+    const result = formatTimeUntil(future);
+    expect(result).toMatch(/\d+[hmd]/);
+  });
+
+  it("formatTimeUntil returns 'Drawing now!' for a past date", () => {
+    const past = new Date(Date.now() - 1000);
+    expect(formatTimeUntil(past)).toBe("Drawing now!");
+  });
+
   it("formats hours and minutes for near-future dates", () => {
-    // Create a date ~3 hours from now in ET
-    const now = new Date();
-    const etOffset = -5;
-    const etNow = new Date(now.getTime() + (now.getTimezoneOffset() + etOffset * 60) * 60000);
-    const future = new Date(etNow.getTime() + 3 * 60 * 60 * 1000 + 30 * 60 * 1000);
+    const future = new Date(Date.now() + 3 * 60 * 60 * 1000 + 30 * 60 * 1000);
     const result = formatTimeUntil(future);
     expect(result).toMatch(/\d+h \d+m/);
   });
 
   it("formats days for far-future dates", () => {
-    const now = new Date();
-    const etOffset = -5;
-    const etNow = new Date(now.getTime() + (now.getTimezoneOffset() + etOffset * 60) * 60000);
-    const future = new Date(etNow.getTime() + 2 * 24 * 60 * 60 * 1000);
+    const future = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
     const result = formatTimeUntil(future);
     expect(result).toMatch(/\d+d/);
   });
