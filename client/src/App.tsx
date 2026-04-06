@@ -1,9 +1,15 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
-import { Route, Switch } from "wouter";
+import { Route, Switch, Redirect } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import { GameProvider } from "./contexts/GameContext";
+import AppShell from "./components/AppShell";
+import AnalyzeTab from "./tabs/AnalyzeTab";
+import GenerateTab from "./tabs/GenerateTab";
+import TrackTab from "./tabs/TrackTab";
+import ModelsTab from "./tabs/ModelsTab";
 import Home from "./pages/Home";
 import Predictions from "./pages/Predictions";
 import History from "./pages/History";
@@ -22,9 +28,33 @@ import UpdatePrompt from "./components/UpdatePrompt";
 import WhatsNew from "./components/WhatsNew";
 import OfflineIndicator from "./components/OfflineIndicator";
 
+function ShellRoute({ component: Component }: { component: React.ComponentType }) {
+  return (
+    <AppShell>
+      <Component />
+    </AppShell>
+  );
+}
+
 function Router() {
   return (
     <Switch>
+      {/* ── New tab-shell routes ── */}
+      <Route path="/app/analyze">
+        <ShellRoute component={AnalyzeTab} />
+      </Route>
+      <Route path="/app/generate">
+        <ShellRoute component={GenerateTab} />
+      </Route>
+      <Route path="/app/track">
+        <ShellRoute component={TrackTab} />
+      </Route>
+      <Route path="/app/models">
+        <ShellRoute component={ModelsTab} />
+      </Route>
+      <Route path="/app">
+        <Redirect to="/app/analyze" />
+      </Route>
       <Route path="/" component={Home} />
       <Route path="/predictions" component={Predictions} />
       <Route path="/history" component={History} />
@@ -48,6 +78,7 @@ function App() {
   return (
     <ErrorBoundary>
       <ThemeProvider defaultTheme="dark">
+        <GameProvider>
         <TooltipProvider>
           <Toaster />
           <Router />
@@ -56,6 +87,7 @@ function App() {
           <WhatsNew />
           <OfflineIndicator />
         </TooltipProvider>
+        </GameProvider>
       </ThemeProvider>
     </ErrorBoundary>
   );
