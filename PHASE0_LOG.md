@@ -82,3 +82,58 @@ Created `server/BACKEND_STABILITY.md` with the full governance document covering
 
 ---
 
+## Action 5 — Write mobile MVP baseline document
+
+Created `mobile/MVP_BASELINE.md` with full scope definition for the first Play Store release. The document covers all 4 tabs (Analyze, Generate, Track, Models), global exclusions, acceptance criteria, and the scope change process. The `mobile/` directory was created as it did not previously exist.
+
+---
+
+## Action 6 — Take a database backup
+
+### Step 1 — DATABASE_URL check
+`echo $DATABASE_URL` returned empty (confirmed during Action 1). DATABASE_URL is not available in this sandbox environment.
+
+### Result
+- **Backup taken:** Deferred — DATABASE_URL is not available in this environment.
+- Database backup must be taken manually via Render dashboard before applying the production migration. Navigate to Render > your MySQL service > Backups and create a manual backup.
+
+No commit required for this action.
+
+---
+
+## Final Verification
+
+### 1. `npx tsc --noEmit`
+**PASS** — zero errors
+
+### 2. `npx vitest run`
+```
+Test Files  23 passed (23)
+     Tests  359 passed (359)
+  Duration  12.71s
+```
+**0 failures** — matches baseline.
+
+### 3. `grep -rn "etOffset" client/ shared/ server/ --include="*.ts" --include="*.tsx"`
+**Zero results** — etOffset is completely eliminated from the codebase.
+
+### 4. Governance files
+```
+client/MAINTENANCE_MODE.md  — exists
+server/BACKEND_STABILITY.md — exists
+mobile/MVP_BASELINE.md      — exists
+```
+All three files confirmed present.
+
+### 5. `git log --oneline -8`
+```
+efbe90d phase0: action 5 — document mobile MVP baseline
+34ba05d phase0: action 4 — document backend stability protocol
+3fc54c4 phase0: action 3 — put web app into maintenance mode
+9375d30 phase0: action 2 — fix Home.tsx DST countdown
+c77917f fix: followup issue 8 — cache model weights with 5-minute TTL
+24c248a fix: followup issue 7 — add rate limiting to generation endpoints
+5a3ad65 fix: followup issue 6 — restore baseline test suite to green
+740b36c fix: followup issue 5 — make pdf upload repeat-safe
+```
+All phase0 commits visible.
