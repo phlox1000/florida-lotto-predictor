@@ -99,3 +99,22 @@ Changes made to `server/db.ts`:
 
 ---
 
+## Issue 5 — Fix PDF upload repeat-safety
+
+Changes made to `server/upload.ts`:
+- PDF upload key: sanitized filename with `replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 100)`, increased nanoid from 8 to 10 chars, changed separator from `-` to `_`.
+- Ticket scan key: same sanitization applied.
+- Key generation already used `nanoid()` for uniqueness; the fix adds filename sanitization to handle special characters.
+- PDF parser (LLM-based) is invoked per-request — no shared singleton state issue.
+
+Tests added to `server/pdf-parser.test.ts`:
+- `generates unique keys for repeated uploads of the same filename` — PASS
+- `sanitizes filenames with special characters` — PASS
+
+| Check | Result |
+|-------|--------|
+| `npx vitest run server/pdf-parser.test.ts` | 4 tests passed |
+| `npx tsc --noEmit` | PASS — zero errors |
+
+---
+
