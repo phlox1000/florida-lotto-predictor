@@ -52,14 +52,14 @@ function weightedSampleWithoutReplacement(
 
 /**
  * Deterministic pseudo-random seed based on current state.
- * Uses a hash of the current timestamp (minute-level granularity for consistency
- * within a prediction run) and the numbers already picked.
+ * Uses a hash of the history anchor and the numbers already picked.
  * Returns a value between 0 and 1.
  */
 function deterministicSeed(currentPicks: number[], iteration: number): number {
-  // Use minute-level timestamp so predictions are consistent within the same minute
-  const timeComponent = Math.floor(Date.now() / 60000);
-  let hash = timeComponent * 2654435761 + iteration * 40503;
+  const historyAnchor = currentPicks.length > 0
+    ? currentPicks[0]
+    : 0;
+  let hash = historyAnchor * 2654435761 + iteration * 40503;
   for (const n of currentPicks) {
     hash = ((hash << 5) - hash + n) | 0;
   }
@@ -77,9 +77,8 @@ function deterministicWeightedSelect(
   // Create scored pairs and sort by weight descending
   const pairs = items.map((item, i) => ({ item, weight: weights[i] }));
   // Add a small deterministic perturbation to break ties meaningfully
-  const timeComponent = Math.floor(Date.now() / 60000);
   for (let i = 0; i < pairs.length; i++) {
-    const tieBreaker = Math.abs(((timeComponent + salt) * 2654435761 + pairs[i].item * 40503) % 10000) / 100000;
+    const tieBreaker = Math.abs((salt * 2654435761 + pairs[i].item * 40503) % 10000) / 100000;
     pairs[i].weight += tieBreaker;
   }
   pairs.sort((a, b) => b.weight - a.weight);
@@ -157,7 +156,8 @@ function frequencyBaselineModel(cfg: GameConfig, history: HistoryDraw[]): Predic
   if (history.length === 0) {
     // Deterministic spread: evenly space numbers across the range
     const step = Math.max(1, Math.floor(pool.length / cfg.mainCount));
-    const timeOffset = Math.floor(Date.now() / 60000) % step;
+    // Stable fallback: no offset applied when history is empty
+    const timeOffset = 0;
     const main: number[] = [];
     for (let i = 0; i < cfg.mainCount && i * step + timeOffset < pool.length; i++) {
       main.push(pool[i * step + timeOffset]);
@@ -416,6 +416,8 @@ function temporalEchoModel(cfg: GameConfig, history: HistoryDraw[]): PredictionR
     return insufficientDataResult("temporal_echo", cfg, { sufficient: false, available: 0, required: 1 });
   }
 
+  // INTENTIONAL: temporal_echo keys off the current calendar date by design.
+  // Output will vary day-to-day, which is expected and documented behavior.
   const now = new Date();
   const month = now.getMonth();
   const day = now.getDate();

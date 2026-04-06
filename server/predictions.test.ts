@@ -158,6 +158,21 @@ describe("Prediction Engine", () => {
     });
   });
 
+  it("runAllModels produces stable output for identical inputs", () => {
+    const cfg = FLORIDA_GAMES["fantasy_5"];
+    const history = Array.from({ length: 50 }, (_, i) => ({
+      mainNumbers: [1+i%5, 2+i%5, 3+i%5, 4+i%5, 5+i%5].map(n => 
+        Math.min(n, cfg.mainMax)),
+      specialNumbers: [],
+      drawDate: Date.now() - i * 86400000,
+    }));
+    const result1 = runAllModels(cfg, history);
+    const result2 = runAllModels(cfg, history);
+    result1.forEach((pred, i) => {
+      expect(pred.mainNumbers).toEqual(result2[i].mainNumbers);
+    });
+  });
+
   describe("selectBudgetTickets", () => {
     it("returns at most 20 tickets for Fantasy 5 with $75 budget", () => {
       const history = mockHistory(fantasy5, 100);
