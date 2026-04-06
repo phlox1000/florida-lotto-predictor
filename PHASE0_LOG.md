@@ -68,3 +68,11 @@ No repo file changes required. No commit for this action.
 
 ---
 
+## Action 3 — Put web app into maintenance mode
+
+- Created `client/MAINTENANCE_MODE.md` with full governance document.
+- No README.md exists in the repo root — skipped the one-line note per instructions ("skip if no README exists").
+- Maintenance mode is established as of 2026-04-06.
+
+---
+
