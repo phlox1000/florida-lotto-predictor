@@ -18,6 +18,7 @@ import Leaderboard from "./pages/Leaderboard";
 import Wheel from "./pages/Wheel";
 import HeadToHead from "./pages/HeadToHead";
 import Analyze from "./pages/Analyze";
+import Generate from "./pages/Generate";
 import InstallPrompt from "./components/InstallPrompt";
 import UpdatePrompt from "./components/UpdatePrompt";
 import WhatsNew from "./components/WhatsNew";
@@ -40,6 +41,7 @@ function Router() {
       <Route path="/wheel" component={Wheel} />
       <Route path="/head-to-head" component={HeadToHead} />
       <Route path="/analyze" component={Analyze} />
+      <Route path="/generate" component={Generate} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>
