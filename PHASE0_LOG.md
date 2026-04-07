@@ -137,3 +137,35 @@ c77917f fix: followup issue 8 — cache model weights with 5-minute TTL
 740b36c fix: followup issue 5 — make pdf upload repeat-safe
 ```
 All phase0 commits visible.
+
+## DB Verification — Manual Steps Check (Phase 0 Completion)
+
+### Step 1 — DATABASE_URL check
+`echo $DATABASE_URL` returned empty. DATABASE_URL is still not available in this sandbox environment.
+
+### Migration verification
+Verification cannot be completed from this environment — no database connection available.
+
+| Index | Table | Status |
+|-------|-------|--------|
+| `dr_game_date_idx` | `draw_results` | UNABLE TO VERIFY |
+| `mp_model_game_idx` | `model_performance` | UNABLE TO VERIFY |
+| `mp_draw_idx` | `model_performance` | UNABLE TO VERIFY |
+| `p_game_created_idx` | `predictions` | UNABLE TO VERIFY |
+| `p_user_idx` | `predictions` | UNABLE TO VERIFY |
+
+Overall migration status: **UNABLE TO VERIFY** — DATABASE_URL not available in sandbox.
+
+### Backup verification
+Backup status: confirmed by developer (cannot be verified programmatically).
+
+### Overall Phase 0 status
+Phase 0 verification cannot be completed from this environment. The developer has confirmed both manual steps were performed. To independently verify, connect to the live Render MySQL instance and run:
+
+```sql
+SHOW INDEX FROM draw_results WHERE Key_name = 'dr_game_date_idx';
+SHOW INDEX FROM model_performance WHERE Key_name IN ('mp_model_game_idx', 'mp_draw_idx');
+SHOW INDEX FROM predictions WHERE Key_name IN ('p_game_created_idx', 'p_user_idx');
+```
+
+If all 5 indexes are present, Phase 0 is FULLY COMPLETE and ready for Phase 1.
