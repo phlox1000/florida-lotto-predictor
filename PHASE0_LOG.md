@@ -138,34 +138,70 @@ c77917f fix: followup issue 8 — cache model weights with 5-minute TTL
 ```
 All phase0 commits visible.
 
-## DB Verification — Manual Steps Check (Phase 0 Completion)
+## Production Database Audit — April 8, 2026
 
-### Step 1 — DATABASE_URL check
-`echo $DATABASE_URL` returned empty. DATABASE_URL is still not available in this sandbox environment.
+### Discovery
 
-### Migration verification
-Verification cannot be completed from this environment — no database connection available.
+Connected to Railway MySQL via the built-in Database → Query tab. Key findings:
+
+1. **`__drizzle_migrations` table is EMPTY** — `drizzle-kit migrate` has never been run against production. All tables were created manually/ad-hoc.
+2. **4 tables are MISSING** from production that exist in the drizzle schema.
+3. **4 indexes are MISSING** from production.
+
+### Pre-Remediation Table Inventory
+
+| Table | Status | Source Migration |
+|-------|--------|------------------|
+| `__drizzle_migrations` | EXISTS (0 rows) | drizzle internal |
+| `users` | EXISTS | 0000_deep_karnak |
+| `draw_results` | EXISTS | 0001_melodic_dracula |
+| `predictions` | EXISTS | 0001_melodic_dracula |
+| `model_performance` | **MISSING** | 0001_melodic_dracula |
+| `ticket_selections` | **MISSING** | 0001_melodic_dracula |
+| `favorites` | **MISSING** | 0002_first_pretty_boy |
+| `push_subscriptions` | **MISSING** | 0002_first_pretty_boy |
+| `pdf_uploads` | EXISTS | 0003_late_lester |
+| `purchased_tickets` | EXISTS | 0003_late_lester |
+| `personalization_metrics` | EXISTS | 0007_personalization_metrics |
+| `scanned_tickets` | EXISTS | ad-hoc (not in migrations) |
+| `scanned_ticket_rows` | EXISTS | ad-hoc (not in migrations) |
+
+### Pre-Remediation Index Inventory
 
 | Index | Table | Status |
 |-------|-------|--------|
-| `dr_game_date_idx` | `draw_results` | UNABLE TO VERIFY |
-| `mp_model_game_idx` | `model_performance` | UNABLE TO VERIFY |
-| `mp_draw_idx` | `model_performance` | UNABLE TO VERIFY |
-| `p_game_created_idx` | `predictions` | UNABLE TO VERIFY |
-| `p_user_idx` | `predictions` | UNABLE TO VERIFY |
+| `dr_game_date_idx` | `draw_results` | **PRESENT** |
+| `pm_user_game_idx` | `personalization_metrics` | **PRESENT** |
+| `pm_metric_type_idx` | `personalization_metrics` | **PRESENT** |
+| `idx_predictions_user_game_created` | `predictions` | **PRESENT** (composite on userId, gameType, createdAt) |
+| `mp_model_game_idx` | `model_performance` | **MISSING** (table missing) |
+| `mp_draw_idx` | `model_performance` | **MISSING** (table missing) |
+| `p_game_created_idx` | `predictions` | **MISSING** |
+| `p_user_idx` | `predictions` | **MISSING** |
 
-Overall migration status: **UNABLE TO VERIFY** — DATABASE_URL not available in sandbox.
+### Remediation Script
 
-### Backup verification
-Backup status: confirmed by developer (cannot be verified programmatically).
+Generated `remediation.sql` (14 statements) to:
+- Create 4 missing tables with `IF NOT EXISTS` guards
+- Add 4 missing indexes
+- Register all 6 migrations in `__drizzle_migrations`
 
-### Overall Phase 0 status
-Phase 0 verification cannot be completed from this environment. The developer has confirmed both manual steps were performed. To independently verify, connect to the live Render MySQL instance and run:
+Script committed to repo as `remediation.sql`.
 
+### Remediation Status
+
+**PENDING** — awaiting user execution via Railway Dashboard → Database → Query tab.
+
+After remediation, verify with:
 ```sql
-SHOW INDEX FROM draw_results WHERE Key_name = 'dr_game_date_idx';
-SHOW INDEX FROM model_performance WHERE Key_name IN ('mp_model_game_idx', 'mp_draw_idx');
-SHOW INDEX FROM predictions WHERE Key_name IN ('p_game_created_idx', 'p_user_idx');
+SHOW TABLES;
+SELECT * FROM __drizzle_migrations;
+SHOW INDEX FROM model_performance;
+SHOW INDEX FROM predictions;
 ```
 
-If all 5 indexes are present, Phase 0 is FULLY COMPLETE and ready for Phase 1.
+Expected results:
+- 13 tables total
+- 6 rows in `__drizzle_migrations`
+- `mp_model_game_idx` and `mp_draw_idx` on `model_performance`
+- `p_game_created_idx` and `p_user_idx` on `predictions`
