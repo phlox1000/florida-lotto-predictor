@@ -81,17 +81,27 @@ export const FLORIDA_GAMES: Record<GameType, GameConfig> = {
 
 /** Get the next draw date/time for a game (in ET) */
 function toETDate(utcDate: Date): Date {
-  // Uses the runtime's Intl support to correctly apply America/New_York
-  // offset including DST transitions. Works in both Node.js and modern browsers.
-  const etStr = utcDate.toLocaleString("en-US", { timeZone: "America/New_York" });
-  return new Date(etStr);
+  // Extract ET components via Intl so the result is correct regardless of server timezone.
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric", month: "numeric", day: "numeric",
+    hour: "numeric", minute: "numeric", second: "numeric",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(utcDate);
+  const get = (type: string) =>
+    parseInt(parts.find(p => p.type === type)?.value ?? "0");
+  return new Date(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"));
 }
 
 export function getNextDrawDate(gameType: GameType): Date | null {
   const cfg = FLORIDA_GAMES[gameType];
   if (cfg.schedule.ended || cfg.schedule.drawDays.length === 0) return null;
 
-  const etNow = toETDate(new Date());
+  const now = new Date();
+  const etNow = toETDate(now);
+  // Offset to convert fake-ET timestamps back to real UTC
+  const etOffset = now.getTime() - etNow.getTime();
 
   const lastDrawTime = cfg.schedule.drawTimes[cfg.schedule.drawTimes.length - 1];
   const [drawHour, drawMin] = lastDrawTime.split(":").map(Number);
@@ -108,7 +118,8 @@ export function getNextDrawDate(gameType: GameType): Date | null {
       // If today but draw time has passed, skip to next draw day
       if (dayOffset === 0 && candidate <= etNow) continue;
 
-      return candidate;
+      // Convert from fake-ET space back to real UTC
+      return new Date(candidate.getTime() + etOffset);
     }
   }
   return null;
@@ -116,8 +127,7 @@ export function getNextDrawDate(gameType: GameType): Date | null {
 
 /** Format time remaining until a date */
 export function formatTimeUntil(target: Date): string {
-  const etNow = toETDate(new Date());
-  const diff = target.getTime() - etNow.getTime();
+  const diff = target.getTime() - Date.now();
 
   if (diff <= 0) return "Drawing now!";
 

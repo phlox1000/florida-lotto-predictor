@@ -28,9 +28,10 @@ describe("Draw Schedule", () => {
     const result = getNextDrawDate("powerball");
     expect(result).not.toBeNull();
     if (result) {
-      const day = result.getDay();
+      // Check day-of-week in ET since draws are scheduled in ET
+      const etDay = new Date(result.toLocaleString("en-US", { timeZone: "America/New_York" })).getDay();
       // Powerball draws on Mon(1), Wed(3), Sat(6)
-      expect([1, 3, 6]).toContain(day);
+      expect([1, 3, 6]).toContain(etDay);
     }
   });
 
@@ -38,8 +39,8 @@ describe("Draw Schedule", () => {
     const result = getNextDrawDate("mega_millions");
     expect(result).not.toBeNull();
     if (result) {
-      const day = result.getDay();
-      expect([2, 5]).toContain(day);
+      const etDay = new Date(result.toLocaleString("en-US", { timeZone: "America/New_York" })).getDay();
+      expect([2, 5]).toContain(etDay);
     }
   });
 
