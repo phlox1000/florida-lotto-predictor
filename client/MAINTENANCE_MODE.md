@@ -26,3 +26,6 @@ receiving new features during the mobile build phase.
 
 ## Exceptions
 Any exception must be documented here before work begins.
+
+## Known Issues
+- **GameContextBar "Oracle" text artifact:** Displays "Oracle" text below the nav bar on the Home page. Likely a CSS overflow/z-index issue in the sticky header container. Deferred — web app is in maintenance mode.
