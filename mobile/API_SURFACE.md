@@ -167,20 +167,46 @@ Same endpoint as Tab 1. See above.
 ### Which tabs require auth
 - **Tab 3 (Track):** Every endpoint is `protectedProcedure`. The user must be authenticated before any Track functionality works.
 
-### Auth flow from mobile perspective
+### Mobile Auth Flow
 
-The current auth is **Manus OAuth + cookie-based sessions**:
+The backend supports both cookie-based auth (web) and Bearer token auth (mobile). The mobile app uses `expo-auth-session` to complete the OAuth flow, then exchanges the code for a JWT via a dedicated endpoint.
 
-1. **Login:** The web app redirects to the Manus OAuth provider. On callback (`/api/oauth/callback`), the server exchanges the code for a token, fetches user info, upserts the user in the DB, and sets a signed JWT in the `app_session_id` cookie (HttpOnly, 1-year expiry).
+#### Step-by-step flow
 
-2. **Session verification:** On every `protectedProcedure` call, the server reads the `app_session_id` cookie from the request, verifies the JWT signature (HS256), and loads the user from the DB.
+1. **Initiate OAuth:** The mobile app opens the system browser via `expo-auth-session` with the Manus OAuth provider URL, passing `redirect_uri` pointing back to the Expo app (e.g. `exp://...` or a custom scheme).
 
-3. **Mobile challenge:** This flow is designed for browser-based cookie handling. React Native / Expo does not automatically manage cookies across HTTP requests. Mobile options:
-   - **Option A (WebView login):** Open the OAuth flow in an in-app WebView, capture the session cookie from the callback, and attach it to all subsequent tRPC requests via a custom `fetch` that includes the cookie header.
-   - **Option B (Token-based):** Add a new endpoint that returns the JWT directly in the response body (instead of a cookie) so the mobile client can store it in SecureStore and send it as a Bearer token or cookie header. This requires a small server-side change.
-   - **Option C (API key):** For MVP, if only the owner uses Track, a simple API key could bypass OAuth. Not recommended for Play Store release.
+2. **User authenticates:** The user logs in via the OAuth provider (Google, email, etc.) in the system browser.
 
-4. **Recommendation:** Option A (WebView + cookie extraction) is the lowest-friction path that works with the existing server code. Option B is cleaner long-term but requires a server change.
+3. **Receive code:** The OAuth provider redirects back to the app with `code` and `state` query parameters. `expo-auth-session` captures these.
+
+4. **Exchange code for token:** The mobile app calls:
+   ```
+   POST /api/auth/mobile-token
+   Content-Type: application/json
+   Body: { "code": "<oauth-code>", "state": "<oauth-state>" }
+   ```
+   **Response (200):**
+   ```json
+   {
+     "token": "<signed-jwt>",
+     "user": { "id": 1, "name": "...", "email": "...", "role": "user" }
+   }
+   ```
+   **Error responses:** 400 (missing code/state), 500 (exchange failed).
+
+5. **Store the token:** Save the JWT in `expo-secure-store`. This is encrypted device storage that persists across app restarts.
+
+6. **Attach to all requests:** Configure the tRPC client's custom `fetch` or `headers` to include:
+   ```
+   Authorization: Bearer <stored-jwt>
+   ```
+   This header is checked by the server if no session cookie is present.
+
+7. **Token lifetime:** The JWT is valid for 1 year (same as the web cookie). The mobile app does not need to refresh it.
+
+#### What stays unchanged
+
+The web app continues using the existing `/api/oauth/callback` route which sets the `app_session_id` cookie. The server checks the cookie first, then falls back to the `Authorization: Bearer` header. Both paths use the same JWT format and verification logic.
 
 ---
 
@@ -223,11 +249,11 @@ These endpoints exist in `routers.ts` but are explicitly out of scope per `MVP_B
 
 ## Mobile-Specific Concerns
 
-### Cookie handling
-The server authenticates via the `app_session_id` HttpOnly cookie. React Native's `fetch` does not handle cookies like a browser. The mobile tRPC client must explicitly manage the cookie header — either by extracting it from a WebView OAuth flow or by storing the JWT and injecting it manually.
+### Auth token handling
+The server now accepts `Authorization: Bearer <jwt>` as a fallback when no session cookie is present. The mobile app should store the JWT from `/api/auth/mobile-token` in `expo-secure-store` and attach it to every request. No cookie management needed.
 
 ### CORS
-The server is Express-based and currently configured for the web frontend's origin. The mobile app makes requests from a non-browser context (no `Origin` header), so CORS middleware may need to be updated to allow requests without an origin, or the mobile client needs to set an accepted origin header. Test this early.
+The server has no explicit CORS middleware. Mobile apps make direct HTTP requests (not browser requests), so CORS is not enforced. No server changes needed.
 
 ### Rate limiting
 `predictions.generate` and `tickets.generate` are rate-limited to 10 requests per minute per IP. The rate limiter uses `req.ip` or `x-forwarded-for`. On mobile networks, IP addresses change frequently (cell tower hops, WiFi/cell switches). This is generally fine — the limit is per IP, so a changing IP resets the counter. But on shared WiFi (e.g., airport), multiple users could share an IP and exhaust the limit faster.
