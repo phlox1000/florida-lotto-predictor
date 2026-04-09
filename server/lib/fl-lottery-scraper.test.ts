@@ -107,8 +107,9 @@ describe("fl-lottery-scraper utilities", () => {
   });
 });
 
-describe("fl-lottery-scraper integration (live fetch)", () => {
-  // These tests hit the real FL Lottery servers
+const RUN_LIVE = process.env.RUN_LIVE_TESTS === "true";
+describe.skipIf(!RUN_LIVE)("fl-lottery-scraper integration (live fetch)", () => {
+  // These tests hit the real FL Lottery servers — enable with RUN_LIVE_TESTS=true
   // They verify the scraper can parse actual data correctly
   
   it("fetches and parses Fantasy 5 draws", async () => {
