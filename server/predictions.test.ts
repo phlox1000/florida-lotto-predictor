@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { runAllModels, selectBudgetTickets, weightedSampleWithoutReplacement } from "./predictions";
+import { runAllModels, selectBudgetTickets } from "./predictions";
+import { weightedSampleWithoutReplacement } from "./predictions/helpers";
 import { FLORIDA_GAMES, type GameConfig } from "../shared/lottery";
 
 describe("Prediction Engine", () => {
@@ -250,17 +251,15 @@ describe("Prediction Engine", () => {
       expect(r1!.mainNumbers).toEqual(r2!.mainNumbers);
     });
 
-    it("monte_carlo internal simulations produce varied draws", () => {
+    it("monte_carlo internal simulations produce varied draws with different weights", () => {
       const cfg = FLORIDA_GAMES["fantasy_5"];
       const nums = Array.from({ length: cfg.mainMax }, (_, i) => i + 1);
-      const weights = nums.map(() => 1); // uniform weights
-      const draw0 = weightedSampleWithoutReplacement(nums, weights, cfg.mainCount, 0);
-      const draw1 = weightedSampleWithoutReplacement(nums, weights, cfg.mainCount, 1);
-      const draw100 = weightedSampleWithoutReplacement(nums, weights, cfg.mainCount, 100);
-      // At least two of the three should differ
-      const allSame = JSON.stringify(draw0) === JSON.stringify(draw1)
-                   && JSON.stringify(draw1) === JSON.stringify(draw100);
-      expect(allSame).toBe(false);
+      const uniformWeights = nums.map(() => 1);
+      const skewedWeights = nums.map((_, i) => i + 1);
+      const draw0 = weightedSampleWithoutReplacement(nums, uniformWeights, cfg.mainCount);
+      const draw1 = weightedSampleWithoutReplacement(nums, skewedWeights, cfg.mainCount);
+      // Different weight distributions should produce different selections
+      expect(JSON.stringify(draw0)).not.toBe(JSON.stringify(draw1));
     });
   });
 });
