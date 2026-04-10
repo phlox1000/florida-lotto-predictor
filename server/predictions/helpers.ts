@@ -34,7 +34,8 @@ export function historyHash(history: HistoryDraw[]): number {
 export function weightedSampleWithoutReplacement(
   items: number[],
   weights: number[],
-  k: number
+  k: number,
+  salt = 0
 ): number[] {
   const result: number[] = [];
   const usedIdx = new Set<number>();
@@ -44,7 +45,7 @@ export function weightedSampleWithoutReplacement(
       if (!usedIdx.has(j)) totalW += weights[j];
     }
     if (totalW <= 0) break;
-    const seed = stableSeed(result, pick);
+    const seed = stableSeed(result, pick + salt);
     let threshold = seed * totalW;
     for (let j = 0; j < items.length; j++) {
       if (usedIdx.has(j)) continue;

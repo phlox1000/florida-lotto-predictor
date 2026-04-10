@@ -5,8 +5,9 @@ import { resolve } from "path";
 // ─── Head-to-Head Matchups ──────────────────────────────────────────────────
 
 describe("Head-to-Head Matchups", () => {
-  const routersPath = resolve(__dirname, "routers.ts");
-  const routersSrc = readFileSync(routersPath, "utf-8");
+  const routersSrc =
+    readFileSync(resolve(__dirname, "routers/leaderboard.router.ts"), "utf-8") +
+    readFileSync(resolve(__dirname, "services/leaderboard.service.ts"), "utf-8");
 
   it("has headToHead endpoint in leaderboard router", () => {
     expect(routersSrc).toContain("headToHead:");
@@ -28,7 +29,7 @@ describe("Head-to-Head Matchups", () => {
   });
 
   it("queries both models using inArray filter", () => {
-    expect(routersSrc).toContain("inArray(modelPerformance.modelName, [input.modelA, input.modelB])");
+    expect(routersSrc).toContain("inArray(modelPerformance.modelName, [modelA, modelB])");
   });
 
   // H2H Page

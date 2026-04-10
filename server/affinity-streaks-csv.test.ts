@@ -18,9 +18,10 @@ describe("Per-Model Game Affinity Tags", () => {
   });
 
   it("affinity endpoint is registered in leaderboard router", () => {
-    const routerContent = fs.readFileSync(path.resolve(__dirname, "routers.ts"), "utf-8");
+    const routerContent = fs.readFileSync(path.resolve(__dirname, "routers/leaderboard.router.ts"), "utf-8");
+    const serviceContent = fs.readFileSync(path.resolve(__dirname, "services/leaderboard.service.ts"), "utf-8");
     expect(routerContent).toContain("affinity: publicProcedure");
-    expect(routerContent).toContain("getModelGameAffinity");
+    expect(serviceContent).toContain("getModelGameAffinity");
   });
 
   it("Leaderboard UI imports Gamepad2 icon for affinity badges", () => {
@@ -69,20 +70,21 @@ describe("Prediction Streak Alerts", () => {
   });
 
   it("streaks endpoint is registered in leaderboard router", () => {
-    const routerContent = fs.readFileSync(path.resolve(__dirname, "routers.ts"), "utf-8");
+    const routerContent = fs.readFileSync(path.resolve(__dirname, "routers/leaderboard.router.ts"), "utf-8");
+    const serviceContent = fs.readFileSync(path.resolve(__dirname, "services/leaderboard.service.ts"), "utf-8");
     expect(routerContent).toContain("streaks: publicProcedure");
-    expect(routerContent).toContain("getModelStreaks");
+    expect(serviceContent).toContain("getModelStreaks");
   });
 
   it("streaks endpoint accepts minHits parameter", () => {
-    const routerContent = fs.readFileSync(path.resolve(__dirname, "routers.ts"), "utf-8");
+    const routerContent = fs.readFileSync(path.resolve(__dirname, "routers/leaderboard.router.ts"), "utf-8");
     expect(routerContent).toContain("minHits: z.number().min(1).max(6).default(3)");
   });
 
   it("streaks endpoint separates hotStreaks from allStreaks", () => {
-    const routerContent = fs.readFileSync(path.resolve(__dirname, "routers.ts"), "utf-8");
-    expect(routerContent).toContain("hotStreaks");
-    expect(routerContent).toContain("allStreaks");
+    const serviceContent = fs.readFileSync(path.resolve(__dirname, "services/leaderboard.service.ts"), "utf-8");
+    expect(serviceContent).toContain("hotStreaks");
+    expect(serviceContent).toContain("allStreaks");
   });
 
   it("Leaderboard UI shows HotStreakBanner component", () => {
@@ -118,33 +120,31 @@ describe("Prediction Streak Alerts", () => {
 // ─── Feature 3: Export History to CSV ─────────────────────────────────────────
 
 describe("Export History to CSV", () => {
-  it("csvExport router is registered in routers.ts", () => {
-    const routerContent = fs.readFileSync(path.resolve(__dirname, "routers.ts"), "utf-8");
-    expect(routerContent).toContain("csvExport: router({");
+  it("csvExport router is registered in app router", () => {
+    const indexContent = fs.readFileSync(path.resolve(__dirname, "routers/index.ts"), "utf-8");
+    expect(indexContent).toContain("csvExport: csvExportRouter");
   });
 
   it("csvExport.drawResults endpoint exists as publicProcedure", () => {
-    const routerContent = fs.readFileSync(path.resolve(__dirname, "routers.ts"), "utf-8");
+    const routerContent = fs.readFileSync(path.resolve(__dirname, "routers/csvExport.router.ts"), "utf-8");
     expect(routerContent).toContain("drawResults: publicProcedure");
     // Check it accepts gameType filter
     expect(routerContent).toContain("gameType: gameTypeSchema.optional()");
   });
 
   it("csvExport.predictions endpoint exists as protectedProcedure", () => {
-    const routerContent = fs.readFileSync(path.resolve(__dirname, "routers.ts"), "utf-8");
-    // Find the csvExport section and check predictions is protected
-    const csvSection = routerContent.slice(routerContent.indexOf("csvExport: router({"));
-    expect(csvSection).toContain("predictions: protectedProcedure");
+    const routerContent = fs.readFileSync(path.resolve(__dirname, "routers/csvExport.router.ts"), "utf-8");
+    expect(routerContent).toContain("predictions: protectedProcedure");
   });
 
   it("CSV export includes proper headers for draw results", () => {
-    const routerContent = fs.readFileSync(path.resolve(__dirname, "routers.ts"), "utf-8");
-    expect(routerContent).toContain('"Date", "Game", "Draw Time", "Main Numbers", "Special Numbers", "Source"');
+    const serviceContent = fs.readFileSync(path.resolve(__dirname, "services/csvExport.service.ts"), "utf-8");
+    expect(serviceContent).toContain('"Date", "Game", "Draw Time", "Main Numbers", "Special Numbers", "Source"');
   });
 
   it("CSV export includes proper headers for predictions", () => {
-    const routerContent = fs.readFileSync(path.resolve(__dirname, "routers.ts"), "utf-8");
-    expect(routerContent).toContain('"Date", "Game", "Model", "Main Numbers", "Special Numbers", "Confidence"');
+    const serviceContent = fs.readFileSync(path.resolve(__dirname, "services/csvExport.service.ts"), "utf-8");
+    expect(serviceContent).toContain('"Date", "Game", "Model", "Main Numbers", "Special Numbers", "Confidence"');
   });
 
   it("History page includes Export CSV tab", () => {

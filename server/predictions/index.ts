@@ -14,6 +14,7 @@
 export { runAllModels } from "./runAllModels";
 export { selectBudgetTickets } from "./selectBudgetTickets";
 export { applySumRangeFilter } from "./sumRangeFilter";
+export { weightedSampleWithoutReplacement } from "./helpers";
 
 export {
   MODEL_REGISTRY, MODEL_IDS, MODEL_META_BY_ID,
