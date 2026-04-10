@@ -44,8 +44,8 @@ describe("Draw Schedule", () => {
     const result = getNextDrawDate("mega_millions");
     expect(result).not.toBeNull();
     if (result) {
-      const day = result.getDay();
-      expect([2, 5]).toContain(day);
+      const etDay = new Date(result.toLocaleString("en-US", { timeZone: "America/New_York" })).getDay();
+      expect([2, 5]).toContain(etDay);
     }
   });
 
@@ -69,6 +69,17 @@ describe("formatTimeUntil", () => {
     const past = new Date(etNow.getTime() - 1000 * 60 * 60);
     const result = formatTimeUntil(past);
     expect(result).toBe("Drawing now!");
+  });
+
+  it("formatTimeUntil returns a non-empty string for a future date", () => {
+    const future = new Date(Date.now() + 3 * 60 * 60 * 1000);
+    const result = formatTimeUntil(future);
+    expect(result).toMatch(/\d+[hmd]/);
+  });
+
+  it("formatTimeUntil returns 'Drawing now!' for a past date", () => {
+    const past = new Date(Date.now() - 1000);
+    expect(formatTimeUntil(past)).toBe("Drawing now!");
   });
 
   it("formats hours and minutes for near-future dates", () => {

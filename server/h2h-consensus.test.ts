@@ -152,9 +152,17 @@ describe("Version 4.4.0", () => {
     expect(src).toContain("Consensus");
   });
 
-  it("service worker matches v4.4.0", () => {
+  it("service worker version matches latest changelog entry", () => {
+    // The SW version is now derived from the latest CHANGELOG entry (currently 4.5.1).
+    // It no longer hardcodes 4.4.0.
     const swPath = resolve(__dirname, "../client/public/sw.js");
-    const src = readFileSync(swPath, "utf-8");
-    expect(src).toContain("'4.4.0'");
+    const swSrc = readFileSync(swPath, "utf-8");
+    const versionPath = resolve(__dirname, "../client/src/lib/version.ts");
+    const versionSrc = readFileSync(versionPath, "utf-8");
+    // Extract the first version string from CHANGELOG
+    const match = versionSrc.match(/version:\s*"([^"]+)"/); 
+    expect(match).toBeTruthy();
+    const currentVersion = match![1];
+    expect(swSrc).toContain(`'${currentVersion}'`);
   });
 });

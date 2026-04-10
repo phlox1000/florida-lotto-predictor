@@ -253,7 +253,22 @@ export async function getModelPerformanceStats(gameType: string) {
  * Returns a map of modelName -> weight (0-1, higher = better).
  * Models with no performance data get a default weight of 0.5.
  */
+// Simple TTL cache for model weights.
+// Weights change only when new evaluations are written (after draws).
+// 5-minute TTL is safe — weight changes are not time-critical.
+const modelWeightsCache = new Map<string, {
+  weights: Record<string, number>;
+  cachedAt: number;
+}>();
+const MODEL_WEIGHTS_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 export async function getModelWeights(gameType: string): Promise<Record<string, number>> {
+  // Check cache first
+  const cached = modelWeightsCache.get(gameType);
+  if (cached && Date.now() - cached.cachedAt < MODEL_WEIGHTS_TTL_MS) {
+    return cached.weights;
+  }
+
   const stats = await getModelPerformanceStats(gameType);
   const weights: Record<string, number> = {};
 
@@ -271,6 +286,8 @@ export async function getModelWeights(gameType: string): Promise<Record<string, 
     weights[s.modelName] = 0.3 + 0.7 * accuracyNorm * confidenceFactor; // floor at 0.3
   }
 
+  // Cache the result
+  modelWeightsCache.set(gameType, { weights, cachedAt: Date.now() });
   return weights;
 }
 
@@ -327,7 +344,11 @@ export async function evaluatePredictionsAgainstDraw(
   }
 
   if (perfRecords.length > 0) {
-    await insertModelPerformance(perfRecords);
+    // TRANSACTION: all evaluation rows for this draw are written atomically.
+    // A partial write would corrupt leaderboard stats for this draw result.
+    await db.transaction(async (tx) => {
+      await tx.insert(modelPerformance).values(perfRecords);
+    });
   }
 
   return { evaluated: perfRecords.length, highAccuracy };
@@ -787,8 +808,10 @@ export async function evaluatePurchasedTicketsAgainstDraw(
   winningSpecial: number[]
 ) {
   const db = await getDb();
+  if (!db) return;
+
   // Get all pending tickets for this game + draw date
-  const tickets = await db!
+  const tickets = await db
     .select()
     .from(purchasedTickets)
     .where(
@@ -806,7 +829,8 @@ export async function evaluatePurchasedTicketsAgainstDraw(
   if (!cfg) return;
 
   for (const ticket of tickets) {
-    // Filter by draw time if present in notes
+    // Note: draw-time filtering relies on ticket.notes containing "draw period: midday"
+    // or "draw period: evening". Tickets logged without this format skip time filtering.
     const notesLower = (ticket.notes || "").toLowerCase();
     if (drawTime === "midday" && notesLower.includes("draw period: evening")) continue;
     if (drawTime === "evening" && notesLower.includes("draw period: midday")) continue;
@@ -827,7 +851,7 @@ export async function evaluatePurchasedTicketsAgainstDraw(
       // We don't know exact prize tiers, so just mark as win
     }
 
-    await db!
+    await db
       .update(purchasedTickets)
       .set({
         mainHits,
@@ -841,7 +865,14 @@ export async function evaluatePurchasedTicketsAgainstDraw(
 
 export async function getTicketAnalytics(userId: number) {
   const db = await getDb();
-  const allTickets = await db!
+  if (!db) return {
+    modelsPlayedMost: [] as { model: string; count: number }[],
+    modelsWonMoney: [] as { model: string; profit: number }[],
+    hitRateByModel: [] as { model: string; total: number; wins: number; hitRate: number }[],
+    middayVsEvening: { midday: 0, evening: 0 },
+  };
+
+  const allTickets = await db
     .select()
     .from(purchasedTickets)
     .where(eq(purchasedTickets.userId, userId));

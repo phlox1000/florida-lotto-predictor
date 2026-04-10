@@ -65,7 +65,8 @@ export function registerUploadRoutes(app: Express) {
         return;
       }
 
-      const fileKey = `pdf-uploads/${ctx.user.id}-${nanoid(8)}-${fileName}`;
+      const safeBase = fileName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 100);
+      const fileKey = `pdf-uploads/${ctx.user.id}-${nanoid(10)}_${safeBase}`;
       const { url: fileUrl } = await storagePut(fileKey, pdfBuffer, "application/pdf");
 
       const uploadId = await insertPdfUpload({
@@ -128,7 +129,8 @@ export function registerUploadRoutes(app: Express) {
 
       // Upload image to S3 so the LLM can access it via URL
       const mimeType = guessImageMimeType(fileName);
-      const fileKey = `ticket-scans/${ctx.user.id}-${nanoid(8)}-${fileName}`;
+      const safeTicketBase = fileName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 100);
+      const fileKey = `ticket-scans/${ctx.user.id}-${nanoid(10)}_${safeTicketBase}`;
       const { url: fileUrl } = await storagePut(fileKey, imgBuffer, mimeType);
 
       // Use LLM vision to extract ticket data

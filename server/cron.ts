@@ -72,39 +72,46 @@ export async function runAutoFetch(): Promise<AutoFetchResult> {
             drawTime: draw.drawTime,
             source: "auto-fetch",
           });
-          gameResult.newDraws++;
+          if (insertResult.status === "inserted") {
+            gameResult.newDraws++;
 
-          // Auto-evaluate predictions against this new draw
-          const drawId = (insertResult as any)?.[0]?.insertId ?? 0;
-          if (drawId) {
-            try {
-              const evalResult = await evaluatePredictionsAgainstDraw(
-                drawId, gt, draw.mainNumbers, draw.specialNumbers
-              );
-              gameResult.evaluations += evalResult.evaluated;
-              if (evalResult.highAccuracy > 0) {
-                result.highAccuracyAlerts += evalResult.highAccuracy;
+            // Auto-evaluate predictions against this new draw
+            const drawId = insertResult.insertId;
+            if (drawId) {
+              try {
+                const evalResult = await evaluatePredictionsAgainstDraw(
+                  drawId, gt, draw.mainNumbers, draw.specialNumbers
+                );
+                gameResult.evaluations += evalResult.evaluated;
+                if (evalResult.highAccuracy > 0) {
+                  result.highAccuracyAlerts += evalResult.highAccuracy;
+                }
+              } catch (evalErr) {
+                // Evaluation errors are non-fatal
+                console.warn(`[AutoFetch] Evaluation error for ${gt}:`, evalErr);
               }
-            } catch (evalErr) {
-              // Evaluation errors are non-fatal
-              console.warn(`[AutoFetch] Evaluation error for ${gt}:`, evalErr);
-            }
 
-            // Also evaluate purchased tickets against this new draw
-            try {
-              await evaluatePurchasedTicketsAgainstDraw(
-                gt,
-                new Date(draw.drawDate).getTime(),
-                draw.drawTime || "evening",
-                draw.mainNumbers,
-                draw.specialNumbers
-              );
-            } catch (ticketErr) {
-              console.warn(`[AutoFetch] Ticket evaluation error for ${gt}:`, ticketErr);
+              // Also evaluate purchased tickets against this new draw
+              try {
+                await evaluatePurchasedTicketsAgainstDraw(
+                  gt,
+                  new Date(draw.drawDate).getTime(),
+                  draw.drawTime || "evening",
+                  draw.mainNumbers,
+                  draw.specialNumbers
+                );
+              } catch (ticketErr) {
+                console.warn(`[AutoFetch] Ticket evaluation error for ${gt}:`, ticketErr);
+              }
             }
           }
+          // status === "duplicate" is silently skipped — this is expected behavior
         } catch (e) {
-          // Duplicate draw or insert error - skip silently
+          // Duplicates are handled via insertDrawResult's return status.
+          // Only genuine unexpected failures reach this catch block.
+          console.error("[DataFetch] Unexpected insert error:", e);
+          result.errors.push(e instanceof Error ? e.message : String(e));
+          gameResult.errors++;
         }
       }
 

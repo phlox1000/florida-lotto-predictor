@@ -36,6 +36,13 @@
       "when": 1775400000000,
       "tag": "0007_personalization_metrics",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1775478082094,
+      "tag": "0008_performance_indexes",
+      "breakpoints": true
     }
   ]
 }

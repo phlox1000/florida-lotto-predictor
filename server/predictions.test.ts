@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runAllModels, selectBudgetTickets } from "./predictions";
+import { runAllModels, selectBudgetTickets, weightedSampleWithoutReplacement } from "./predictions";
 import { FLORIDA_GAMES, type GameConfig } from "../shared/lottery";
 
 describe("Prediction Engine", () => {
@@ -158,6 +158,21 @@ describe("Prediction Engine", () => {
     });
   });
 
+  it("runAllModels produces stable output for identical inputs", () => {
+    const cfg = FLORIDA_GAMES["fantasy_5"];
+    const history = Array.from({ length: 50 }, (_, i) => ({
+      mainNumbers: [1+i%5, 2+i%5, 3+i%5, 4+i%5, 5+i%5].map(n => 
+        Math.min(n, cfg.mainMax)),
+      specialNumbers: [],
+      drawDate: Date.now() - i * 86400000,
+    }));
+    const result1 = runAllModels(cfg, history);
+    const result2 = runAllModels(cfg, history);
+    result1.forEach((pred, i) => {
+      expect(pred.mainNumbers).toEqual(result2[i].mainNumbers);
+    });
+  });
+
   describe("selectBudgetTickets", () => {
     it("returns at most 20 tickets for Fantasy 5 with $75 budget", () => {
       const history = mockHistory(fantasy5, 100);
@@ -200,6 +215,22 @@ describe("Prediction Engine", () => {
       }
     });
 
+    it("selectBudgetTickets grounds special numbers in history", () => {
+      const cfg = FLORIDA_GAMES["powerball"];
+      const history = Array.from({ length: 20 }, (_, i) => ({
+        mainNumbers: [1, 2, 3, 4, 5],
+        specialNumbers: [3], // always 3 to make assertion clear
+        drawDate: Date.now() - i * 86400000,
+      }));
+      const predictions = runAllModels(cfg, history);
+      const result = selectBudgetTickets(cfg, predictions, 75, 20, history);
+      const allSpecial = result.tickets.flatMap(t => t.specialNumbers);
+      // At least some tickets should have special numbers from history
+      expect(allSpecial.length).toBeGreaterThan(0);
+      // The most frequent special number (3) should appear in selections
+      expect(allSpecial).toContain(3);
+    });
+
     it("respects lower budget constraint", () => {
       const history = mockHistory(powerball, 100);
       const preds = runAllModels(powerball, history);
@@ -207,6 +238,29 @@ describe("Prediction Engine", () => {
       // $10 / $2 = 5 tickets max
       expect(selection.tickets.length).toBeLessThanOrEqual(5);
       expect(selection.totalCost).toBeLessThanOrEqual(10);
+    });
+  });
+
+  describe("Monte Carlo simulation variation", () => {
+    it("monte_carlo produces stable output for identical inputs", () => {
+      const cfg = FLORIDA_GAMES["fantasy_5"];
+      const history = mockHistory(cfg, 50);
+      const r1 = runAllModels(cfg, history).find(p => p.modelName === "monte_carlo");
+      const r2 = runAllModels(cfg, history).find(p => p.modelName === "monte_carlo");
+      expect(r1!.mainNumbers).toEqual(r2!.mainNumbers);
+    });
+
+    it("monte_carlo internal simulations produce varied draws", () => {
+      const cfg = FLORIDA_GAMES["fantasy_5"];
+      const nums = Array.from({ length: cfg.mainMax }, (_, i) => i + 1);
+      const weights = nums.map(() => 1); // uniform weights
+      const draw0 = weightedSampleWithoutReplacement(nums, weights, cfg.mainCount, 0);
+      const draw1 = weightedSampleWithoutReplacement(nums, weights, cfg.mainCount, 1);
+      const draw100 = weightedSampleWithoutReplacement(nums, weights, cfg.mainCount, 100);
+      // At least two of the three should differ
+      const allSame = JSON.stringify(draw0) === JSON.stringify(draw1)
+                   && JSON.stringify(draw1) === JSON.stringify(draw100);
+      expect(allSame).toBe(false);
     });
   });
 });
