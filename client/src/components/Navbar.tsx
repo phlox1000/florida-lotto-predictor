@@ -1,7 +1,7 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { getLoginUrl } from "@/const";
-import { Dices, History, BarChart3, Shield, Brain, GitCompareArrows, Heart, Settings, Menu, X, Target, TrendingUp, Trophy, Cog, Swords } from "lucide-react";
+import { Dices, History, BarChart3, Shield, Brain, GitCompareArrows, Heart, Settings, Menu, X, Target, TrendingUp, Trophy, Cog, Swords, Cpu } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 
@@ -14,6 +14,7 @@ const navItems = [
   { path: "/favorites", label: "Favorites", icon: Heart },
   { path: "/tracker", label: "Tracker", icon: Target },
   { path: "/patterns", label: "Patterns", icon: TrendingUp },
+  { path: "/models", label: "Models", icon: Cpu },
   { path: "/leaderboard", label: "Leaderboard", icon: Trophy },
   { path: "/wheel", label: "Wheel", icon: Cog },
   { path: "/head-to-head", label: "H2H", icon: Swords },
