@@ -5,19 +5,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import Navbar from "@/components/Navbar";
 import { trpc } from "@/lib/trpc";
 import { FLORIDA_GAMES, type GameType, MODEL_NAMES } from "@shared/lottery";
+import { getModelDisplayName } from "@shared/modelMetadata";
 import { Swords, Trophy, Crown, Minus, ArrowRight, BarChart3, Target, Zap, Shield } from "lucide-react";
 import { useState, useMemo } from "react";
-
-// Note: legacy DB rows may exist under "random" — display maps handle both keys
-const MODEL_DISPLAY: Record<string, string> = {
-  frequency_baseline: "Frequency Baseline", random: "Frequency Baseline",
-  poisson_standard: "Poisson Standard", poisson_short: "Poisson Short-Window",
-  poisson_long: "Poisson Long-Window", hot_cold_70: "Hot-Cold 70/30", hot_cold_50: "Hot-Cold 50/50",
-  balanced_hot_cold: "Balanced Hot-Cold", gap_analysis: "Gap Analysis", cooccurrence: "Co-Occurrence",
-  delta: "Delta Frequency", temporal_echo: "Temporal Echo", monte_carlo: "Monte Carlo",
-  markov_chain: "Markov Chain", bayesian: "Bayesian Posterior", quantum_entanglement: "Quantum Entanglement",
-  cdm: "CDM (Dirichlet)", chi_square: "Chi-Square Anomaly", ai_oracle: "AI Oracle Ensemble",
-};
 
 function StatCompare({ label, valueA, valueB, format = "number", higherBetter = true }: {
   label: string; valueA: number; valueB: number; format?: "number" | "percent" | "integer"; higherBetter?: boolean;
@@ -48,7 +38,7 @@ export default function HeadToHead() {
   );
 
   const modelOptions = useMemo(() =>
-    MODEL_NAMES.map(m => ({ value: m, label: MODEL_DISPLAY[m] || m })),
+    MODEL_NAMES.map(m => ({ value: m, label: getModelDisplayName(m) })),
     []
   );
 
@@ -126,7 +116,7 @@ export default function HeadToHead() {
                 <div className="grid grid-cols-3 items-center">
                   <div className="text-center">
                     <p className={`text-lg font-bold ${data.summary.overallWinner === "a" ? "text-cyan-400" : "text-muted-foreground"}`}>
-                      {MODEL_DISPLAY[data.modelA] || data.modelA}
+                      {getModelDisplayName(data.modelA)}
                     </p>
                     <p className="text-2xl font-bold text-cyan-400 mt-1">{data.summary.aOverallAvg.toFixed(3)}</p>
                     <p className="text-xs text-muted-foreground">avg hits · {data.summary.aTotal} evals</p>
@@ -151,7 +141,7 @@ export default function HeadToHead() {
                   </div>
                   <div className="text-center">
                     <p className={`text-lg font-bold ${data.summary.overallWinner === "b" ? "text-orange-400" : "text-muted-foreground"}`}>
-                      {MODEL_DISPLAY[data.modelB] || data.modelB}
+                      {getModelDisplayName(data.modelB)}
                     </p>
                     <p className="text-2xl font-bold text-orange-400 mt-1">{data.summary.bOverallAvg.toFixed(3)}</p>
                     <p className="text-xs text-muted-foreground">avg hits · {data.summary.bTotal} evals</p>
@@ -187,7 +177,7 @@ export default function HeadToHead() {
                           {game.winner !== "tie" && (
                             <Badge className={`text-[10px] ${game.winner === "a" ? "bg-cyan-500/20 text-cyan-400" : "bg-orange-500/20 text-orange-400"}`}>
                               <Trophy className="w-2.5 h-2.5 mr-0.5" />
-                              {game.winner === "a" ? MODEL_DISPLAY[data.modelA] : MODEL_DISPLAY[data.modelB]} wins
+                              {game.winner === "a" ? getModelDisplayName(data.modelA) : getModelDisplayName(data.modelB)} wins
                             </Badge>
                           )}
                           {game.winner === "tie" && (
@@ -197,9 +187,9 @@ export default function HeadToHead() {
                       </div>
 
                       <div className="grid grid-cols-3 items-center mb-2">
-                        <div className="text-right text-xs font-medium text-cyan-400">{MODEL_DISPLAY[data.modelA]?.split(" ")[0]}</div>
+                        <div className="text-right text-xs font-medium text-cyan-400">{getModelDisplayName(data.modelA).split(" ")[0]}</div>
                         <div className="text-center text-[10px] text-muted-foreground">VS</div>
-                        <div className="text-left text-xs font-medium text-orange-400">{MODEL_DISPLAY[data.modelB]?.split(" ")[0]}</div>
+                        <div className="text-left text-xs font-medium text-orange-400">{getModelDisplayName(data.modelB).split(" ")[0]}</div>
                       </div>
 
                       <StatCompare label="Avg Hits" valueA={game.modelA.avgMainHits} valueB={game.modelB.avgMainHits} />

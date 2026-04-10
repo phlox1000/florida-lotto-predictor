@@ -91,7 +91,7 @@ function AddDrawForm() {
             </div>
           </div>
           <div className="space-y-2">
-            <Label>Main Numbers ({gameCfg.mainCount} numbers, {gameCfg.isDigitGame ? "0-9" : `1-${gameCfg.mainMax}`}, comma-separated)</Label>
+            <Label>Main {gameCfg.mainCount === 1 ? "Number" : "Numbers"} ({gameCfg.mainCount} {gameCfg.mainCount === 1 ? "number" : "numbers"}, {gameCfg.isDigitGame ? "0-9" : `1-${gameCfg.mainMax}`}{gameCfg.mainCount > 1 ? ", comma-separated" : ""})</Label>
             <Input value={mainNumbers} onChange={e => setMainNumbers(e.target.value)}
               placeholder={`e.g. ${Array.from({length: gameCfg.mainCount}, (_, i) => i + 1).join(", ")}`}
               className="bg-input" required />
@@ -427,6 +427,15 @@ function DataHealthDashboard() {
                 <span className="font-mono text-foreground">{d.drawCount} draws</span>
               </div>
               <Progress value={(d.drawCount / maxCount) * 100} className="h-2" />
+              {d.byDrawTime && d.byDrawTime.length > 0 && (
+                <div className="flex flex-wrap gap-x-3 gap-y-0.5 pl-1">
+                  {d.byDrawTime.map(dt => (
+                    <span key={dt.drawTime} className="text-[10px] text-muted-foreground">
+                      {dt.drawTime}: <span className="font-mono text-foreground">{dt.count}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>

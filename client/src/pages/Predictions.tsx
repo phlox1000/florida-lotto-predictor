@@ -36,7 +36,7 @@ function ConfidenceMeter({ score }: { score: number }) {
   );
 }
 
-function ModelCard({ pred, gameType, onFavorite }: { pred: PredictionResult; gameType?: string; onFavorite?: (pred: PredictionResult) => void }) {
+function ModelCard({ pred, gameType, isSingleNumber, onFavorite }: { pred: PredictionResult; gameType?: string; isSingleNumber?: boolean; onFavorite?: (pred: PredictionResult) => void }) {
   const isOracle = pred.modelName === "ai_oracle";
   const isCdm = pred.modelName === "cdm";
   const isChiSquare = pred.modelName === "chi_square";
@@ -90,6 +90,11 @@ function ModelCard({ pred, gameType, onFavorite }: { pred: PredictionResult; gam
           <div className="py-2 text-xs text-yellow-400/80 italic">
             {meta?.message as string || "Insufficient historical data for this model."}
           </div>
+        ) : isSingleNumber ? (
+          <div className="flex items-center gap-3">
+            <span className="lotto-ball lotto-ball-main lotto-ball-single">{pred.mainNumbers[0]}</span>
+            <span className="text-xs text-muted-foreground">Pick this number</span>
+          </div>
         ) : (
           <div className="flex gap-1.5 flex-wrap">
             {pred.mainNumbers.map((n, i) => <LottoBall key={i} number={n} />)}
@@ -109,7 +114,7 @@ interface TicketEntry {
   confidence: number;
 }
 
-function TicketCard({ ticket, index, onFavorite }: { ticket: TicketEntry; index: number; onFavorite?: (ticket: TicketEntry) => void }) {
+function TicketCard({ ticket, index, isSingleNumber, onFavorite }: { ticket: TicketEntry; index: number; isSingleNumber?: boolean; onFavorite?: (ticket: TicketEntry) => void }) {
   return (
     <div className="flex items-center gap-3 p-3 rounded-lg bg-secondary/30 border border-border/30">
       <div className="w-8 h-8 rounded-full bg-accent/10 flex items-center justify-center text-accent text-xs font-bold">
@@ -117,8 +122,14 @@ function TicketCard({ ticket, index, onFavorite }: { ticket: TicketEntry; index:
       </div>
       <div className="flex-1">
         <div className="flex gap-1.5 flex-wrap mb-1">
-          {ticket.mainNumbers.map((n, i) => <LottoBall key={i} number={n} />)}
-          {ticket.specialNumbers.map((n, i) => <LottoBall key={`s-${i}`} number={n} variant="special" />)}
+          {isSingleNumber ? (
+            <span className="lotto-ball lotto-ball-main lotto-ball-single">{ticket.mainNumbers[0]}</span>
+          ) : (
+            <>
+              {ticket.mainNumbers.map((n, i) => <LottoBall key={i} number={n} />)}
+              {ticket.specialNumbers.map((n, i) => <LottoBall key={`s-${i}`} number={n} variant="special" />)}
+            </>
+          )}
         </div>
         <p className="text-xs text-muted-foreground">
           Source: {ticket.modelSource.replace(/_/g, " ")} &middot; {Math.round(ticket.confidence * 100)}% confidence
@@ -353,6 +364,8 @@ export default function Predictions() {
     });
   }, [isAuthenticated, selectedGame, addFavorite]);
 
+  const isSingleNumber = FLORIDA_GAMES[selectedGame].mainCount === 1;
+
   const gameOptions = useMemo(() =>
     GAME_TYPES.map(id => ({ id, name: FLORIDA_GAMES[id].name })),
     []
@@ -482,11 +495,11 @@ export default function Predictions() {
                   {/* AI Oracle first */}
                   {predictions.filter(p => p.modelName === "ai_oracle").map(p => (
                     <div key={p.modelName} className="sm:col-span-2 lg:col-span-1">
-                      <ModelCard pred={p} gameType={selectedGame} onFavorite={handleFavoritePred} />
+                      <ModelCard pred={p} gameType={selectedGame} isSingleNumber={isSingleNumber} onFavorite={handleFavoritePred} />
                     </div>
                   ))}
                   {predictions.filter(p => p.modelName !== "ai_oracle").map(p => (
-                    <ModelCard key={p.modelName} pred={p} gameType={selectedGame} onFavorite={handleFavoritePred} />
+                    <ModelCard key={p.modelName} pred={p} gameType={selectedGame} isSingleNumber={isSingleNumber} onFavorite={handleFavoritePred} />
                   ))}
                 </div>
               </div>
@@ -533,7 +546,7 @@ export default function Predictions() {
                 </div>
                 <div className="space-y-2">
                   {ticketData.tickets.map((t, i) => (
-                    <TicketCard key={i} ticket={t as TicketEntry} index={i} onFavorite={handleFavoriteTicket} />
+                    <TicketCard key={i} ticket={t as TicketEntry} index={i} isSingleNumber={isSingleNumber} onFavorite={handleFavoriteTicket} />
                   ))}
                 </div>
               </div>
@@ -580,6 +593,7 @@ function QuickPickComparison({
   isGeneratingQP: boolean;
 }) {
   const gameCfg = FLORIDA_GAMES[selectedGame];
+  const isSingleNumber = gameCfg.mainCount === 1;
 
   // Get top 5 model predictions by confidence
   const topModels = useMemo(() => {
@@ -641,8 +655,14 @@ function QuickPickComparison({
                     </div>
                     <div className="flex-1">
                       <div className="flex gap-1.5 flex-wrap mb-1">
-                        {pred.mainNumbers.map((n, j) => <LottoBall key={j} number={n} />)}
-                        {pred.specialNumbers.map((n, j) => <LottoBall key={`s-${j}`} number={n} variant="special" />)}
+                        {isSingleNumber ? (
+                          <span className="lotto-ball lotto-ball-main lotto-ball-single">{pred.mainNumbers[0]}</span>
+                        ) : (
+                          <>
+                            {pred.mainNumbers.map((n, j) => <LottoBall key={j} number={n} />)}
+                            {pred.specialNumbers.map((n, j) => <LottoBall key={`s-${j}`} number={n} variant="special" />)}
+                          </>
+                        )}
                       </div>
                       <p className="text-[10px] text-muted-foreground">
                         {pred.modelName.replace(/_/g, " ")} · {Math.round(pred.confidenceScore * 100)}% confidence
@@ -682,7 +702,9 @@ function QuickPickComparison({
                     </div>
                     <div className="flex-1">
                       <div className="flex gap-1.5 flex-wrap mb-1">
-                        {pick.mainNumbers.map((n, j) => (
+                        {isSingleNumber ? (
+                          <span className="lotto-ball lotto-ball-single" style={{ background: "linear-gradient(135deg, #f97316, #ea580c)", color: "#000" }}>{pick.mainNumbers[0]}</span>
+                        ) : pick.mainNumbers.map((n, j) => (
                           <span key={j} className="lotto-ball" style={{ background: "linear-gradient(135deg, #f97316, #ea580c)", color: "#000" }}>{n}</span>
                         ))}
                         {pick.specialNumbers.map((n, j) => (

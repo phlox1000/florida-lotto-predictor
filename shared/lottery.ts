@@ -1,7 +1,7 @@
 /** Game type identifiers */
 export const GAME_TYPES = [
   "fantasy_5", "powerball", "mega_millions", "florida_lotto",
-  "cash4life", "pick_2", "pick_3", "pick_4", "pick_5"
+  "cash4life", "pick_2", "pick_3", "pick_4", "pick_5", "cash_pop"
 ] as const;
 
 export type GameType = typeof GAME_TYPES[number];
@@ -77,57 +77,67 @@ export const FLORIDA_GAMES: Record<GameType, GameConfig> = {
     specialCount: 0, specialMax: 0, isDigitGame: true, drawingsPerDay: 2, ticketPrice: 1,
     schedule: { drawDays: [0, 1, 2, 3, 4, 5, 6], drawTimes: ["13:30", "23:00"], description: "Daily, Midday & Evening" },
   },
+  // Cash Pop: single-number game — pick 1 number from 1-25.
+  // Represented as mainCount=1 within the existing schema.
+  // Has 5 daily draws; only evening is supported by the scraper currently.
+  cash_pop: {
+    id: "cash_pop", name: "Cash Pop", mainCount: 1, mainMax: 15,
+    specialCount: 0, specialMax: 0, isDigitGame: false, drawingsPerDay: 5, ticketPrice: 1,
+    schedule: {
+      drawDays: [0, 1, 2, 3, 4, 5, 6],
+      drawTimes: ["08:45", "11:45", "14:45", "18:45", "23:45"],
+      description: "Daily, 5 draws (Morning, Matinee, Afternoon, Evening, Late Night)",
+    },
+  },
 };
 
-/** Get the next draw date/time for a game (in ET) */
-function toETDate(utcDate: Date): Date {
-  // Extract ET components via Intl so the result is correct regardless of server timezone.
-  const formatter = new Intl.DateTimeFormat("en-US", {
+/**
+ * Get the current time as an "ET wall-clock" Date, DST-aware via America/New_York.
+ * The returned Date's hour/minute/day values reflect Eastern Time regardless of
+ * the host machine's timezone. Used internally by schedule functions.
+ */
+export function getETNow(): Date {
+  const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
-    year: "numeric", month: "numeric", day: "numeric",
-    hour: "numeric", minute: "numeric", second: "numeric",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
     hour12: false,
-  });
-  const parts = formatter.formatToParts(utcDate);
-  const get = (type: string) =>
-    parseInt(parts.find(p => p.type === type)?.value ?? "0");
+  }).formatToParts(new Date());
+
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    parseInt(parts.find(p => p.type === type)?.value ?? "0", 10);
+
   return new Date(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"));
 }
 
+/** Get the next draw date/time for a game (in ET, DST-aware) */
 export function getNextDrawDate(gameType: GameType): Date | null {
   const cfg = FLORIDA_GAMES[gameType];
   if (cfg.schedule.ended || cfg.schedule.drawDays.length === 0) return null;
 
-  const now = new Date();
-  const etNow = toETDate(now);
-  // Offset to convert fake-ET timestamps back to real UTC
-  const etOffset = now.getTime() - etNow.getTime();
+  const etNow = getETNow();
 
-  const lastDrawTime = cfg.schedule.drawTimes[cfg.schedule.drawTimes.length - 1];
-  const [drawHour, drawMin] = lastDrawTime.split(":").map(Number);
-
-  // Check today and next 7 days
   for (let dayOffset = 0; dayOffset <= 7; dayOffset++) {
     const candidate = new Date(etNow);
     candidate.setDate(candidate.getDate() + dayOffset);
-    const dayOfWeek = candidate.getDay();
 
-    if (cfg.schedule.drawDays.includes(dayOfWeek)) {
-      candidate.setHours(drawHour, drawMin, 0, 0);
+    if (!cfg.schedule.drawDays.includes(candidate.getDay())) continue;
 
-      // If today but draw time has passed, skip to next draw day
-      if (dayOffset === 0 && candidate <= etNow) continue;
+    for (const drawTime of cfg.schedule.drawTimes) {
+      const [h, m] = drawTime.split(":").map(Number);
+      const drawDate = new Date(candidate);
+      drawDate.setHours(h, m, 0, 0);
 
-      // Convert from fake-ET space back to real UTC
-      return new Date(candidate.getTime() + etOffset);
+      if (drawDate > etNow) return drawDate;
     }
   }
   return null;
 }
 
-/** Format time remaining until a date */
+/** Format time remaining until a date (ET wall-clock Date from getNextDrawDate) */
 export function formatTimeUntil(target: Date): string {
-  const diff = target.getTime() - Date.now();
+  const etNow = getETNow();
+  const diff = target.getTime() - etNow.getTime();
 
   if (diff <= 0) return "Drawing now!";
 

@@ -200,6 +200,10 @@
     text-shadow: 0 0 12px oklch(0.85 0.17 85 / 0.5);
   }
 
+  .font-tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
   /* Lottery ball styling */
   .lotto-ball {
     display: inline-flex;
@@ -211,6 +215,12 @@
     font-weight: 700;
     font-size: 0.875rem;
     font-variant-numeric: tabular-nums;
+  }
+  .lotto-ball-single {
+    width: 44px;
+    height: 44px;
+    font-size: 1.25rem;
+    font-weight: 800;
   }
   .lotto-ball-main {
     background: linear-gradient(135deg, oklch(0.75 0.18 195), oklch(0.6 0.15 195));

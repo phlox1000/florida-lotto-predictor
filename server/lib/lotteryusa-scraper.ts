@@ -25,7 +25,9 @@ export interface ParsedDraw {
   drawTime: string;       // "evening" | "midday"
 }
 
-/** Map game types to their lotteryusa.com URL slugs */
+/** Map game types to their lotteryusa.com URL slugs.
+ *  Most games use { evening, midday? }. Cash Pop has 5 daily draws with
+ *  separate pages, handled via the CASH_POP_SLUGS map below. */
 const GAME_SLUGS: Record<string, { evening: string; midday?: string }> = {
   fantasy_5:    { evening: "fantasy-5",    midday: "fantasy-5-midday" },
   powerball:    { evening: "powerball" },
@@ -38,6 +40,15 @@ const GAME_SLUGS: Record<string, { evening: string; midday?: string }> = {
   pick_2:       { evening: "pick-2",       midday: "pick-2-midday" },
 };
 
+/** Cash Pop has 5 daily draws, each with its own lotteryusa.com page. */
+const CASH_POP_SLUGS: Array<{ slug: string; drawTime: string }> = [
+  { slug: "cash-pop-morning",    drawTime: "morning" },
+  { slug: "cash-pop-matinee",    drawTime: "matinee" },
+  { slug: "cash-pop-afternoon",  drawTime: "afternoon" },
+  { slug: "cash-pop-evening",    drawTime: "evening" },
+  { slug: "cash-pop-late-night", drawTime: "late_night" },
+];
+
 /** Number of main balls per game (excluding special balls) */
 const MAIN_COUNTS: Record<string, number> = {
   fantasy_5: 5,
@@ -49,6 +60,7 @@ const MAIN_COUNTS: Record<string, number> = {
   pick_4: 4,
   pick_3: 3,
   pick_2: 2,
+  cash_pop: 1,
 };
 
 /** Games that have a special ball (PB, MB, CB) */
@@ -163,6 +175,11 @@ async function fetchPage(url: string): Promise<string> {
  * Returns up to 10 most recent draws (evening + midday combined for Pick games).
  */
 export async function fetchRecentDraws(gameType: GameType): Promise<ParsedDraw[]> {
+  // Cash Pop: fetch all 5 daily draw pages
+  if (gameType === "cash_pop") {
+    return fetchCashPopRecent();
+  }
+
   const slugs = GAME_SLUGS[gameType];
   if (!slugs) {
     throw new Error(`Unknown game type: ${gameType}`);
@@ -198,13 +215,33 @@ export async function fetchRecentDraws(gameType: GameType): Promise<ParsedDraw[]
   return allDraws;
 }
 
+/** Fetch recent Cash Pop results across all 5 daily draws. */
+async function fetchCashPopRecent(): Promise<ParsedDraw[]> {
+  const allDraws: ParsedDraw[] = [];
+
+  for (const { slug, drawTime } of CASH_POP_SLUGS) {
+    try {
+      const url = `${BASE_URL}/${slug}/`;
+      const html = await fetchPage(url);
+      const draws = parseDrawCards(html, "cash_pop", drawTime);
+      allDraws.push(...draws);
+    } catch (e) {
+      console.warn(`[LotteryUSA] Failed to fetch Cash Pop ${drawTime}:`, e);
+    }
+  }
+
+  allDraws.sort((a, b) => b.drawDate.localeCompare(a.drawDate));
+  return allDraws;
+}
+
 /**
  * Fetch latest draws for ALL supported games from lotteryusa.com.
  */
 export async function fetchAllGamesRecent(): Promise<Record<string, ParsedDraw[]>> {
   const results: Record<string, ParsedDraw[]> = {};
+  const allGameTypes = [...Object.keys(GAME_SLUGS), "cash_pop"];
   
-  for (const gameType of Object.keys(GAME_SLUGS)) {
+  for (const gameType of allGameTypes) {
     try {
       results[gameType] = await fetchRecentDraws(gameType as GameType);
     } catch (e) {
@@ -217,4 +254,4 @@ export async function fetchAllGamesRecent(): Promise<Record<string, ParsedDraw[]
 }
 
 // Export for testing
-export { parseDateStr, parseDrawCards, GAME_SLUGS, MAIN_COUNTS };
+export { parseDateStr, parseDrawCards, GAME_SLUGS, CASH_POP_SLUGS, MAIN_COUNTS };
