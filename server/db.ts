@@ -75,7 +75,7 @@ export async function createUser(data: {
   name: string;
   email: string;
   passwordHash: string;
-  passwordSalt: string;
+  passwordSalt: string | null;
   role: string;
 }) {
   const db = await getDb();

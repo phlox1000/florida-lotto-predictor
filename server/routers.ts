@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import bcrypt from "bcrypt";
 import { z } from "zod";
 import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import { FLORIDA_GAMES, GAME_TYPES, type GameType, getNextDrawDate, formatTimeUntil } from "@shared/lottery";
@@ -54,8 +55,7 @@ export const appRouter = router({
           throw new TRPCError({ code: 'CONFLICT', message: 'Email already registered' });
         }
 
-        const salt = crypto.randomBytes(32).toString('hex');
-        const hash = crypto.createHash('sha256').update(salt + ':' + input.password).digest('hex');
+        const passwordHash = await bcrypt.hash(input.password, 12);
 
         const count = await getUserCount();
         const role = count === 0 ? 'admin' : 'user';
@@ -65,8 +65,8 @@ export const appRouter = router({
           openId,
           name: input.name,
           email: input.email,
-          passwordHash: hash,
-          passwordSalt: salt,
+          passwordHash,
+          passwordSalt: null,
           role,
         });
 
@@ -87,12 +87,12 @@ export const appRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         const user = await getUserByEmail(input.email);
-        if (!user || !user.passwordHash || !user.passwordSalt) {
+        if (!user || !user.passwordHash) {
           return { success: false as const, message: 'Invalid email or password' };
         }
 
-        const hash = crypto.createHash('sha256').update(user.passwordSalt + ':' + input.password).digest('hex');
-        if (hash !== user.passwordHash) {
+        const passwordMatch = await bcrypt.compare(input.password, user.passwordHash);
+        if (!passwordMatch) {
           return { success: false as const, message: 'Invalid email or password' };
         }
 
