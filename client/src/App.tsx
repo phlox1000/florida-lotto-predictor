@@ -23,6 +23,7 @@ import Patterns from "./pages/Patterns";
 import Leaderboard from "./pages/Leaderboard";
 import Wheel from "./pages/Wheel";
 import HeadToHead from "./pages/HeadToHead";
+import Login from "./pages/Login";
 import InstallPrompt from "./components/InstallPrompt";
 import UpdatePrompt from "./components/UpdatePrompt";
 import WhatsNew from "./components/WhatsNew";
@@ -68,6 +69,7 @@ function Router() {
       <Route path="/leaderboard" component={Leaderboard} />
       <Route path="/wheel" component={Wheel} />
       <Route path="/head-to-head" component={HeadToHead} />
+      <Route path="/login" component={Login} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

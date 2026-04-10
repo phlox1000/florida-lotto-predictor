@@ -1,7 +1,9 @@
+import crypto from "crypto";
 import { z } from "zod";
-import { COOKIE_NAME } from "@shared/const";
+import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import { FLORIDA_GAMES, GAME_TYPES, type GameType, getNextDrawDate, formatTimeUntil } from "@shared/lottery";
 import { getSessionCookieOptions } from "./_core/cookies";
+import { sdk } from "./_core/sdk";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, adminProcedure, router } from "./_core/trpc";
 import { TRPCError } from "@trpc/server";
@@ -26,6 +28,7 @@ import {
   deletePurchasedTicket, getUserROIStats, getROIByGame,
   getModelTrends,
   getTicketAnalytics,
+  getUserByEmail, createUser, getUserCount,
 } from "./db";
 
 const gameTypeSchema = z.enum(GAME_TYPES);
@@ -39,6 +42,70 @@ export const appRouter = router({
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
       return { success: true } as const;
     }),
+    register: publicProcedure
+      .input(z.object({
+        name: z.string().min(1, "Name is required"),
+        email: z.string().email("Invalid email"),
+        password: z.string().min(8, "Password must be at least 8 characters"),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const existing = await getUserByEmail(input.email);
+        if (existing) {
+          throw new TRPCError({ code: 'CONFLICT', message: 'Email already registered' });
+        }
+
+        const salt = crypto.randomBytes(32).toString('hex');
+        const hash = crypto.createHash('sha256').update(salt + ':' + input.password).digest('hex');
+
+        const count = await getUserCount();
+        const role = count === 0 ? 'admin' : 'user';
+
+        const openId = crypto.randomUUID();
+        const user = await createUser({
+          openId,
+          name: input.name,
+          email: input.email,
+          passwordHash: hash,
+          passwordSalt: salt,
+          role,
+        });
+
+        const sessionToken = await sdk.createSessionToken(openId, {
+          name: input.name,
+          expiresInMs: ONE_YEAR_MS,
+        });
+
+        const cookieOptions = getSessionCookieOptions(ctx.req);
+        ctx.res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+
+        return { success: true as const };
+      }),
+    login: publicProcedure
+      .input(z.object({
+        email: z.string().email(),
+        password: z.string(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const user = await getUserByEmail(input.email);
+        if (!user || !user.passwordHash || !user.passwordSalt) {
+          return { success: false as const, message: 'Invalid email or password' };
+        }
+
+        const hash = crypto.createHash('sha256').update(user.passwordSalt + ':' + input.password).digest('hex');
+        if (hash !== user.passwordHash) {
+          return { success: false as const, message: 'Invalid email or password' };
+        }
+
+        const sessionToken = await sdk.createSessionToken(user.openId, {
+          name: user.name || "",
+          expiresInMs: ONE_YEAR_MS,
+        });
+
+        const cookieOptions = getSessionCookieOptions(ctx.req);
+        ctx.res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+
+        return { success: true as const };
+      }),
   }),
 
   // ─── Predictions ────────────────────────────────────────────────────────────

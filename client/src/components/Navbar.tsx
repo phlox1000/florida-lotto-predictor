@@ -1,6 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { getLoginUrl } from "@/const";
 import { Dices, History, BarChart3, Shield, Brain, GitCompareArrows, Heart, Settings, Menu, X, Target, TrendingUp, Trophy, Cog, Swords } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
@@ -21,7 +20,7 @@ const navItems = [
 
 export default function Navbar() {
   const { user, loading, logout } = useAuth();
-  const [location] = useLocation();
+  const [location, navigate] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
@@ -84,8 +83,8 @@ export default function Navbar() {
               </Button>
             </div>
           ) : (
-            <Button size="sm" asChild className="bg-primary text-primary-foreground hover:bg-primary/90">
-              <a href={getLoginUrl()}>Sign In</a>
+            <Button size="sm" className="bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => navigate('/login')}>
+              Sign In
             </Button>
           )}
         </div>
@@ -137,8 +136,8 @@ export default function Navbar() {
                 Sign Out
               </Button>
             ) : (
-              <Button size="sm" asChild className="w-full bg-primary text-primary-foreground">
-                <a href={getLoginUrl()}>Sign In</a>
+              <Button size="sm" className="w-full bg-primary text-primary-foreground" onClick={() => { navigate('/login'); setMobileOpen(false); }}>
+                Sign In
               </Button>
             )}
           </div>
