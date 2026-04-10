@@ -1,6 +1,8 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { publicProcedure, protectedProcedure, router } from "../_core/trpc";
 import { getUserTicketSelections, getTicketAnalytics } from "../db";
+import { checkRateLimit } from "../lib/rateLimiter";
 import { gameTypeSchema } from "./routerUtils";
 import { generateTickets } from "../services/tickets.service";
 
@@ -13,6 +15,14 @@ export const ticketsRouter = router({
       maxTickets: z.number().min(1).max(20).default(20),
     }))
     .mutation(async ({ input, ctx }) => {
+      const ip = ctx.req?.ip ?? ctx.req?.headers?.["x-forwarded-for"] ?? "unknown";
+      const rl = checkRateLimit(String(ip), 10, 60_000);
+      if (!rl.allowed) {
+        throw new TRPCError({
+          code: "TOO_MANY_REQUESTS",
+          message: "Too many requests. Please wait before generating again.",
+        });
+      }
       return generateTickets(
         input.gameType,
         input.budget,

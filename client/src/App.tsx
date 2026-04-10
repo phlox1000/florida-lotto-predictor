@@ -23,6 +23,7 @@ import Patterns from "./pages/Patterns";
 import Leaderboard from "./pages/Leaderboard";
 import Wheel from "./pages/Wheel";
 import HeadToHead from "./pages/HeadToHead";
+import Login from "./pages/Login";
 import Analyze from "./pages/Analyze";
 import Generate from "./pages/Generate";
 import Track from "./pages/Track";
@@ -71,6 +72,7 @@ function Router() {
       <Route path="/leaderboard" component={Leaderboard} />
       <Route path="/wheel" component={Wheel} />
       <Route path="/head-to-head" component={HeadToHead} />
+      <Route path="/login" component={Login} />
       <Route path="/analyze" component={Analyze} />
       <Route path="/generate" component={Generate} />
       <Route path="/track" component={Track} />

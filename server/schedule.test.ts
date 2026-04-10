@@ -72,13 +72,15 @@ describe("formatTimeUntil", () => {
   });
 
   it("formatTimeUntil returns a non-empty string for a future date", () => {
-    const future = new Date(Date.now() + 3 * 60 * 60 * 1000);
+    const etNow = getETNow();
+    const future = new Date(etNow.getTime() + 3 * 60 * 60 * 1000);
     const result = formatTimeUntil(future);
     expect(result).toMatch(/\d+[hmd]/);
   });
 
   it("formatTimeUntil returns 'Drawing now!' for a past date", () => {
-    const past = new Date(Date.now() - 1000);
+    const etNow = getETNow();
+    const past = new Date(etNow.getTime() - 1000);
     expect(formatTimeUntil(past)).toBe("Drawing now!");
   });
 

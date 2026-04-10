@@ -43,6 +43,13 @@
       "when": 1775478082094,
       "tag": "0008_performance_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1775600000000,
+      "tag": "0009_add_password_fields",
+      "breakpoints": true
     }
   ]
 }
