@@ -14,7 +14,6 @@ import { FLORIDA_GAMES, GAME_TYPES, type GameType } from "@shared/lottery";
 import { Heart, Trash2, Copy, Star, LogIn } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
-import { getLoginUrl } from "@/const";
 import { useGame } from "@/contexts/GameContext";
 import { LoadingState, EmptyState } from "@/components/StateViews";
 
@@ -76,7 +75,7 @@ export default function FavoritesContent() {
           Save your best picks and access them anytime.
         </p>
         <Button asChild className="bg-primary text-primary-foreground">
-          <a href={getLoginUrl()}>Sign In</a>
+          <a href="/login">Sign In</a>
         </Button>
       </div>
     );

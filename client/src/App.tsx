@@ -26,6 +26,7 @@ import HeadToHead from "./pages/HeadToHead";
 import Analyze from "./pages/Analyze";
 import Generate from "./pages/Generate";
 import Track from "./pages/Track";
+import Login from "./pages/Login";
 import InstallPrompt from "./components/InstallPrompt";
 import UpdatePrompt from "./components/UpdatePrompt";
 import WhatsNew from "./components/WhatsNew";
@@ -58,6 +59,7 @@ function Router() {
       <Route path="/app">
         <Redirect to="/app/analyze" />
       </Route>
+      <Route path="/login" component={Login} />
       <Route path="/" component={Home} />
       <Route path="/predictions" component={Predictions} />
       <Route path="/history" component={History} />

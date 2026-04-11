@@ -8,7 +8,6 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { trpc } from "@/lib/trpc";
 import { FLORIDA_GAMES, GAME_TYPES, type GameType } from "@shared/lottery";
-import { getLoginUrl } from "@/const";
 import { History as HistoryIcon, Ticket, Clock, LogIn, Download, FileSpreadsheet } from "lucide-react";
 import { useState, useCallback } from "react";
 import { toast } from "sonner";
@@ -293,7 +292,7 @@ export default function History() {
           <h2 className="text-xl font-semibold mb-2">Sign in to view your history</h2>
           <p className="text-sm text-muted-foreground mb-6">Your prediction and ticket history is saved when you're signed in.</p>
           <Button asChild className="bg-primary text-primary-foreground">
-            <a href={getLoginUrl()}>Sign In</a>
+            <a href="/login">Sign In</a>
           </Button>
         </div>
       </div>

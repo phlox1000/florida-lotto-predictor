@@ -10,7 +10,6 @@ import { trpc } from "@/lib/trpc";
 import { Bell, BellOff, Trophy, Newspaper, Settings as SettingsIcon, Loader2, Info, RefreshCw, History, Clock, Zap, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
-import { getLoginUrl } from "@/const";
 import { APP_VERSION, getUpdateHistory, type UpdateHistoryEntry } from "@/lib/version";
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
@@ -123,7 +122,7 @@ export default function Settings() {
           <h1 className="text-2xl font-bold mb-2">Settings</h1>
           <p className="text-muted-foreground mb-6">Sign in to manage your notification preferences.</p>
           <Button asChild className="bg-primary text-primary-foreground">
-            <a href={getLoginUrl()}>Sign In</a>
+            <a href="/login">Sign In</a>
           </Button>
         </div>
       </div>

@@ -12,7 +12,6 @@ import {
 } from "@/components/ui/dialog";
 import { trpc } from "@/lib/trpc";
 import { FLORIDA_GAMES, GAME_TYPES, type GameType } from "@shared/lottery";
-import { getLoginUrl } from "@/const";
 import {
   DollarSign, TrendingUp, TrendingDown, Trophy, Ticket, Plus, Trash2,
   LogIn, CheckCircle, XCircle, Clock, BarChart3, Target,
@@ -665,7 +664,7 @@ export default function Tracker() {
           <LogIn className="w-12 h-12 mx-auto mb-4 text-muted-foreground opacity-40" />
           <h2 className="text-xl font-semibold mb-2">Sign in to track your tickets</h2>
           <p className="text-sm text-muted-foreground mb-6">Log your purchases, record wins, and track your ROI over time.</p>
-          <Button asChild className="bg-primary text-primary-foreground"><a href={getLoginUrl()}>Sign In</a></Button>
+          <Button asChild className="bg-primary text-primary-foreground"><a href="/login">Sign In</a></Button>
         </div>
       </div>
     );

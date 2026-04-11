@@ -24,7 +24,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { trpc } from "@/lib/trpc";
 import { FLORIDA_GAMES, GAME_TYPES, type GameType } from "@shared/lottery";
-import { getLoginUrl } from "@/const";
 import {
   DollarSign, TrendingUp, TrendingDown, Trophy, Ticket, Plus, Trash2,
   LogIn, CheckCircle, XCircle, Clock, BarChart3, Target,
@@ -604,7 +603,7 @@ export default function TrackTab() {
           Log your purchases, record wins, and track your ROI over time.
         </p>
         <Button asChild className="bg-primary text-primary-foreground">
-          <a href={getLoginUrl()}>Sign In</a>
+          <a href="/login">Sign In</a>
         </Button>
       </div>
     );

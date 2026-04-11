@@ -13,7 +13,6 @@
  * One-hand usability: bottom bar height is 64px with 44px touch targets.
  */
 import { useAuth } from "@/_core/hooks/useAuth";
-import { getLoginUrl } from "@/const";
 import { BarChart3, Brain, Dices, LogIn, LogOut, Settings, Target, Trophy } from "lucide-react";
 import { Link, useLocation } from "wouter";
 
@@ -129,7 +128,7 @@ function TopBar() {
             </button>
           ) : (
             <a
-              href={getLoginUrl()}
+              href="/login"
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-colors no-underline"
             >
               <LogIn className="w-3.5 h-3.5" />

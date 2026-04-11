@@ -9,7 +9,6 @@ import { FLORIDA_GAMES, GAME_TYPES, type GameType } from "@shared/lottery";
 import { Heart, Trash2, Copy, Star, Loader2 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
-import { getLoginUrl } from "@/const";
 
 function LottoBall({ number, variant = "main" }: { number: number; variant?: "main" | "special" }) {
   return (
@@ -65,7 +64,7 @@ export default function Favorites() {
           <h1 className="text-2xl font-bold mb-2">Favorites</h1>
           <p className="text-muted-foreground mb-6">Sign in to save and manage your favorite number combinations.</p>
           <Button asChild className="bg-primary text-primary-foreground">
-            <a href={getLoginUrl()}>Sign In</a>
+            <a href="/login">Sign In</a>
           </Button>
         </div>
       </div>

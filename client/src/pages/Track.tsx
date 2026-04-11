@@ -8,7 +8,6 @@ import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { FLORIDA_GAMES, type GameType } from "@shared/lottery";
 import { getModelDisplayName } from "@shared/modelMetadata";
-import { getLoginUrl } from "@/const";
 import { ROIPanel, LottoBallRow, LottoBall } from "@/components/predictions";
 import {
   LogIn, Plus, Clock, CheckCircle, XCircle,
@@ -31,7 +30,7 @@ function SignInGate() {
           </p>
         </div>
         <Button asChild>
-          <a href={getLoginUrl()}>
+          <a href="/login">
             <LogIn className="w-4 h-4 mr-2" />
             Sign In
           </a>
