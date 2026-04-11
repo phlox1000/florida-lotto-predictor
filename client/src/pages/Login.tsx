@@ -1,99 +1,98 @@
-import { useState, type FormEvent } from "react";
-import { Link, useLocation } from "wouter";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { useState, useEffect, type FormEvent } from "react";
+import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
-import { toast } from "sonner";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { Dices } from "lucide-react";
 
 export default function Login() {
   const [, navigate] = useLocation();
-  const utils = trpc.useUtils();
+  const [isRegister, setIsRegister] = useState(false);
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [mode, setMode] = useState<"login" | "register">("login");
-  const [submitting, setSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
 
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!email.trim() || !password) {
-      toast.error("Enter email and password.");
-      return;
-    }
-    if (password.length < 8) {
-      toast.error("Password must be at least 8 characters.");
-      return;
-    }
+  const meQuery = trpc.auth.me.useQuery(undefined, {
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
 
-    setSubmitting(true);
-    try {
-      const path = mode === "login" ? "/api/auth/login" : "/api/auth/register";
-      const res = await fetch(path, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), password }),
-      });
+  useEffect(() => {
+    if (meQuery.data) navigate("/");
+  }, [meQuery.data, navigate]);
 
-      const data = (await res.json().catch(() => ({}))) as {
-        error?: string;
-        message?: string;
-      };
-
-      if (!res.ok) {
-        toast.error(data.error || data.message || `Request failed (${res.status})`);
-        return;
+  const loginMutation = trpc.auth.login.useMutation({
+    onSuccess: (result) => {
+      if (result.success) {
+        window.location.href = "/";
+      } else {
+        setErrorMsg(result.message ?? "Login failed");
       }
+    },
+    onError: (err) => setErrorMsg(err.message),
+  });
 
-      await utils.auth.me.invalidate();
-      toast.success(mode === "login" ? "Signed in." : "Account created. You're signed in.");
-      navigate("/");
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Something went wrong.");
-    } finally {
-      setSubmitting(false);
+  const registerMutation = trpc.auth.register.useMutation({
+    onSuccess: () => { window.location.href = "/"; },
+    onError: (err) => setErrorMsg(err.message),
+  });
+
+  const isPending = loginMutation.isPending || registerMutation.isPending;
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    setErrorMsg("");
+    if (isRegister) {
+      registerMutation.mutate({ name, email, password });
+    } else {
+      loginMutation.mutate({ email, password });
     }
-  }
+  };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
-      <Link href="/" className="flex items-center gap-2 no-underline mb-8">
-        <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
-          <Dices className="w-5 h-5 text-primary" />
-        </div>
-        <span className="text-lg font-bold text-foreground">
-          FL Lotto <span className="text-primary">Oracle</span>
-        </span>
-      </Link>
-
-      <Card className="w-full max-w-md border-border/50 bg-card">
-        <CardHeader>
-          <CardTitle>{mode === "login" ? "Sign in" : "Create account"}</CardTitle>
-          <CardDescription>
-            {mode === "login"
-              ? "Use the email and password for your account."
-              : "Register with your email and a strong password (min. 8 characters)."}
-          </CardDescription>
+    <div className="min-h-screen flex items-center justify-center bg-background p-4">
+      <Card className="w-full max-w-md border-border">
+        <CardHeader className="text-center">
+          <div className="flex justify-center mb-2">
+            <div className="w-12 h-12 rounded-xl bg-primary/20 flex items-center justify-center">
+              <Dices className="w-7 h-7 text-primary" />
+            </div>
+          </div>
+          <CardTitle className="text-2xl">
+            {isRegister ? "Create Account" : "Sign In"}
+          </CardTitle>
+          <p className="text-sm text-muted-foreground mt-1">
+            {isRegister
+              ? "Create your FL Lotto Oracle account"
+              : "Sign in to FL Lotto Oracle"}
+          </p>
         </CardHeader>
         <CardContent>
-          <form onSubmit={onSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {isRegister && (
+              <div className="space-y-2">
+                <Label htmlFor="name">Name</Label>
+                <Input
+                  id="name"
+                  type="text"
+                  placeholder="Your name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  required
+                />
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <Input
                 id="email"
                 type="email"
-                autoComplete="email"
+                placeholder="you@example.com"
                 value={email}
-                onChange={(ev) => setEmail(ev.target.value)}
-                disabled={submitting}
+                onChange={(e) => setEmail(e.target.value)}
                 required
               />
             </div>
@@ -102,44 +101,49 @@ export default function Login() {
               <Input
                 id="password"
                 type="password"
-                autoComplete={mode === "login" ? "current-password" : "new-password"}
+                placeholder={isRegister ? "Min 8 characters" : "Your password"}
                 value={password}
-                onChange={(ev) => setPassword(ev.target.value)}
-                disabled={submitting}
+                onChange={(e) => setPassword(e.target.value)}
                 required
-                minLength={8}
+                minLength={isRegister ? 8 : undefined}
               />
             </div>
-            <Button type="submit" className="w-full" disabled={submitting}>
-              {submitting ? "Please wait…" : mode === "login" ? "Sign in" : "Register"}
+            {errorMsg && (
+              <p className="text-sm text-destructive">{errorMsg}</p>
+            )}
+            <Button type="submit" className="w-full" disabled={isPending}>
+              {isPending
+                ? "Please wait..."
+                : isRegister
+                  ? "Create Account"
+                  : "Sign In"}
             </Button>
           </form>
-
-          <p className="text-sm text-center text-muted-foreground mt-4">
-            {mode === "login" ? (
-              <>
-                No account?{" "}
-                <button
-                  type="button"
-                  className="text-primary hover:underline font-medium bg-transparent border-0 p-0 cursor-pointer"
-                  onClick={() => setMode("register")}
-                >
-                  Create one
-                </button>
-              </>
-            ) : (
+          <div className="mt-4 text-center text-sm text-muted-foreground">
+            {isRegister ? (
               <>
                 Already have an account?{" "}
                 <button
                   type="button"
-                  className="text-primary hover:underline font-medium bg-transparent border-0 p-0 cursor-pointer"
-                  onClick={() => setMode("login")}
+                  className="text-primary hover:underline"
+                  onClick={() => { setIsRegister(false); setErrorMsg(""); }}
                 >
-                  Sign in
+                  Sign In
+                </button>
+              </>
+            ) : (
+              <>
+                Don&apos;t have an account?{" "}
+                <button
+                  type="button"
+                  className="text-primary hover:underline"
+                  onClick={() => { setIsRegister(true); setErrorMsg(""); }}
+                >
+                  Create one
                 </button>
               </>
             )}
-          </p>
+          </div>
         </CardContent>
       </Card>
     </div>

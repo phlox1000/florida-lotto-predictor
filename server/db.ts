@@ -63,6 +63,43 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
+export async function getUserByEmail(email: string) {
+  const db = await getDb();
+  if (!db) { console.warn("[Database] Cannot get user: database not available"); return undefined; }
+  const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
+  return result.length > 0 ? result[0] : undefined;
+}
+
+export async function createUser(data: {
+  openId: string;
+  name: string;
+  email: string;
+  passwordHash: string;
+  passwordSalt: string | null;
+  role: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.insert(users).values({
+    openId: data.openId,
+    name: data.name,
+    email: data.email,
+    passwordHash: data.passwordHash,
+    passwordSalt: data.passwordSalt ?? undefined,
+    role: data.role as "user" | "admin",
+    loginMethod: "email",
+  });
+  const result = await db.select().from(users).where(eq(users.openId, data.openId)).limit(1);
+  return result.length > 0 ? result[0] : undefined;
+}
+
+export async function getUserCount(): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const result = await db.select({ count: sql<number>`COUNT(*)` }).from(users);
+  return result[0]?.count ?? 0;
+}
+
 // ─── Draw Results ───────────────────────────────────────────────────────────────
 
 /** Check if a draw result already exists (same game, date, numbers, and draw time) */
