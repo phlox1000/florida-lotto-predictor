@@ -13,5 +13,8 @@ build({
   minify: !isDev,
   sourcemap: isDev,
   target: 'node20',
+  loader: {
+    '.node': 'file' // Handle .node files (native addons)
+  },
   logLevel: 'info',
 }).catch(() => process.exit(1));
