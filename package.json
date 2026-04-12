@@ -1,5 +1,4 @@
 {
-  "packageManager": "pnpm@10.4.1",
   "name": "florida-lotto-predictor-web",
   "version": "1.0.0",
   "type": "module",
