@@ -17,4 +17,5 @@ build({
     '.node': 'file' // Handle .node files (native addons)
   },
   logLevel: 'info',
+  packages: 'external', // Ensure all packages are external
 }).catch(() => process.exit(1));
