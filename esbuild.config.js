@@ -9,7 +9,7 @@ build({
   platform: 'node',
   format: 'cjs', // Use CommonJS for Node.js compatibility
   outdir: 'dist',
-  external: ['@prisma/client'], // Externalize if needed
+  external: ['@prisma/client', 'esbuild'], // Mark esbuild as external
   minify: !isDev,
   sourcemap: isDev,
   target: 'node20',
