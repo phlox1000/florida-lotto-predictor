@@ -1,0 +1,38 @@
+{
+  "expoCli": "bun",
+  "updates": {
+    "url": "https://u.expo.dev/update/your-project-id"
+  },
+  "build": {
+    "development": {
+      "distribution": "store",
+      "android": {
+        "buildType": "development"
+      },
+      "ios": {
+        "buildType": "development"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "preview"
+      },
+      "ios": {
+        "buildType": "preview"
+      }
+    },
+    "production": {
+      "distribution": "store",
+      "android": {
+        "buildType": "production",
+        "serviceAccountKey": "./service-account-key.json"
+      },
+      "ios": {
+        "buildType": "production",
+        "appleId": "your@apple.com",
+        "teamId": "YOUR_TEAM_ID"
+      }
+    }
+  }
+}
