@@ -4,8 +4,6 @@
   "private": true,
   "packageManager": "pnpm@10.4.1",
   "scripts": {
-    "build": "vite build",
-    "dev": "vite",
-    "preview": "vite preview"
+    "build": "cd client && pnpm install && pnpm build"
   }
 }
