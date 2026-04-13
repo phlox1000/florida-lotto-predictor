@@ -13,7 +13,8 @@
     "react-dom": "^18.2.0",
     "@florida-lotto/shared": "workspace:*",
     "@tanstack/react-query": "^5.0.0",
-    "@trpc/client": "^11.0.0"
+    "@trpc/client": "^11.0.0",
+    "superjson": "^2.2.1"
   },
   "devDependencies": {
     "vite": "^5.0.0",
