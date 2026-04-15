@@ -1,79 +1,13 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no" />
-    <title>FL Lotto Oracle</title>
-
-    <!-- PWA -->
-    <link rel="manifest" href="/manifest.json" />
-    <meta name="theme-color" content="#00e5ff" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Lotto Oracle" />
-    <link rel="apple-touch-icon" href="https://d2xsxph8kpxj0f.cloudfront.net/310419663031884010/6J86Kiyju8nzk4hczi9dXp/pwa-icon-192-gVgtM7zTtpdrwJRZVgEdKA.png" />
-    <meta name="description" content="Quantum-inspired prediction engine combining 16 statistical models with AI ensemble analysis for Florida Lottery games." />
-
-    <!-- Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Florida Lotto Predictor</title>
+    <script type="module" src="/umami"></script>
   </head>
-
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
-    <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js', { scope: '/' })
-            .then((reg) => {
-              // Store registration globally so React components can access it
-              window.__swRegistration = reg;
-
-              // Check for updates every 5 minutes (not just hourly)
-              setInterval(() => reg.update(), 5 * 60 * 1000);
-
-              // Detect when a new SW is waiting
-              function onNewSW() {
-                window.dispatchEvent(new CustomEvent('sw-update-available'));
-              }
-
-              // If there's already a waiting worker (e.g. from a previous visit)
-              if (reg.waiting) {
-                onNewSW();
-              }
-
-              // Listen for new service workers that finish installing
-              reg.addEventListener('updatefound', () => {
-                const newWorker = reg.installing;
-                if (!newWorker) return;
-                newWorker.addEventListener('statechange', () => {
-                  if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                    // New SW installed while old one is still controlling — update available
-                    onNewSW();
-                  }
-                });
-              });
-
-              // When the new SW takes over, reload the page to get fresh content
-              let refreshing = false;
-              navigator.serviceWorker.addEventListener('controllerchange', () => {
-                if (!refreshing) {
-                  refreshing = true;
-                  window.location.reload();
-                }
-              });
-            })
-            .catch(() => {});
-        });
-      }
-    </script>
-    <script
-      defer
-      src="%VITE_ANALYTICS_ENDPOINT%/umami"
-      data-website-id="%VITE_ANALYTICS_WEBSITE_ID%"></script>
   </body>
-
 </html>
