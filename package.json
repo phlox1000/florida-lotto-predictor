@@ -4,6 +4,9 @@
   "private": true,
   "packageManager": "pnpm@10.4.1",
   "scripts": {
-    "build": "cd client && pnpm install && pnpm build"
+    "install": "pnpm install",
+    "build": "cd client && pnpm install --frozen-lockfile && pnpm build",
+    "dev": "pnpm dev",
+    "preview": "pnpm preview"
   }
 }
