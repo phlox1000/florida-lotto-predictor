@@ -18,6 +18,7 @@ export default defineConfig({
         },
         entryFileNames: '[name].js',
       },
+      external: ['@trpc/client', 'superjson'],
     },
   },
   server: { port: 3000 },
