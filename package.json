@@ -5,7 +5,7 @@
   "packageManager": "pnpm@10.4.1",
   "scripts": {
     "install": "pnpm install",
-    "build": "cd client && pnpm install --frozen-lockfile && pnpm build",
+    "build": "vite build && esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
     "dev": "pnpm dev",
     "preview": "pnpm preview"
   }
