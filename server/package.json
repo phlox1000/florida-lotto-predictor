@@ -13,7 +13,7 @@
     "@upstash/ratelimit": "^1.0.0",
     "@upstash/redis": "^1.25.0",
     "bcryptjs": "^2.4.3",
-    "drizzle-orm": "^0.29.0",
+    "drizzle-orm": "^0.45.2",
     "mysql2": "^3.6.0",
     "zod": "^3.22.0"
   },
