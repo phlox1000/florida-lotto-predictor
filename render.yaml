@@ -3,11 +3,13 @@ services:
     name: florida-lotto-predictor
     runtime: node
     plan: standard
-    buildCommand: npm install && npm run build
+    buildCommand: npm install -g pnpm@10.4.1 && pnpm install --no-frozen-lockfile && pnpm build
     startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
+      - key: NODE_VERSION
+        value: 22.22.0
       - key: DATABASE_URL
         sync: false
       - key: JWT_SECRET
@@ -17,10 +19,4 @@ services:
       - key: OAUTH_SERVER_URL
         sync: false
       - key: OWNER_OPEN_ID
-        sync: false
-      - key: BUILT_IN_FORGE_API_KEY
-        sync: false
-      - key: AWS_ACCESS_KEY_ID
-        sync: false
-      - key: AWS_SECRET_ACCESS_KEY
         sync: false
