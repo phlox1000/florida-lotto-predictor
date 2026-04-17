@@ -1,1 +1,14 @@
-tmp/
+# Build files
+dist/
+.manus/
+.manus-logs/
+
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
