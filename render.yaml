@@ -2,7 +2,7 @@ services:
   - type: web
     name: florida-lotto-predictor
     runtime: node
-    plan: professional
+    plan: standard
     buildCommand: npm install && npm run build
     startCommand: npm start
     envVars:
@@ -17,4 +17,10 @@ services:
       - key: OAUTH_SERVER_URL
         sync: false
       - key: OWNER_OPEN_ID
+        sync: false
+      - key: BUILT_IN_FORGE_API_KEY
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
         sync: false
