@@ -8,7 +8,7 @@
     "build": "vite build",
     "build:client": "NODE_OPTIONS='--max-old-space-size=1536' vite build",
     "build:server": "NODE_OPTIONS='--max-old-space-size=512' esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
-    "start": "NODE_ENV=production node dist/index.js",
+    "start": "NODE_ENV=production npx tsx server/_core/index.ts",
     "check": "tsc --noEmit",
     "format": "prettier --write .",
     "test": "vitest run",
