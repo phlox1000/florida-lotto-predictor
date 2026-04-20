@@ -1,0 +1,65 @@
+name: CI
+
+# Runs on every PR (so PRs cannot merge if this fails once branch
+# protection is enabled) and on pushes to main (so the badge / status
+# on main itself stays accurate even for direct pushes).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel superseded runs on the same ref to save Actions minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Lint, type-check, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Install pnpm BEFORE setup-node so setup-node can use the pnpm
+      # cache. The version is intentionally NOT pinned here -- the
+      # action reads it from package.json's `packageManager` field
+      # (single source of truth). Specifying `with.version` here in
+      # addition to `packageManager` causes pnpm/action-setup to abort
+      # with ERR_PNPM_BAD_PM_VERSION even when the values match.
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: pnpm
+
+      # --frozen-lockfile is the whole point: if a PR changes
+      # package.json without regenerating pnpm-lock.yaml, this fails
+      # here instead of in production. This is the check that would
+      # have caught most of the "63 broken Copilot commits" before
+      # they ever reached main.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm check
+
+      # --passWithNoTests so the absence of test files (current state
+      # of the repo) does not fail CI. The instant any *.test.ts file
+      # lands, vitest will pick it up automatically.
+      - name: Run tests
+        run: pnpm vitest run --passWithNoTests
+
+      # Builds both the client (vite) and the server bundle (esbuild
+      # -> dist/index.js). Catches issues like the broken
+      # `server/services/scraper.ts` that crashed the previous deploys.
+      - name: Build
+        run: pnpm build
