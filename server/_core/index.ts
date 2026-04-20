@@ -6,7 +6,6 @@ import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
-import { startAutoFetchSchedule } from "../cron";
 
 async function startServer() {
   const app = express();
@@ -58,7 +57,10 @@ async function startServer() {
   const port = Number(process.env.PORT) || 3000;
   server.listen(port, "0.0.0.0", () => {
     console.log(`Server listening on 0.0.0.0:${port} (NODE_ENV=${process.env.NODE_ENV ?? "unset"})`);
-    startAutoFetchSchedule();
+    // Auto-fetch scraping runs out-of-process as a Render Cron Job;
+    // see server/cron-runner.ts. Do not re-introduce a setInterval
+    // scraper here — it would race the external scheduler and break
+    // safe horizontal scaling.
   });
 }
 
