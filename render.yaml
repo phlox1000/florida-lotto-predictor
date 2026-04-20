@@ -1,0 +1,84 @@
+# Render Blueprint (Infrastructure-as-Code) for florida-lotto-predictor.
+#
+# This file documents the current shape of the live web service on Render,
+# checked in so changes to service configuration go through PR review
+# instead of living as dashboard-only state.
+#
+# IMPORTANT: The existing service (srv-d73mp2gule4c73ekcri0) was created
+# manually via the dashboard, NOT as a Blueprint instance. Committing this
+# file does not automatically link the two. To bring the live service
+# under Blueprint management, you must either:
+#
+#   1. (Recommended, zero risk) Leave this file as reference-only IaC.
+#      It documents the service shape for disaster-recovery / re-creation,
+#      and any drift between this file and live config is a warning sign
+#      worth investigating, but Render will not try to reconcile them.
+#
+#   2. (When ready) Create a new Blueprint instance in the Render dashboard
+#      pointed at this repo. This will spin up a *second* service from
+#      this file. You would then migrate traffic and delete the old
+#      service. This is a real migration with downtime risk and is
+#      deliberately left as a separate future decision.
+#
+# Any change to this file should be verified against `get_service` output
+# via the Render API/MCP to ensure it still matches reality.
+#
+# Spec reference: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: florida-lotto-predictor
+    runtime: node
+    plan: standard
+    region: ohio
+    branch: main
+
+    # Manual-only deploys. Flip to `true` only after Phase B (cron extraction)
+    # and Phase A (Redis-backed rate limiter) ship, so CI + healthcheck are
+    # the sole gates between a green merge and a live rollout.
+    autoDeploy: false
+
+    # Added in PR #29. Render will only route traffic to a new container
+    # once GET /healthz returns 200 on it. Enables true zero-downtime
+    # rollouts and auto-rollback on a failing new container.
+    healthCheckPath: /healthz
+
+    # 1 instance is correct until Phase A (Redis) lands. The in-process
+    # rate limiter (Map in Node memory) makes scaling past 1 incorrect
+    # until the store is moved to Redis.
+    numInstances: 1
+
+    # pnpm is pinned to 10.4.1 to match packageManager in package.json.
+    # Installing globally in the build command avoids Corepack signature
+    # mismatch issues that bit an earlier fix/* branch.
+    buildCommand: npm install -g pnpm@10.4.1 && pnpm install && pnpm build
+    startCommand: pnpm run start
+
+    # Environment variables: declared here so the required set is
+    # documented and review-able. Values are NOT committed - they live in
+    # the Render dashboard under the service's Environment tab.
+    # `sync: false` tells Render "this key exists, I am managing its value
+    # out-of-band" and prevents accidental overwrites from this file.
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # Database (required). PostgreSQL connection string.
+      - key: DATABASE_URL
+        sync: false
+
+      # Auth: HMAC secret for signing JWT session cookies.
+      - key: JWT_SECRET
+        sync: false
+
+      # Manus/Forge integration identifiers and credentials.
+      - key: VITE_APP_ID
+        sync: false
+      - key: OAUTH_SERVER_URL
+        sync: false
+      - key: OWNER_OPEN_ID
+        sync: false
+      - key: BUILT_IN_FORGE_API_URL
+        sync: false
+      - key: BUILT_IN_FORGE_API_KEY
+        sync: false
