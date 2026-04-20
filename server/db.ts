@@ -11,6 +11,7 @@ import {
   pdfUploads, InsertPdfUpload,
   purchasedTickets, InsertPurchasedTicket,
   personalizationMetrics, InsertPersonalizationMetric,
+  autoFetchRuns, AutoFetchRun,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { FLORIDA_GAMES, type GameType } from '@shared/lottery';
@@ -897,6 +898,106 @@ export async function evaluatePurchasedTicketsAgainstDraw(
         winAmount,
       })
       .where(eq(purchasedTickets.id, ticket.id));
+  }
+}
+
+// ─── Auto-fetch run history ───────────────────────────────────────────────────
+//
+// Persists per-run records for the scheduled lottery scrape. The web service
+// reads the most recent row to answer the autoFetchStatus tRPC query, which
+// is how the admin dashboard surfaces "last run at X, N new draws, M
+// evaluations". Pre-migration, that endpoint consulted per-process module
+// variables on server/cron.ts, which became unreachable when the scrape
+// moved to a standalone cron-runner process in PR #31.
+
+/**
+ * Record the start of an auto-fetch run.
+ *
+ * Returns the new row's id so the caller can update it on completion. Returns
+ * null if the database isn't reachable — the caller is expected to still
+ * proceed with the scrape (data loss from a missed status row is strictly
+ * less bad than skipping a scrape) and treat subsequent `finishAutoFetchRun`
+ * calls as best-effort.
+ */
+export async function insertAutoFetchRunStart(
+  trigger: "cron" | "manual",
+  startedAt: number = Date.now(),
+): Promise<number | null> {
+  const db = await getDb();
+  if (!db) { console.warn("[Database] Cannot record auto-fetch start: database not available"); return null; }
+  try {
+    const result = await db.insert(autoFetchRuns).values({
+      startedAt,
+      status: "running",
+      trigger,
+    });
+    return Number((result as any)?.[0]?.insertId ?? 0) || null;
+  } catch (error) {
+    console.error("[Database] Failed to insert auto-fetch run start:", error);
+    return null;
+  }
+}
+
+/**
+ * Update an auto-fetch run row with its outcome.
+ *
+ * `status` should be "failed" only when the scrape itself threw (i.e. the
+ * outer try/catch in runAutoFetch fired); per-game errors captured in
+ * `errors` while the overall loop kept going remain "completed".
+ *
+ * Idempotent-ish: if the caller already finished this row and re-runs, the
+ * counters are simply overwritten with the same values. We never go back to
+ * "running".
+ */
+export async function finishAutoFetchRun(
+  id: number,
+  result: {
+    status: "completed" | "failed";
+    finishedAt?: number;
+    gamesProcessed: number;
+    totalNewDraws: number;
+    totalEvaluations: number;
+    highAccuracyAlerts: number;
+    gameResults: Record<string, { newDraws: number; evaluations: number; errors: number }>;
+    errors: string[];
+  },
+): Promise<void> {
+  const db = await getDb();
+  if (!db) { console.warn("[Database] Cannot finalize auto-fetch run: database not available"); return; }
+  try {
+    await db.update(autoFetchRuns).set({
+      status: result.status,
+      finishedAt: result.finishedAt ?? Date.now(),
+      gamesProcessed: result.gamesProcessed,
+      totalNewDraws: result.totalNewDraws,
+      totalEvaluations: result.totalEvaluations,
+      highAccuracyAlerts: result.highAccuracyAlerts,
+      gameResults: result.gameResults,
+      errors: result.errors,
+    }).where(eq(autoFetchRuns.id, id));
+  } catch (error) {
+    console.error("[Database] Failed to finalize auto-fetch run:", error);
+  }
+}
+
+/**
+ * Return the most recently started auto-fetch run, or null if none exist
+ * (fresh DB) or the database is unreachable.
+ *
+ * Called on every poll of the admin dashboard (every 30s) — the
+ * `afr_started_at_idx` index keeps this a single-row lookup.
+ */
+export async function getLatestAutoFetchRun(): Promise<AutoFetchRun | null> {
+  const db = await getDb();
+  if (!db) return null;
+  try {
+    const rows = await db.select().from(autoFetchRuns)
+      .orderBy(desc(autoFetchRuns.startedAt))
+      .limit(1);
+    return rows[0] ?? null;
+  } catch (error) {
+    console.error("[Database] Failed to read latest auto-fetch run:", error);
+    return null;
   }
 }
 

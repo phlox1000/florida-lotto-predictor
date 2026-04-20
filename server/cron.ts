@@ -5,7 +5,14 @@
  */
 import { FLORIDA_GAMES, GAME_TYPES, type GameType } from "@shared/lottery";
 import { fetchAllGamesRecent } from "./lib/lotteryusa-scraper";
-import { insertDrawResult, evaluatePredictionsAgainstDraw, evaluatePurchasedTicketsAgainstDraw, getDb } from "./db";
+import {
+  insertDrawResult,
+  evaluatePredictionsAgainstDraw,
+  evaluatePurchasedTicketsAgainstDraw,
+  getDb,
+  insertAutoFetchRunStart,
+  finishAutoFetchRun,
+} from "./db";
 import { notifyOwner } from "./_core/notification";
 
 export interface AutoFetchResult {
@@ -36,16 +43,24 @@ export function getAutoFetchRunning(): boolean {
 }
 
 /**
- * Run the auto-fetch process: scrape all games, insert new draws, evaluate predictions
+ * Run the auto-fetch process: scrape all games, insert new draws, evaluate predictions.
+ *
+ * @param trigger - "cron" when called by the standalone cron-runner (default),
+ *                  "manual" when called by the admin "Run Now" tRPC mutation.
+ *                  Recorded on the auto_fetch_runs row so post-hoc queries can
+ *                  distinguish scheduled runs from ad-hoc ones.
  */
-export async function runAutoFetch(): Promise<AutoFetchResult> {
+export async function runAutoFetch(
+  trigger: "cron" | "manual" = "cron",
+): Promise<AutoFetchResult> {
   if (isAutoFetchRunning) {
     throw new Error("Auto-fetch is already running");
   }
 
   isAutoFetchRunning = true;
+  const startedAt = Date.now();
   const result: AutoFetchResult = {
-    timestamp: Date.now(),
+    timestamp: startedAt,
     gamesProcessed: 0,
     totalNewDraws: 0,
     totalEvaluations: 0,
@@ -53,6 +68,17 @@ export async function runAutoFetch(): Promise<AutoFetchResult> {
     gameResults: {},
     errors: [],
   };
+
+  // Persist a "running" row immediately so the web service can surface
+  // in-progress state (isRunning=true) even though the scrape is happening
+  // in a different process. The id is used to update the row on completion;
+  // null means the DB was unreachable, in which case we still run the
+  // scrape and simply skip the finalization write.
+  const runId = await insertAutoFetchRunStart(trigger, startedAt);
+  // Tracks whether the top-level try block completed without throwing.
+  // If it did throw, we record status="failed" so operators can distinguish
+  // "scrape completed with per-game errors" from "scrape crashed mid-run".
+  let topLevelFailure = false;
 
   try {
     console.log("[AutoFetch] Starting scheduled auto-fetch...");
@@ -138,10 +164,33 @@ export async function runAutoFetch(): Promise<AutoFetchResult> {
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e);
     result.errors.push(errMsg);
+    topLevelFailure = true;
     console.error("[AutoFetch] Failed:", errMsg);
   } finally {
     isAutoFetchRunning = false;
     lastAutoFetchResult = result;
+
+    // Best-effort finalize: if the start row was written, mirror the outcome
+    // back to it. If the DB is down at finish time, the row stays in
+    // "running" state — which is a useful operator signal ("the last run
+    // never finished"). Wrapped in its own try so a DB issue here doesn't
+    // mask the actual scrape errors in the caller's return value.
+    if (runId !== null) {
+      try {
+        await finishAutoFetchRun(runId, {
+          status: topLevelFailure ? "failed" : "completed",
+          finishedAt: Date.now(),
+          gamesProcessed: result.gamesProcessed,
+          totalNewDraws: result.totalNewDraws,
+          totalEvaluations: result.totalEvaluations,
+          highAccuracyAlerts: result.highAccuracyAlerts,
+          gameResults: result.gameResults,
+          errors: result.errors,
+        });
+      } catch (e) {
+        console.error("[AutoFetch] Failed to finalize run record:", e);
+      }
+    }
   }
 
   return result;

@@ -41,7 +41,11 @@ async function main() {
 
   const startedAt = Date.now();
 
-  const result = await runAutoFetch();
+  // trigger="cron" marks the auto_fetch_runs row as a scheduled run, which
+  // separates it from admin "Run Now" invocations that go through the tRPC
+  // triggerAutoFetch mutation. The runAutoFetch implementation handles the
+  // DB bookkeeping.
+  const result = await runAutoFetch("cron");
 
   const durationMs = Date.now() - startedAt;
   console.log(

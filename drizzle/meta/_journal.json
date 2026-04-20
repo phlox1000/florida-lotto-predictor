@@ -57,6 +57,13 @@
       "when": 1744300100000,
       "tag": "0010_auth_and_ticket_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1776729600000,
+      "tag": "0011_auto_fetch_runs",
+      "breakpoints": true
     }
   ]
 }
