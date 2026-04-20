@@ -158,6 +158,47 @@ export const purchasedTickets = mysqlTable("purchased_tickets", {
 export type PurchasedTicket = typeof purchasedTickets.$inferSelect;
 export type InsertPurchasedTicket = typeof purchasedTickets.$inferInsert;
 
+/**
+ * Auto-fetch scrape run history.
+ *
+ * Writes the start row when a run begins and updates it with the outcome when
+ * the run finishes. Exists so the /dataFetch.autoFetchStatus endpoint can
+ * report real status regardless of which process (web pod, cron pod, admin
+ * "Run Now" invocation) actually performed the scrape — the in-memory
+ * counters on server/cron.ts are per-process and no longer reachable from
+ * the web service now that scraping runs in the standalone cron-runner.
+ *
+ * Intentionally lightweight: one row per run, JSON columns for the free-form
+ * per-game breakdown and error list, no joins required for the status query.
+ */
+export const autoFetchRuns = mysqlTable("auto_fetch_runs", {
+  id: int("id").autoincrement().primaryKey(),
+  // Unix epoch milliseconds. Matches the bigint-in-ms convention already used
+  // by drawResults.drawDate / purchasedTickets.purchaseDate, so the value is
+  // directly comparable to Date.now() without timezone juggling.
+  startedAt: bigint("startedAt", { mode: "number" }).notNull(),
+  finishedAt: bigint("finishedAt", { mode: "number" }),
+  status: mysqlEnum("status", ["running", "completed", "failed"]).default("running").notNull(),
+  // "cron" = invoked by the standalone cron-runner (prod schedule).
+  // "manual" = admin clicked "Run Now" in the dashboard (tRPC mutation).
+  // Lets us distinguish scheduled runs from ad-hoc ones when debugging.
+  trigger: mysqlEnum("trigger", ["cron", "manual"]).default("cron").notNull(),
+  gamesProcessed: int("gamesProcessed").notNull().default(0),
+  totalNewDraws: int("totalNewDraws").notNull().default(0),
+  totalEvaluations: int("totalEvaluations").notNull().default(0),
+  highAccuracyAlerts: int("highAccuracyAlerts").notNull().default(0),
+  // Record<gameType, { newDraws, evaluations, errors }> — matches
+  // AutoFetchResult.gameResults in server/cron.ts.
+  gameResults: json("gameResults"),
+  // string[] of error messages. Stored even on status="completed" since
+  // per-game errors don't abort the run.
+  errors: json("errors"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type AutoFetchRun = typeof autoFetchRuns.$inferSelect;
+export type InsertAutoFetchRun = typeof autoFetchRuns.$inferInsert;
+
 /** Personalization metrics for user-specific model/game performance tracking */
 export const personalizationMetrics = mysqlTable("personalization_metrics", {
   id: int("id").autoincrement().primaryKey(),

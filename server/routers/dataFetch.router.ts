@@ -8,8 +8,8 @@ import {
 } from "../services/dataFetch.service";
 
 export const dataFetchRouter = router({
-  /** Get auto-fetch cron status */
-  autoFetchStatus: publicProcedure.query(() => {
+  /** Get auto-fetch cron status (reads latest row from auto_fetch_runs). */
+  autoFetchStatus: publicProcedure.query(async () => {
     return getAutoFetchStatus();
   }),
 
