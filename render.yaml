@@ -33,9 +33,10 @@ services:
     region: ohio
     branch: main
 
-    # Manual-only deploys. Flip to `true` only after Phase B (cron extraction)
-    # and Phase A (Redis-backed rate limiter) ship, so CI + healthcheck are
-    # the sole gates between a green merge and a live rollout.
+    # Manual-only deploys. We keep this off so a merged PR sits on `main`
+    # until a human pushes "Deploy latest commit" in the dashboard, giving
+    # us one last checkpoint (and time to run the production migration step
+    # when a PR adds one) before a rollout goes live.
     autoDeploy: false
 
     # Added in PR #29. Render will only route traffic to a new container
@@ -43,10 +44,11 @@ services:
     # rollouts and auto-rollback on a failing new container.
     healthCheckPath: /healthz
 
-    # 1 instance is correct until Phase A (Redis) lands. The in-process
-    # rate limiter (Map in Node memory) makes scaling past 1 incorrect
-    # until the store is moved to Redis.
-    numInstances: 1
+    # Scaled to 2 in-flight (dashboard) for HA after the in-process scraper
+    # was extracted to the Render cron job in PR #31. The rate-limit store
+    # was moved to Redis in the Phase A PR (see REDIS_URL below), so running
+    # >1 pod no longer undercounts request rates.
+    numInstances: 2
 
     # pnpm is pinned to 10.4.1 to match packageManager in package.json.
     # Installing globally in the build command avoids Corepack signature
@@ -81,4 +83,18 @@ services:
       - key: BUILT_IN_FORGE_API_URL
         sync: false
       - key: BUILT_IN_FORGE_API_KEY
+        sync: false
+
+      # Optional. Connection string for a Render Key Value (Redis-compatible)
+      # instance. When unset, server/lib/rateLimiter.ts falls back to an
+      # in-memory Map, which is correct for local dev and safe (but per-pod)
+      # in single-instance deployments. Required once rate limits are wired
+      # onto routes AND numInstances > 1 — otherwise each pod runs its own
+      # independent counter and the effective limit is maxRequests × pods.
+      #
+      # Render's internal hostname form looks like:
+      #   redis://<user>:<pass>@<service-id>.ohio-internal-redis.render.com:6379
+      # which is populated automatically when a Key Value service in the
+      # same region is linked via the dashboard's "Connect" flow.
+      - key: REDIS_URL
         sync: false
