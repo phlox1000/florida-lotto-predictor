@@ -1,7 +1,6 @@
 import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
-import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
@@ -9,28 +8,21 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { startAutoFetchSchedule } from "../cron";
 
-function isPortAvailable(port: number): Promise<boolean> {
-  return new Promise(resolve => {
-    const server = net.createServer();
-    server.listen(port, () => {
-      server.close(() => resolve(true));
-    });
-    server.on("error", () => resolve(false));
-  });
-}
-
-async function findAvailablePort(startPort: number = 3000): Promise<number> {
-  for (let port = startPort; port < startPort + 20; port++) {
-    if (await isPortAvailable(port)) {
-      return port;
-    }
-  }
-  throw new Error(`No available port found starting from ${startPort}`);
-}
-
 async function startServer() {
   const app = express();
   const server = createServer(app);
+
+  // Health check. Registered before any body parsers, middleware, or
+  // routers so that the endpoint is as cheap as possible (no JSON
+  // parsing, no auth, no tRPC context) and so it keeps responding
+  // even if a downstream router is misconfigured. Render can be
+  // pointed at this path via Settings -> Health Check Path = /healthz
+  // to enable zero-downtime rollouts (new container must answer 200
+  // on /healthz before old container is retired).
+  app.get("/healthz", (_req, res) => {
+    res.status(200).json({ status: "ok", uptime: process.uptime() });
+  });
+
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
@@ -55,18 +47,22 @@ async function startServer() {
     serveStatic(app);
   }
 
-  const preferredPort = parseInt(process.env.PORT || "3000");
-  const port = await findAvailablePort(preferredPort);
-
-  if (port !== preferredPort) {
-    console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
-  }
-
-  server.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}/`);
-    // Start the auto-fetch cron schedule
+  // Bind to the port Render (or any PaaS) injects via PORT, defaulting
+  // to 3000 for local dev. Bind on 0.0.0.0 so the container is
+  // reachable from outside the pod; the previous implementation
+  // probed 20 ports starting at PORT which, on Render, is both
+  // unnecessary (Render only routes traffic to PORT) and can cause
+  // the port-scan window to time out if the probe briefly holds the
+  // real port. If PORT is taken, the failure should be loud and
+  // immediate rather than silently rerouted.
+  const port = Number(process.env.PORT) || 3000;
+  server.listen(port, "0.0.0.0", () => {
+    console.log(`Server listening on 0.0.0.0:${port} (NODE_ENV=${process.env.NODE_ENV ?? "unset"})`);
     startAutoFetchSchedule();
   });
 }
 
-startServer().catch(console.error);
+startServer().catch(err => {
+  console.error("Fatal: failed to start server", err);
+  process.exit(1);
+});
