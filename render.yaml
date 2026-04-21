@@ -1,12 +1,14 @@
 # Render Blueprint (Infrastructure-as-Code) for florida-lotto-predictor.
 #
-# This file documents the current shape of the live web service on Render,
-# checked in so changes to service configuration go through PR review
-# instead of living as dashboard-only state.
+# This file documents the current shape of the live web service and cron
+# job on Render, checked in so changes to service configuration go through
+# PR review instead of living as dashboard-only state.
 #
-# IMPORTANT: The existing service (srv-d73mp2gule4c73ekcri0) was created
-# manually via the dashboard, NOT as a Blueprint instance. Committing this
-# file does not automatically link the two. To bring the live service
+# IMPORTANT: The existing services were created manually via the dashboard,
+# NOT as a Blueprint instance:
+#   - Web:  srv-d73mp2gule4c73ekcri0  (florida-lotto-predictor)
+#   - Cron: crn-d7j80r9o3t8c73bkpr30 (florida-lotto-autofetch)
+# Committing this file does not automatically link the two. To bring the live service
 # under Blueprint management, you must either:
 #
 #   1. (Recommended, zero risk) Leave this file as reference-only IaC.
@@ -33,11 +35,13 @@ services:
     region: ohio
     branch: main
 
-    # Manual-only deploys. We keep this off so a merged PR sits on `main`
-    # until a human pushes "Deploy latest commit" in the dashboard, giving
-    # us one last checkpoint (and time to run the production migration step
-    # when a PR adds one) before a rollout goes live.
-    autoDeploy: false
+    # Manual-only deploys. We keep auto-deploy off so a merged PR sits on
+    # `main` until a human pushes "Deploy latest commit" in the dashboard,
+    # giving us one last checkpoint (and time to run the production migration
+    # step when a PR adds one) before a rollout goes live.
+    #
+    # Prefer autoDeployTrigger over deprecated autoDeploy (Blueprint spec).
+    autoDeployTrigger: "off"
 
     # Added in PR #29. Render will only route traffic to a new container
     # once GET /healthz returns 200 on it. Enables true zero-downtime
@@ -96,5 +100,41 @@ services:
       #   redis://<user>:<pass>@<service-id>.ohio-internal-redis.render.com:6379
       # which is populated automatically when a Key Value service in the
       # same region is linked via the dashboard's "Connect" flow.
+      - key: REDIS_URL
+        sync: false
+
+  # Standalone lottery auto-fetch (PR #31). Same repo/branch/build as web;
+  # startCommand runs once per schedule tick then exits.
+  #
+  # Auto-deploy MUST stay off to match the web service: otherwise a merge to
+  # main deploys cron immediately while the web pods still run the previous
+  # image (manual deploy), causing schema/code skew until someone deploys web.
+  - type: cron
+    name: florida-lotto-autofetch
+    runtime: node
+    plan: starter
+    region: ohio
+    branch: main
+    autoDeployTrigger: "off"
+    schedule: "0 */6 * * *"
+    buildCommand: npm install -g pnpm@10.4.1 && pnpm install && pnpm build
+    startCommand: pnpm run cron
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: VITE_APP_ID
+        sync: false
+      - key: OAUTH_SERVER_URL
+        sync: false
+      - key: OWNER_OPEN_ID
+        sync: false
+      - key: BUILT_IN_FORGE_API_URL
+        sync: false
+      - key: BUILT_IN_FORGE_API_KEY
+        sync: false
       - key: REDIS_URL
         sync: false
