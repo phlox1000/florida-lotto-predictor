@@ -80,6 +80,7 @@ type ButtonProps = {
   disabled?: boolean;
   loading?: boolean;
   variant?: 'primary' | 'secondary';
+  size?: 'regular' | 'compact';
   style?: StyleProp<ViewStyle>;
 };
 
@@ -89,6 +90,7 @@ export function PrimaryButton({
   disabled = false,
   loading = false,
   variant = 'primary',
+  size = 'regular',
   style,
 }: ButtonProps) {
   const isDisabled = disabled || loading || !onPress;
@@ -100,6 +102,7 @@ export function PrimaryButton({
       onPress={onPress}
       style={({ pressed }) => [
         styles.button,
+        size === 'compact' ? styles.buttonCompact : null,
         variant === 'secondary' ? styles.buttonSecondary : styles.buttonPrimary,
         isDisabled ? styles.buttonDisabled : null,
         pressed && !isDisabled ? styles.buttonPressed : null,
@@ -109,7 +112,11 @@ export function PrimaryButton({
       {loading ? (
         <ActivityIndicator size="small" color={colors.background} />
       ) : (
-        <Text style={[styles.buttonText, variant === 'secondary' ? styles.buttonTextSecondary : null]}>
+        <Text style={[
+          styles.buttonText,
+          size === 'compact' ? styles.buttonTextCompact : null,
+          variant === 'secondary' ? styles.buttonTextSecondary : null,
+        ]}>
           {label}
         </Text>
       )}
@@ -328,6 +335,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     borderWidth: StyleSheet.hairlineWidth,
   },
+  buttonCompact: {
+    minHeight: 34,
+    paddingHorizontal: spacing.md,
+  },
   buttonPrimary: {
     backgroundColor: colors.accent,
     borderColor: colors.accent,
@@ -346,6 +357,9 @@ const styles = StyleSheet.create({
     color: colors.background,
     fontSize: 15,
     fontWeight: '800',
+  },
+  buttonTextCompact: {
+    fontSize: 12,
   },
   buttonTextSecondary: {
     color: colors.text,

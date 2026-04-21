@@ -18,6 +18,11 @@ import type {
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0;
 
+let warnedDevJwtUnset = false;
+
+const DEV_SESSION_SECRET_PLACEHOLDER =
+  "dev_only_session_secret_not_for_production";
+
 export type SessionPayload = {
   openId: string;
   appId: string;
@@ -154,9 +159,26 @@ class SDKServer {
     return new Map(Object.entries(parsed));
   }
 
-  private getSessionSecret() {
-    const secret = ENV.cookieSecret;
-    return new TextEncoder().encode(secret);
+  private getSessionSecret(): Uint8Array {
+    const raw = ENV.cookieSecret;
+    if (ENV.isProduction) {
+      if (!isNonEmptyString(raw)) {
+        throw new Error(
+          "JWT_SECRET is required in production for session signing and verification"
+        );
+      }
+      return new TextEncoder().encode(raw);
+    }
+    if (isNonEmptyString(raw)) {
+      return new TextEncoder().encode(raw);
+    }
+    if (!warnedDevJwtUnset) {
+      warnedDevJwtUnset = true;
+      console.warn(
+        "[Auth] JWT_SECRET is unset; using a fixed development-only placeholder. Set JWT_SECRET for stable sessions across restarts."
+      );
+    }
+    return new TextEncoder().encode(DEV_SESSION_SECRET_PLACEHOLDER);
   }
 
   /**
@@ -212,19 +234,17 @@ class SDKServer {
       });
       const { openId, appId, name } = payload as Record<string, unknown>;
 
-      if (
-        !isNonEmptyString(openId) ||
-        !isNonEmptyString(appId) ||
-        !isNonEmptyString(name)
-      ) {
+      if (!isNonEmptyString(openId) || !isNonEmptyString(appId)) {
         console.warn("[Auth] Session payload missing required fields");
         return null;
       }
 
+      const displayName = typeof name === "string" ? name : "";
+
       return {
         openId,
         appId,
-        name,
+        name: displayName,
       };
     } catch (error) {
       console.warn("[Auth] Session verification failed", String(error));
@@ -256,16 +276,74 @@ class SDKServer {
     } as GetUserInfoWithJwtResponse;
   }
 
-  async authenticateRequest(req: Request): Promise<User> {
-    // Try cookie first, then fall back to Bearer token (for mobile clients)
+  /**
+   * Resolve the raw session JWT from the cookie or `Authorization: Bearer`.
+   */
+  getRequestSessionToken(req: Request): string | undefined {
     const cookies = this.parseCookies(req.headers.cookie);
-    let token = cookies.get(COOKIE_NAME);
-    if (!token) {
-      const authHeader = req.headers.authorization;
-      if (authHeader?.startsWith("Bearer ")) {
-        token = authHeader.slice(7);
+    const fromCookie = cookies.get(COOKIE_NAME);
+    if (fromCookie && fromCookie.length > 0) {
+      return fromCookie;
+    }
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith("Bearer ")) {
+      const bearer = authHeader.slice(7).trim();
+      if (bearer.length > 0) {
+        return bearer;
       }
     }
+    return undefined;
+  }
+
+  /**
+   * Resolve the signed-in user when a valid session is present; otherwise null.
+   * Does not throw — suitable for tRPC context on public + protected routes.
+   */
+  async authenticateOptionalRequest(req: Request): Promise<User | null> {
+    const token = this.getRequestSessionToken(req);
+    if (!token) {
+      return null;
+    }
+    const session = await this.verifySession(token);
+    if (!session) {
+      return null;
+    }
+
+    const sessionUserId = session.openId;
+    const signedInAt = new Date();
+    let user = await db.getUserByOpenId(sessionUserId);
+
+    if (!user) {
+      try {
+        const userInfo = await this.getUserInfoWithJwt(token);
+        await db.upsertUser({
+          openId: userInfo.openId,
+          name: userInfo.name || null,
+          email: userInfo.email ?? null,
+          loginMethod: userInfo.loginMethod ?? userInfo.platform ?? null,
+          lastSignedIn: signedInAt,
+        });
+        user = await db.getUserByOpenId(userInfo.openId);
+      } catch (error) {
+        console.error("[Auth] Failed to sync user from OAuth:", error);
+        return null;
+      }
+    }
+
+    if (!user) {
+      return null;
+    }
+
+    await db.upsertUser({
+      openId: user.openId,
+      lastSignedIn: signedInAt,
+    });
+
+    return user;
+  }
+
+  async authenticateRequest(req: Request): Promise<User> {
+    const token = this.getRequestSessionToken(req);
     const session = await this.verifySession(token);
 
     if (!session) {
@@ -276,7 +354,6 @@ class SDKServer {
     const signedInAt = new Date();
     let user = await db.getUserByOpenId(sessionUserId);
 
-    // If user not in DB, sync from OAuth server automatically
     if (!user) {
       try {
         const userInfo = await this.getUserInfoWithJwt(token ?? "");

@@ -41,6 +41,7 @@ vi.mock("./_core/sdk", () => ({
   sdk: {
     createSessionToken: vi.fn(async () => "stub-session-token"),
     authenticateRequest: vi.fn(async () => null),
+    authenticateOptionalRequest: vi.fn(async () => null),
   },
 }));
 
