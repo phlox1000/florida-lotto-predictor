@@ -11,20 +11,30 @@ async function startServer() {
   const app = express();
   const server = createServer(app);
 
-  // Trust exactly one upstream proxy hop (Render's load balancer).
+  // Trust two upstream proxy hops: Cloudflare edge → Render LB → app.
   //
-  // Without this, Express's `req.ip` returns the LB's source address
-  // (a fixed Render-internal IP) for every request, which would make
-  // any per-IP rate limit effectively a global one — every visitor in
-  // the world would share the same bucket. The `1` (instead of `true`)
-  // limits trust to the first proxy in the X-Forwarded-For chain, so a
-  // client cannot spoof a different IP just by setting their own XFF
-  // header (Render's LB always overwrites/appends the client IP last).
+  // Render proxies all *.onrender.com traffic through Cloudflare for
+  // DDoS protection by default, so the production topology is two hops,
+  // not one. With `trust proxy: 1` Express was treating the Cloudflare
+  // edge POP IP as the client and returning that from `req.ip` — and CF
+  // load-balances across many POPs, so a burst of requests from the same
+  // real client appeared to come from many different IPs. That broke the
+  // PR #34 per-IP rate limits (smoke test: 11 garbage logins all returned
+  // 200 instead of the 11th hitting 429). Bumping to 2 makes Express
+  // walk the X-Forwarded-For chain past CF's entry to the real client.
   //
-  // Used by:
-  //   - server/routers/auth.router.ts (login/register rate limits)
-  //   - any future caller of checkRateLimit() that keys by IP
-  app.set("trust proxy", 1);
+  // We don't use `trust proxy: true` because it would also trust an XFF
+  // set by a directly-connected attacker, in the (currently impossible)
+  // event that the app became reachable without going through Cloudflare.
+  // An explicit hop count documents the topology and fails closed if it
+  // changes.
+  //
+  // For per-IP rate limiting the canonical source is actually Cloudflare's
+  // CF-Connecting-IP header (always set by CF, stripped on inbound, can't
+  // be spoofed) — see server/lib/clientIp.ts. This setting is kept correct
+  // anyway for any future code that reads `req.ip` directly (request
+  // logging, abuse heuristics, audit trails, etc.).
+  app.set("trust proxy", 2);
 
   // Health check. Registered before any body parsers, middleware, or
   // routers so that the endpoint is as cheap as possible (no JSON
