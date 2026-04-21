@@ -8,6 +8,7 @@ import { publicProcedure, router } from "../_core/trpc";
 import { TRPCError } from "@trpc/server";
 import { getUserByEmail, createUser, getUserCount } from "../db";
 import { checkRateLimit } from "../lib/rateLimiter";
+import { getClientIp } from "../lib/clientIp";
 
 /**
  * Per-IP rate limits applied BEFORE bcrypt on the auth mutations.
@@ -38,6 +39,13 @@ import { checkRateLimit } from "../lib/rateLimiter";
 const LOGIN_RATE_LIMIT = { max: 10, windowMs: 15 * 60_000 } as const;
 const REGISTER_RATE_LIMIT = { max: 5, windowMs: 60 * 60_000 } as const;
 
+// One-shot diagnostic that fires on the first rate-limited request after
+// each pod start. Logs the full IP-resolution chain (CF header, req.ip,
+// XFF) so a future trust-proxy / topology change is immediately visible
+// in the logs without needing another forensic round-trip. The flag is
+// per-process, so the noise is bounded to one line per pod-lifetime.
+let hasLoggedIpTopologyOnce = false;
+
 /**
  * Apply a rate limit to the current request and throw TRPCError on lockout.
  *
@@ -47,15 +55,29 @@ const REGISTER_RATE_LIMIT = { max: 5, windowMs: 60 * 60_000 } as const;
  * maps to HTTP 429 in @trpc/server's status table.
  */
 async function enforceRateLimit(
-  ctx: { req: { ip?: string }; res: { setHeader: (name: string, value: string) => void } },
+  ctx: {
+    req: { ip?: string; headers: Record<string, string | string[] | undefined> };
+    res: { setHeader: (name: string, value: string) => void };
+  },
   scope: "login" | "register",
   policy: { max: number; windowMs: number },
 ): Promise<void> {
-  // ip will be the real client IP because server/_core/index.ts sets
-  // app.set("trust proxy", 1). If something weird happens and req.ip is
-  // missing (e.g. unit tests without a full Express request), fall back
-  // to a single shared bucket — degraded but safe (no one bypasses).
-  const ip = ctx.req.ip ?? "unknown";
+  // getClientIp prefers Cloudflare's CF-Connecting-IP over req.ip, which
+  // is necessary on Render because *.onrender.com traffic is fronted by
+  // Cloudflare's edge and req.ip resolves to a CF POP that varies per
+  // request. See server/lib/clientIp.ts for the full topology rationale.
+  const ip = getClientIp(ctx.req);
+
+  if (!hasLoggedIpTopologyOnce) {
+    console.log("[rateLimit] client IP topology:", {
+      cfConnectingIp: ctx.req.headers["cf-connecting-ip"] ?? null,
+      reqIp: ctx.req.ip ?? null,
+      xff: ctx.req.headers["x-forwarded-for"] ?? null,
+      chosen: ip,
+    });
+    hasLoggedIpTopologyOnce = true;
+  }
+
   const key = `${scope}:${ip}`;
   const result = await checkRateLimit(key, policy.max, policy.windowMs);
   if (!result.allowed) {

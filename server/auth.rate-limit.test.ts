@@ -54,21 +54,29 @@ const mockedGetUserByEmail = getUserByEmail as unknown as ReturnType<typeof vi.f
 
 type SetHeaderCall = { name: string; value: string };
 
-// NOTE: ip is required (no default) because JS default params trigger
-// when `undefined` is explicitly passed, which would silently break the
-// "missing IP" test by giving it the default IP instead.
-function createCtx(ip: string | undefined): {
+// NOTE: both `ip` and `cfConnectingIp` are required (no defaults) because
+// JS default params trigger when `undefined` is explicitly passed, which
+// would silently break tests that need to assert the absence of one or
+// both signals (e.g. the fallback-to-"unknown" case).
+function createCtx(
+  ip: string | undefined,
+  cfConnectingIp: string | undefined,
+): {
   ctx: TrpcContext;
   setHeaderCalls: SetHeaderCall[];
 } {
   const setHeaderCalls: SetHeaderCall[] = [];
+  const headers: Record<string, string | string[] | undefined> = {};
+  if (cfConnectingIp !== undefined) {
+    headers["cf-connecting-ip"] = cfConnectingIp;
+  }
   const ctx: TrpcContext = {
     user: null,
     req: {
       ip,
       protocol: "https",
-      headers: {},
-    } as TrpcContext["req"],
+      headers,
+    } as unknown as TrpcContext["req"],
     res: {
       setHeader: (name: string, value: string) => {
         setHeaderCalls.push({ name, value });
@@ -89,9 +97,9 @@ beforeEach(() => {
 });
 
 describe("auth.login rate limiting", () => {
-  it("calls checkRateLimit with the namespaced key and 10/15min policy", async () => {
+  it("calls checkRateLimit with the namespaced key and 10/15min policy (CF-Connecting-IP path)", async () => {
     mockedCheckRateLimit.mockResolvedValue({ allowed: true, remaining: 9 });
-    const { ctx } = createCtx("198.51.100.7");
+    const { ctx } = createCtx("104.21.1.2", "198.51.100.7");
     const caller = appRouter.createCaller(ctx);
 
     // Reaches past the rate limit and lands in the auth code, which
@@ -100,7 +108,23 @@ describe("auth.login rate limiting", () => {
 
     expect(mockedCheckRateLimit).toHaveBeenCalledTimes(1);
     expect(mockedCheckRateLimit).toHaveBeenCalledWith(
+      // Production-shaped: CF-Connecting-IP wins over req.ip (which would
+      // be a Cloudflare edge POP and therefore wrong).
       "login:198.51.100.7",
+      10,
+      15 * 60_000,
+    );
+  });
+
+  it("falls back to req.ip when CF-Connecting-IP is missing (local dev shape)", async () => {
+    mockedCheckRateLimit.mockResolvedValue({ allowed: true, remaining: 9 });
+    const { ctx } = createCtx("127.0.0.1", undefined);
+    const caller = appRouter.createCaller(ctx);
+
+    await caller.auth.login({ email: "x@example.com", password: "pw" });
+
+    expect(mockedCheckRateLimit).toHaveBeenCalledWith(
+      "login:127.0.0.1",
       10,
       15 * 60_000,
     );
@@ -108,7 +132,7 @@ describe("auth.login rate limiting", () => {
 
   it("throws TOO_MANY_REQUESTS with Retry-After header when over the limit", async () => {
     mockedCheckRateLimit.mockResolvedValue({ allowed: false, remaining: 0 });
-    const { ctx, setHeaderCalls } = createCtx("203.0.113.42");
+    const { ctx, setHeaderCalls } = createCtx("104.21.1.2", "203.0.113.42");
     const caller = appRouter.createCaller(ctx);
 
     await expect(
@@ -125,13 +149,13 @@ describe("auth.login rate limiting", () => {
     });
   });
 
-  it("falls back to a single 'unknown' bucket when req.ip is missing", async () => {
+  it("falls back to a single 'unknown' bucket when both req.ip and CF-Connecting-IP are missing", async () => {
     // Defends against a future change to context.ts or the express stack
     // that would silently break IP extraction. Better to lump everyone
     // into one shared bucket (degraded but safe) than to give every
     // attacker an unlimited fresh bucket.
     mockedCheckRateLimit.mockResolvedValue({ allowed: true, remaining: 9 });
-    const { ctx } = createCtx(undefined);
+    const { ctx } = createCtx(undefined, undefined);
     const caller = appRouter.createCaller(ctx);
 
     await caller.auth.login({ email: "x@example.com", password: "pw" });
@@ -147,7 +171,7 @@ describe("auth.login rate limiting", () => {
 describe("auth.register rate limiting", () => {
   it("calls checkRateLimit with the namespaced key and 5/60min policy", async () => {
     mockedCheckRateLimit.mockResolvedValue({ allowed: true, remaining: 4 });
-    const { ctx } = createCtx("198.51.100.7");
+    const { ctx } = createCtx("104.21.1.2", "198.51.100.7");
     const caller = appRouter.createCaller(ctx);
 
     // Use a unique email so getUserByEmail (mocked → null) treats this
@@ -169,7 +193,7 @@ describe("auth.register rate limiting", () => {
 
   it("throws TOO_MANY_REQUESTS with Retry-After=3600 when over the limit", async () => {
     mockedCheckRateLimit.mockResolvedValue({ allowed: false, remaining: 0 });
-    const { ctx, setHeaderCalls } = createCtx("203.0.113.42");
+    const { ctx, setHeaderCalls } = createCtx("104.21.1.2", "203.0.113.42");
     const caller = appRouter.createCaller(ctx);
 
     await expect(
@@ -194,7 +218,7 @@ describe("auth.register rate limiting", () => {
 describe("rate limit ordering — checked BEFORE the DB / bcrypt path", () => {
   it("does not touch getUserByEmail when login is over the limit", async () => {
     mockedCheckRateLimit.mockResolvedValue({ allowed: false, remaining: 0 });
-    const { ctx } = createCtx("203.0.113.42");
+    const { ctx } = createCtx("104.21.1.2", "203.0.113.42");
     const caller = appRouter.createCaller(ctx);
 
     await expect(
