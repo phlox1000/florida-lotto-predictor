@@ -1,38 +1,50 @@
-import { useState, useEffect } from 'react';
-import {
-  ActivityIndicator,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { useEffect, useState } from 'react';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { FLORIDA_GAMES, GAME_TYPES, type GameType } from '@florida-lotto/shared';
+import {
+  Card,
+  Chip,
+  MetricRow,
+  NumberChip,
+  PrimaryButton,
+  Screen,
+  SectionHeader,
+  StateBlock,
+  StatusPill,
+  ui,
+} from '../components/ui';
 import { trpc } from '../lib/trpc';
 
 const ACTIVE_GAMES = GAME_TYPES.filter(gt => !FLORIDA_GAMES[gt].schedule.ended);
 
+function formatScore(score: number | null | undefined) {
+  if (typeof score !== 'number' || !Number.isFinite(score)) {
+    return null;
+  }
+
+  return score >= 10 ? score.toFixed(0) : score.toFixed(1);
+}
+
 export default function AnalyzeScreen() {
   const [selectedGame, setSelectedGame] = useState<GameType>(ACTIVE_GAMES[0]);
   const [showSlowWarning, setShowSlowWarning] = useState(false);
+  const selectedGameName = FLORIDA_GAMES[selectedGame].name;
 
-  // --- Next draw countdown ---
   const schedule = trpc.schedule.next.useQuery(
     { gameType: selectedGame },
     { refetchOnWindowFocus: false },
   );
 
-  // Show "Connecting to server..." after 3 seconds of loading
   useEffect(() => {
     if (!schedule.isLoading) {
       setShowSlowWarning(false);
       return;
     }
+
     const timer = setTimeout(() => setShowSlowWarning(true), 3000);
     return () => clearTimeout(timer);
   }, [schedule.isLoading]);
 
-  // --- Predictions ---
   const generate = trpc.predictions.generate.useMutation();
 
   function handleGenerate() {
@@ -45,8 +57,11 @@ export default function AnalyzeScreen() {
     .slice(0, 3);
 
   return (
-    <ScrollView style={styles.root} contentContainerStyle={styles.content}>
-      {/* ── Game Selector ── */}
+    <Screen
+      eyebrow="Florida Forecasting"
+      title="Analyze"
+      subtitle="Live draw context and model-ranked picks for the selected game."
+    >
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -54,140 +69,214 @@ export default function AnalyzeScreen() {
         contentContainerStyle={styles.selectorContent}
       >
         {ACTIVE_GAMES.map(gt => (
-          <TouchableOpacity
+          <Chip
             key={gt}
-            style={[styles.gameBtn, selectedGame === gt && styles.gameBtnActive]}
+            label={FLORIDA_GAMES[gt].name}
+            selected={selectedGame === gt}
             onPress={() => {
               setSelectedGame(gt);
               generate.reset();
             }}
-          >
-            <Text style={[styles.gameBtnText, selectedGame === gt && styles.gameBtnTextActive]}>
-              {FLORIDA_GAMES[gt].name}
-            </Text>
-          </TouchableOpacity>
+          />
         ))}
       </ScrollView>
 
-      {/* ── Next Draw Countdown ── */}
-      <View style={styles.card}>
-        <Text style={styles.cardLabel}>Next Draw</Text>
+      <Card>
+        <SectionHeader
+          eyebrow="Live schedule"
+          title="Next Draw"
+          caption={selectedGameName}
+          right={<StatusPill label={schedule.isFetching && !schedule.isLoading ? 'Refresh' : 'Live'} tone="success" />}
+        />
+
         {schedule.isLoading ? (
-          <View style={styles.loadingRow}>
-            <ActivityIndicator size="small" color="#2563eb" />
-            <Text style={styles.loadingText}>
-              {showSlowWarning ? 'Connecting to server...' : 'Loading...'}
-            </Text>
-          </View>
+          <StateBlock
+            loading
+            tone="accent"
+            title={showSlowWarning ? 'Connecting to server' : 'Loading schedule'}
+            body="Retrieving the latest draw window."
+          />
         ) : schedule.isError ? (
-          <Text style={styles.errorText}>
-            Could not load schedule. Check your connection.
-          </Text>
+          <StateBlock
+            tone="danger"
+            title="Schedule unavailable"
+            body="Could not load the draw schedule. Check your connection and try again."
+          />
         ) : (
           <>
-            <Text style={styles.countdown}>{schedule.data?.countdown ?? '—'}</Text>
-            <Text style={styles.subText}>{schedule.data?.gameName}</Text>
+            <View style={styles.countdownPanel}>
+              <Text style={styles.countdownLabel}>Countdown</Text>
+              <Text style={styles.countdown}>{schedule.data?.countdown ?? 'Pending'}</Text>
+            </View>
+            <MetricRow label="Game" value={schedule.data?.gameName ?? selectedGameName} />
           </>
         )}
-      </View>
+      </Card>
 
-      {/* ── Predictions ── */}
-      <View style={styles.card}>
-        <Text style={styles.cardLabel}>Top Predictions</Text>
+      <Card>
+        <SectionHeader
+          eyebrow="Model output"
+          title="Top Predictions"
+          caption="Ranked from the current server response."
+          right={
+            generate.data ? (
+              <StatusPill label={generate.data.weightsUsed ? 'Weighted' : 'Generated'} tone="accent" />
+            ) : (
+              <StatusPill label="Ready" tone="neutral" />
+            )
+          }
+        />
 
-        <TouchableOpacity
-          style={[styles.generateBtn, generate.isPending && styles.generateBtnDisabled]}
+        <PrimaryButton
+          label="Generate Analysis"
           onPress={handleGenerate}
+          loading={generate.isPending}
           disabled={generate.isPending}
-        >
-          {generate.isPending ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Text style={styles.generateBtnText}>Generate</Text>
-          )}
-        </TouchableOpacity>
+          style={styles.generateButton}
+        />
 
-        {generate.isError && (
-          <Text style={styles.errorText}>
-            {generate.error?.message?.includes('Too many')
-              ? 'Rate limited — wait a moment and try again.'
-              : 'Failed to generate predictions. Try again.'}
-          </Text>
-        )}
+        {generate.isError ? (
+          <StateBlock
+            tone="danger"
+            title={generate.error?.message?.includes('Too many') ? 'Rate limit active' : 'Generation failed'}
+            body={
+              generate.error?.message?.includes('Too many')
+                ? 'Wait a moment, then run the model set again.'
+                : 'The request did not complete. Check your connection and try again.'
+            }
+          />
+        ) : null}
 
-        {top3 && top3.map((pred, i) => (
-          <View key={i} style={styles.predRow}>
-            <Text style={styles.predModel}>{pred.modelName}</Text>
-            <Text style={styles.predNumbers}>
-              {pred.mainNumbers.join(' - ')}
-              {pred.specialNumbers.length > 0 && (
-                '  |  ' + pred.specialNumbers.join(' - ')
-              )}
-            </Text>
+        {!generate.isPending && !generate.isError && !top3 ? (
+          <StateBlock
+            title="No analysis run yet"
+            body="Generate model picks for the selected game to review the top-ranked outputs."
+          />
+        ) : null}
+
+        {top3 ? (
+          <View style={styles.predictionList}>
+            {top3.map((pred, index) => {
+              const score = formatScore(pred.confidenceScore);
+
+              return (
+                <View key={`${pred.modelName}-${index}`} style={styles.predictionRow}>
+                  <View style={styles.predictionHeader}>
+                    <View style={styles.modelTitleGroup}>
+                      <Text style={styles.rank}>#{index + 1}</Text>
+                      <Text style={styles.modelName}>{pred.modelName}</Text>
+                    </View>
+                    {score ? <StatusPill label={`Score ${score}`} tone="neutral" /> : null}
+                  </View>
+
+                  <View style={styles.numberRow}>
+                    {pred.mainNumbers.map(number => (
+                      <NumberChip key={`${pred.modelName}-main-${number}`} value={number} />
+                    ))}
+                  </View>
+
+                  {pred.specialNumbers.length > 0 ? (
+                    <View style={styles.specialRow}>
+                      <Text style={styles.specialLabel}>Special</Text>
+                      <View style={styles.numberRowCompact}>
+                        {pred.specialNumbers.map(number => (
+                          <NumberChip key={`${pred.modelName}-special-${number}`} value={number} muted />
+                        ))}
+                      </View>
+                    </View>
+                  ) : null}
+                </View>
+              );
+            })}
           </View>
-        ))}
-      </View>
-    </ScrollView>
+        ) : null}
+      </Card>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#f8fafc' },
-  content: { padding: 16, paddingBottom: 32 },
-
-  // Game selector
-  selectorRow: { marginBottom: 16 },
-  selectorContent: { gap: 8 },
-  gameBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#e2e8f0',
+  selectorRow: {
+    marginHorizontal: -ui.spacing.lg,
   },
-  gameBtnActive: { backgroundColor: '#2563eb' },
-  gameBtnText: { fontSize: 14, color: '#475569' },
-  gameBtnTextActive: { color: '#fff', fontWeight: '600' },
-
-  // Cards
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 2,
+  selectorContent: {
+    gap: ui.spacing.sm,
+    paddingHorizontal: ui.spacing.lg,
   },
-  cardLabel: { fontSize: 13, color: '#94a3b8', fontWeight: '600', marginBottom: 8, textTransform: 'uppercase' },
-
-  // Countdown
-  countdown: { fontSize: 28, fontWeight: '700', color: '#0f172a' },
-  subText: { fontSize: 14, color: '#64748b', marginTop: 2 },
-
-  // Loading / errors
-  loadingRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  loadingText: { fontSize: 14, color: '#64748b' },
-  errorText: { fontSize: 14, color: '#dc2626', marginTop: 4 },
-
-  // Generate button
-  generateBtn: {
-    backgroundColor: '#2563eb',
-    borderRadius: 8,
-    paddingVertical: 12,
+  countdownPanel: {
+    backgroundColor: ui.colors.backgroundRaised,
+    borderColor: ui.colors.borderMuted,
+    borderRadius: ui.radii.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: ui.spacing.lg,
+  },
+  countdownLabel: {
+    color: ui.colors.textSubtle,
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    marginBottom: ui.spacing.xs,
+  },
+  countdown: {
+    color: ui.colors.text,
+    fontSize: 34,
+    fontWeight: '900',
+  },
+  generateButton: {
+    marginBottom: ui.spacing.lg,
+  },
+  predictionList: {
+    gap: ui.spacing.md,
+  },
+  predictionRow: {
+    borderTopColor: ui.colors.borderMuted,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: ui.spacing.md,
+  },
+  predictionHeader: {
     alignItems: 'center',
-    marginBottom: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: ui.spacing.md,
+    marginBottom: ui.spacing.md,
   },
-  generateBtnDisabled: { opacity: 0.6 },
-  generateBtnText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-
-  // Prediction rows
-  predRow: {
-    paddingVertical: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#e2e8f0',
+  modelTitleGroup: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: ui.spacing.sm,
   },
-  predModel: { fontSize: 13, color: '#64748b', marginBottom: 2 },
-  predNumbers: { fontSize: 18, fontWeight: '600', color: '#0f172a' },
+  rank: {
+    color: ui.colors.accentStrong,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  modelName: {
+    color: ui.colors.text,
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  numberRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: ui.spacing.sm,
+  },
+  numberRowCompact: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: ui.spacing.sm,
+  },
+  specialRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: ui.spacing.md,
+    marginTop: ui.spacing.md,
+  },
+  specialLabel: {
+    color: ui.colors.textSubtle,
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
 });
