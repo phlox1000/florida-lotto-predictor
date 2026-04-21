@@ -11,6 +11,21 @@ async function startServer() {
   const app = express();
   const server = createServer(app);
 
+  // Trust exactly one upstream proxy hop (Render's load balancer).
+  //
+  // Without this, Express's `req.ip` returns the LB's source address
+  // (a fixed Render-internal IP) for every request, which would make
+  // any per-IP rate limit effectively a global one — every visitor in
+  // the world would share the same bucket. The `1` (instead of `true`)
+  // limits trust to the first proxy in the X-Forwarded-For chain, so a
+  // client cannot spoof a different IP just by setting their own XFF
+  // header (Render's LB always overwrites/appends the client IP last).
+  //
+  // Used by:
+  //   - server/routers/auth.router.ts (login/register rate limits)
+  //   - any future caller of checkRateLimit() that keys by IP
+  app.set("trust proxy", 1);
+
   // Health check. Registered before any body parsers, middleware, or
   // routers so that the endpoint is as cheap as possible (no JSON
   // parsing, no auth, no tRPC context) and so it keeps responding
