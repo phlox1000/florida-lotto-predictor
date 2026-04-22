@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   ActivityIndicator,
   ScrollView,
@@ -7,14 +7,25 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useFocusEffect, useRoute, type RouteProp } from '@react-navigation/native';
 import { FLORIDA_GAMES, GAME_TYPES, type GameType } from '@florida-lotto/shared';
 import { trpc } from '../lib/trpc';
+import { useDashboardState } from '../lib/DashboardStateProvider';
+import type { MainTabParamList } from '../navigation/types';
 
 const ACTIVE_GAMES = GAME_TYPES.filter(gt => !FLORIDA_GAMES[gt].schedule.ended);
 
 export default function AnalyzeScreen() {
-  const [selectedGame, setSelectedGame] = useState<GameType>(ACTIVE_GAMES[0]);
+  const route = useRoute<RouteProp<MainTabParamList, 'Analyze'>>();
+  const { recordTabOpen, recordGamePicked, recordAnalyzeGenerate } = useDashboardState();
+  const [selectedGame, setSelectedGame] = useState<GameType>(
+    () => (route.params?.focusGame && ACTIVE_GAMES.includes(route.params.focusGame)
+      ? route.params.focusGame
+      : ACTIVE_GAMES[0]),
+  );
   const [showSlowWarning, setShowSlowWarning] = useState(false);
+  const selectedGameRef = useRef(selectedGame);
+  selectedGameRef.current = selectedGame;
 
   // --- Next draw countdown ---
   const schedule = trpc.schedule.next.useQuery(
@@ -32,11 +43,31 @@ export default function AnalyzeScreen() {
     return () => clearTimeout(timer);
   }, [schedule.isLoading]);
 
+  useEffect(() => {
+    const g = route.params?.focusGame;
+    if (g && ACTIVE_GAMES.includes(g)) {
+      setSelectedGame(g);
+    }
+  }, [route.params?.focusGame]);
+
+  useFocusEffect(
+    useCallback(() => {
+      recordTabOpen('analyze', selectedGameRef.current);
+    }, [recordTabOpen]),
+  );
+
   // --- Predictions ---
   const generate = trpc.predictions.generate.useMutation();
 
   function handleGenerate() {
-    generate.mutate({ gameType: selectedGame });
+    generate.mutate(
+      { gameType: selectedGame },
+      {
+        onSuccess: () => {
+          recordAnalyzeGenerate(selectedGame);
+        },
+      },
+    );
   }
 
   const top3 = generate.data?.predictions
@@ -59,6 +90,7 @@ export default function AnalyzeScreen() {
             style={[styles.gameBtn, selectedGame === gt && styles.gameBtnActive]}
             onPress={() => {
               setSelectedGame(gt);
+              recordGamePicked(gt);
               generate.reset();
             }}
           >

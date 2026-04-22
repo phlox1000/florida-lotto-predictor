@@ -1,6 +1,16 @@
+import { useCallback } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
+import { useDashboardState } from '../lib/DashboardStateProvider';
+import { colors } from '../theme';
 
 export default function TrackScreen() {
+  const { recordTabOpen } = useDashboardState();
+  useFocusEffect(
+    useCallback(() => {
+      recordTabOpen('track', null);
+    }, [recordTabOpen]),
+  );
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Track</Text>
@@ -9,6 +19,6 @@ export default function TrackScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
-  title: { fontSize: 24, fontWeight: '600' },
+  container: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
+  title: { fontSize: 24, fontWeight: '600', color: colors.text },
 });
