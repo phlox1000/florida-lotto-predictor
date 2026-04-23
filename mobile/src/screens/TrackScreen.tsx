@@ -581,6 +581,15 @@ export default function TrackScreen({ navigation }: TrackScreenProps) {
               <Text style={styles.authIdentity}>
                 {auth.user?.email ?? auth.user?.name ?? 'Signed in account'}
               </Text>
+              <View style={styles.roleRow}>
+                <Text style={styles.roleLabel}>Role</Text>
+                <Text style={[
+                  styles.roleValue,
+                  auth.user?.role === 'admin' ? styles.roleAdmin : styles.roleUser,
+                ]}>
+                  {auth.user?.role ?? 'user'}
+                </Text>
+              </View>
               <PrimaryButton
                 label="Log Out"
                 onPress={logout}
@@ -706,7 +715,11 @@ export default function TrackScreen({ navigation }: TrackScreenProps) {
           </View>
           <View style={styles.importOption}>
             <Text style={styles.importTitle}>PDF import</Text>
-            <Text style={styles.importText}>Server PDF import is admin-only and imports draw history, not mobile ticket entries.</Text>
+            <Text style={styles.importText}>
+              PDF imports are handled via the web admin panel. Visit{'\n'}
+              <Text style={styles.importLink}>florida-lotto-predictor.onrender.com</Text>
+              {'\n'}to import draw history PDFs.
+            </Text>
             <StatusPill label="Admin" tone="warning" />
           </View>
         </View>
@@ -1073,6 +1086,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     lineHeight: 17,
   },
+  importLink: {
+    color: ui.colors.accent,
+    fontFamily: 'monospace',
+    fontSize: 11,
+  },
   authPanel: {
     backgroundColor: ui.colors.backgroundRaised,
     borderColor: ui.colors.borderMuted,
@@ -1100,6 +1118,29 @@ const styles = StyleSheet.create({
     color: ui.colors.text,
     fontSize: 13,
     fontWeight: '800',
+  },
+  roleRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: ui.spacing.xs,
+  },
+  roleLabel: {
+    color: ui.colors.textSubtle,
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  roleValue: {
+    fontFamily: 'monospace',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  roleAdmin: {
+    color: '#ffd700',
+  },
+  roleUser: {
+    color: ui.colors.textMuted,
   },
   authSubmit: {
     alignSelf: 'stretch',

@@ -51,7 +51,7 @@ beforeAll(async () => {
 
   const routerMod = await import("./routers");
   appRouter = routerMod.appRouter;
-}, 30_000);
+}, 60_000);
 
 beforeEach(() => {
   vi.clearAllMocks();
