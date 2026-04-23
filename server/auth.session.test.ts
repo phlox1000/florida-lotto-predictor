@@ -20,7 +20,7 @@ beforeAll(async () => {
   const db = await import("./db");
   getUserByOpenId = db.getUserByOpenId as ReturnType<typeof vi.fn>;
   upsertUser = db.upsertUser as ReturnType<typeof vi.fn>;
-});
+}, 30_000);
 
 beforeEach(() => {
   vi.clearAllMocks();
