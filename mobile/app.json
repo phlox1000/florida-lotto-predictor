@@ -2,11 +2,10 @@
   "expo": {
     "name": "mobile",
     "slug": "mobile",
-    "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -25,6 +24,14 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "appVersion": "0.1.0",
+      "buildNumber": "1",
+      "channel": "prototype",
+      "eas": {
+        "projectId": "f4720ed3-714b-47c4-bb8e-12abb42cb1ca"
+      }
     }
   }
 }

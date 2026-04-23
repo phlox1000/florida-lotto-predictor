@@ -15,7 +15,7 @@ export async function generatePredictions(
     drawDate: r.drawDate,
   }));
 
-  const modelWeights = await getModelWeights(gameType);
+  const modelWeights = await getModelWeights(gameType, userId);
   let allPredictions = runAllModels(cfg, history, Object.keys(modelWeights).length > 0 ? modelWeights : undefined);
 
   if (sumRangeFilter) {
@@ -42,6 +42,7 @@ export async function generatePredictions(
     predictions: allPredictions,
     gameType,
     gameName: cfg.name,
+    modelWeights,
     weightsUsed: Object.keys(modelWeights).length > 0,
     sumRangeFilterApplied: sumRangeFilter,
   };
