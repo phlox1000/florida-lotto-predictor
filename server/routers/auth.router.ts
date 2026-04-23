@@ -193,6 +193,14 @@ export const authRouter = router({
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
 
+      console.log('[auth.login] returning:', {
+        hasSessionToken: !!sessionToken,
+        sessionTokenLength: sessionToken?.length,
+        userId: user?.id,
+        openIdLength: user?.openId?.length,
+        openIdTrimmed: user?.openId?.trim().length,
+      });
+
       return {
         success: true as const,
         sessionToken,
