@@ -405,6 +405,184 @@ export function FeatureRow({ title, detail, meta }: FeatureRowProps) {
   );
 }
 
+// ─── ModelSignalCard ──────────────────────────────────────────────────────────
+// Bloomberg signal intelligence panel — one model's full ranked output
+
+type ModelPerformance = {
+  recentAccuracy: number | null;
+  totalPredictions: number | null;
+  winRate: number | null;
+  trend: 'up' | 'down' | 'neutral' | null;
+};
+
+type ModelSignalCardProps = {
+  rank: number;
+  modelId: string;
+  modelDescription: string;
+  picks: number[];
+  specialNumbers?: number[];
+  confidenceScore: number;
+  maxScore: number;
+  performance: ModelPerformance | null;
+  isSaved: boolean;
+  isExpanded: boolean;
+  onSave: () => void;
+  onShare: () => void;
+  onToggleExpand: () => void;
+};
+
+const SIGNAL_TREND_COLORS = {
+  up: '#00ff88',
+  down: '#ff4444',
+  neutral: '#8888aa',
+} as const;
+
+const SIGNAL_TREND_ICONS = {
+  up: '↑ Up',
+  down: '↓ Down',
+  neutral: '— Flat',
+} as const;
+
+export function ModelSignalCard({
+  rank,
+  modelId,
+  modelDescription,
+  picks,
+  specialNumbers,
+  confidenceScore,
+  maxScore,
+  performance,
+  isSaved,
+  isExpanded,
+  onSave,
+  onShare,
+  onToggleExpand,
+}: ModelSignalCardProps) {
+  const rankDotColor =
+    rank === 1 ? colors.success :
+    rank === 2 ? colors.accent :
+    rank === 3 ? colors.textMuted :
+    colors.textSubtle;
+
+  const trend = performance?.trend ?? null;
+  const trendColor = trend ? SIGNAL_TREND_COLORS[trend] : colors.textSubtle;
+  const trendLabel = trend ? SIGNAL_TREND_ICONS[trend] : '—';
+
+  const fmtScore = confidenceScore >= 10
+    ? confidenceScore.toFixed(0)
+    : confidenceScore.toFixed(1);
+
+  return (
+    <View style={[styles.signalCard, isExpanded ? styles.signalCardExpanded : null]}>
+
+      {/* Tappable header: rank · name · trend dot · score */}
+      <Pressable onPress={onToggleExpand} style={styles.signalCardHeader}>
+        <View style={styles.signalCardTitleGroup}>
+          <View style={[styles.signalCardDot, { backgroundColor: rankDotColor }]} />
+          <Text style={styles.signalCardRank}>#{rank}</Text>
+          <Text style={styles.signalCardName} numberOfLines={1}>{modelId}</Text>
+        </View>
+        <View style={styles.signalCardHeaderRight}>
+          <View style={[styles.signalTrendDot, { backgroundColor: trendColor }]} />
+          <Text style={styles.signalCardScore}>{fmtScore}</Text>
+        </View>
+      </Pressable>
+
+      {/* Pick numbers */}
+      <View style={styles.signalPickRow}>
+        {picks.map(n => (
+          <NumberChip key={`${modelId}-m-${n}`} value={n} />
+        ))}
+      </View>
+
+      {specialNumbers && specialNumbers.length > 0 ? (
+        <View style={styles.signalSpecialRow}>
+          <Text style={styles.signalSpecialLabel}>Special</Text>
+          <View style={styles.signalPickRowCompact}>
+            {specialNumbers.map(n => (
+              <NumberChip key={`${modelId}-s-${n}`} value={n} muted />
+            ))}
+          </View>
+        </View>
+      ) : null}
+
+      {/* Confidence bar */}
+      <AllocationBar score={confidenceScore} maxScore={maxScore} label="Confidence" />
+
+      {/* Expanded: description + performance grid */}
+      {isExpanded ? (
+        <View style={styles.signalExpandedBody}>
+          {modelDescription ? (
+            <Text style={styles.signalDescription}>{modelDescription}</Text>
+          ) : null}
+
+          <TerminalLabel>Performance</TerminalLabel>
+
+          {performance ? (
+            <View style={styles.signalPerfGrid}>
+              <View style={styles.signalPerfItem}>
+                <Text style={styles.signalPerfLabel}>Accuracy</Text>
+                <Text style={styles.signalPerfValue}>
+                  {performance.recentAccuracy !== null
+                    ? performance.recentAccuracy.toFixed(2)
+                    : '—'}
+                </Text>
+              </View>
+              <View style={styles.signalPerfItem}>
+                <Text style={styles.signalPerfLabel}>Predictions</Text>
+                <Text style={styles.signalPerfValue}>
+                  {performance.totalPredictions !== null
+                    ? String(performance.totalPredictions)
+                    : '—'}
+                </Text>
+              </View>
+              <View style={styles.signalPerfItem}>
+                <Text style={styles.signalPerfLabel}>Win Rate</Text>
+                <Text style={styles.signalPerfValue}>
+                  {performance.winRate !== null
+                    ? `${performance.winRate.toFixed(1)}%`
+                    : '—'}
+                </Text>
+              </View>
+              <View style={styles.signalPerfItem}>
+                <Text style={styles.signalPerfLabel}>Trend</Text>
+                <Text style={[styles.signalPerfValue, { color: trendColor }]}>
+                  {trendLabel}
+                </Text>
+              </View>
+            </View>
+          ) : (
+            <Text style={styles.signalPerfNull}>No performance data yet</Text>
+          )}
+
+          {/* Collapse affordance */}
+          <Pressable onPress={onToggleExpand} style={styles.signalCollapse}>
+            <Text style={styles.signalCollapseText}>Show Less ▲</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {/* Action row */}
+      <View style={styles.signalCardActions}>
+        <PrimaryButton
+          label={isSaved ? 'Saved' : 'Save'}
+          onPress={onSave}
+          disabled={isSaved}
+          size="compact"
+          style={styles.signalCardAction}
+        />
+        <PrimaryButton
+          label="Share"
+          onPress={onShare}
+          size="compact"
+          variant="secondary"
+          style={styles.signalCardAction}
+        />
+      </View>
+    </View>
+  );
+}
+
 // ─── Exports ─────────────────────────────────────────────────────────────────
 
 export const ui = {
@@ -795,6 +973,155 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     marginTop: spacing.sm,
     fontSize: 12,
+  },
+
+  // ModelSignalCard
+  signalCard: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: spacing.lg,
+    gap: spacing.md,
+  },
+  signalCardExpanded: {
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderTopWidth: 1,
+    padding: spacing.lg,
+    marginTop: spacing.sm,
+  },
+  signalCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+  signalCardTitleGroup: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  signalCardDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  signalCardRank: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontFamily: 'monospace',
+    fontWeight: '700',
+  },
+  signalCardName: {
+    color: colors.text,
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  signalCardHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  signalTrendDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  signalCardScore: {
+    color: colors.accent,
+    fontSize: 16,
+    fontFamily: 'monospace',
+    fontWeight: '900',
+    minWidth: 32,
+    textAlign: 'right',
+  },
+  signalPickRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  signalPickRowCompact: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  signalSpecialRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  signalSpecialLabel: {
+    fontSize: 10,
+    letterSpacing: 1.2,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    color: colors.textSubtle,
+  },
+  signalExpandedBody: {
+    gap: spacing.md,
+    marginTop: spacing.sm,
+  },
+  signalDescription: {
+    color: colors.textMuted,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  signalPerfGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  signalPerfItem: {
+    flexBasis: '46%',
+    flexGrow: 1,
+    backgroundColor: colors.background,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+  },
+  signalPerfLabel: {
+    fontSize: 10,
+    letterSpacing: 1,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    color: colors.textSubtle,
+    marginBottom: spacing.xs,
+  },
+  signalPerfValue: {
+    color: colors.accent,
+    fontSize: 14,
+    fontFamily: 'monospace',
+    fontWeight: '700',
+  },
+  signalPerfNull: {
+    color: colors.textSubtle,
+    fontSize: 11,
+    fontStyle: 'italic',
+  },
+  signalCollapse: {
+    alignItems: 'center',
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    marginTop: spacing.sm,
+  },
+  signalCollapseText: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  signalCardActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  signalCardAction: {
+    flex: 1,
   },
 
   // FeatureRow

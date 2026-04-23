@@ -1,12 +1,12 @@
-import { useEffect, useState } from 'react';
-import { ScrollView, Share, StyleSheet, Text, View } from 'react-native';
-import { FLORIDA_GAMES, GAME_TYPES, type GameType } from '@florida-lotto/shared';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { FLORIDA_GAMES, GAME_TYPES, getModelDisplayName, type GameType } from '@florida-lotto/shared';
 import {
-  AllocationBar,
   Card,
   EmptyState,
   InstrumentTab,
   MetricRow,
+  ModelSignalCard,
   NumberChip,
   PrimaryButton,
   Screen,
@@ -17,14 +17,12 @@ import {
   TerminalLabel,
   ui,
 } from '../components/ui';
+import { getModelDescription } from '../lib/modelDescriptions';
 import { derivePredictionSignals } from '../lib/predictionSignals';
 import { useSavedPicks, type SavePickInput } from '../lib/SavedPicksProvider';
 import { trpc } from '../lib/trpc';
 
 const ACTIVE_GAMES = GAME_TYPES.filter(gt => !FLORIDA_GAMES[gt].schedule.ended);
-
-// Rank → color mapping for model performance dots
-const RANK_COLORS = [ui.colors.success, ui.colors.accent, ui.colors.textMuted];
 
 type PredictionRow = {
   modelName: string;
@@ -57,10 +55,19 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
   const [selectedGame, setSelectedGame] = useState<GameType>(ACTIVE_GAMES[0]);
   const [showSlowWarning, setShowSlowWarning] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [expandedModelId, setExpandedModelId] = useState<string | null>(null);
+  const [showAllModels, setShowAllModels] = useState(false);
+  const extraFadeAnim = useRef(new Animated.Value(0)).current;
+
   const selectedGameName = FLORIDA_GAMES[selectedGame].name;
   const { isSaved, savePick, savedPicks, storageError } = useSavedPicks();
 
   const schedule = trpc.schedule.next.useQuery(
+    { gameType: selectedGame },
+    { refetchOnWindowFocus: false },
+  );
+
+  const perfStats = trpc.performance.stats.useQuery(
     { gameType: selectedGame },
     { refetchOnWindowFocus: false },
   );
@@ -75,6 +82,38 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
   }, [schedule.isLoading]);
 
   const generate = trpc.predictions.generate.useMutation();
+
+  // Reset expanded/show-all state when game changes or new generation runs
+  useEffect(() => {
+    setExpandedModelId(null);
+    setShowAllModels(false);
+    extraFadeAnim.setValue(0);
+  }, [selectedGame, extraFadeAnim]);
+
+  useEffect(() => {
+    if (generate.isSuccess) {
+      setExpandedModelId(null);
+      setShowAllModels(false);
+      extraFadeAnim.setValue(0);
+    }
+  }, [generate.isSuccess, extraFadeAnim]);
+
+  const toggleShowAll = useCallback(() => {
+    if (!showAllModels) {
+      setShowAllModels(true);
+      Animated.timing(extraFadeAnim, {
+        toValue: 1,
+        duration: 250,
+        useNativeDriver: true,
+      }).start();
+    } else {
+      Animated.timing(extraFadeAnim, {
+        toValue: 0,
+        duration: 150,
+        useNativeDriver: true,
+      }).start(() => setShowAllModels(false));
+    }
+  }, [showAllModels, extraFadeAnim]);
 
   function createPickInput(prediction: PredictionRow, sourceContext: string): SavePickInput {
     const drawDate = schedule.data?.nextDraw ?? null;
@@ -130,17 +169,46 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
     }
   }
 
-  const top3 = generate.data?.predictions
-    .slice()
-    .sort((a, b) => b.confidenceScore - a.confidenceScore)
-    .slice(0, 3);
+  // All predictions sorted by confidence descending
+  const allSorted = useMemo(() =>
+    generate.data?.predictions
+      .slice()
+      .sort((a, b) => b.confidenceScore - a.confidenceScore) ?? null,
+    [generate.data?.predictions],
+  );
+
   const signals = derivePredictionSignals(generate.data?.predictions);
   const topPick = signals.topPrediction;
   const topPickInput = topPick ? createPickInput(topPick, 'Analyze top pick') : null;
   const topPickSaved = topPickInput ? isSaved(topPickInput) : false;
 
-  // Max score for allocation bar scale
-  const maxScore = top3 ? Math.max(...top3.map(p => p.confidenceScore), 1) : 100;
+  const maxScore = allSorted ? Math.max(...allSorted.map(p => p.confidenceScore), 1) : 100;
+
+  // Build performance map keyed by modelName
+  const perfMap = useMemo(() => {
+    const map = new Map<string, {
+      recentAccuracy: number | null;
+      totalPredictions: number | null;
+      winRate: number | null;
+      trend: 'up' | 'down' | 'neutral' | null;
+    }>();
+
+    const weights = generate.data?.modelWeights ?? {};
+    for (const stat of perfStats.data ?? []) {
+      const w = weights[stat.modelName] ?? 0.5;
+      map.set(stat.modelName, {
+        recentAccuracy: typeof stat.avgMainHits === 'number' ? Number(stat.avgMainHits) : null,
+        totalPredictions: typeof stat.totalPredictions === 'number' ? Number(stat.totalPredictions) : null,
+        winRate: null,
+        trend: w > 0.6 ? 'up' : w < 0.4 ? 'down' : 'neutral',
+      });
+    }
+    return map;
+  }, [perfStats.data, generate.data?.modelWeights]);
+
+  // Top 3 are always visible; models 4+ fade in via showAllModels
+  const top3 = allSorted?.slice(0, 3) ?? null;
+  const rest = allSorted && allSorted.length > 3 ? allSorted.slice(3) : null;
 
   return (
     <Screen
@@ -219,7 +287,7 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
               <View style={styles.signalDot} />
               <View style={styles.signalText}>
                 <Text style={styles.signalLabel}>Top-ranked signal</Text>
-                <Text style={styles.signalModel}>{topPick.modelName}</Text>
+                <Text style={styles.signalModel}>{getModelDisplayName(topPick.modelName)}</Text>
               </View>
               {signals.topScoreLabel ? (
                 <Text style={styles.signalScore}>{signals.topScoreLabel}</Text>
@@ -280,12 +348,12 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
         )}
       </Card>
 
-      {/* Top Predictions */}
+      {/* Ranked Signals — all models with top-3 default + expand */}
       <Card>
         <SectionHeader
           eyebrow="Model output"
-          title="Top Predictions"
-          caption="Ranked by confidence score."
+          title="Ranked Signals"
+          caption="All models ranked by confidence. Tap a row to expand."
           right={
             generate.data ? (
               <StatusPill label={generate.data.weightsUsed ? 'Weighted' : 'Generated'} tone="accent" />
@@ -315,16 +383,17 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
           />
         ) : null}
 
-        {!generate.isPending && !generate.isError && !top3 ? (
+        {!generate.isPending && !generate.isError && !allSorted ? (
           <EmptyState
             icon="bar-chart-outline"
             headline="No analysis run yet"
-            description="Select a game and generate picks to review model outputs."
+            description="Select a game and generate picks to review all 18 model outputs."
           />
         ) : null}
 
         {generate.isPending ? (
           <View style={{ gap: ui.spacing.md, marginTop: ui.spacing.sm }}>
+            <SkeletonCard />
             <SkeletonCard />
             <SkeletonCard />
           </View>
@@ -333,66 +402,81 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
         {top3 && !generate.isPending ? (
           <>
             <TerminalLabel>Ranked signals</TerminalLabel>
-            <View style={styles.predictionList}>
-              {top3.map((pred, index) => {
-                const input = createPickInput(pred, `Analyze rank ${index + 1}`);
-                const saved = isSaved(input);
-                const dotColor = RANK_COLORS[index] ?? ui.colors.textMuted;
 
-                return (
-                  <View key={`${pred.modelName}-${index}`} style={styles.predictionRow}>
-                    <View style={styles.predictionHeader}>
-                      <View style={styles.modelTitleGroup}>
-                        <View style={[styles.modelDot, { backgroundColor: dotColor }]} />
-                        <Text style={styles.rank}>#{index + 1}</Text>
-                        <Text style={styles.modelName}>{pred.modelName}</Text>
-                      </View>
-                    </View>
+            {/* Top 3 — always visible */}
+            {top3.map((pred, index) => {
+              const rank = index + 1;
+              const input = createPickInput(pred, `Analyze rank ${rank}`);
+              const perf = perfMap.get(pred.modelName) ?? null;
+              return (
+                <ModelSignalCard
+                  key={`${pred.modelName}-${index}`}
+                  rank={rank}
+                  modelId={getModelDisplayName(pred.modelName)}
+                  modelDescription={getModelDescription(pred.modelName)}
+                  picks={pred.mainNumbers}
+                  specialNumbers={pred.specialNumbers.length > 0 ? pred.specialNumbers : undefined}
+                  confidenceScore={pred.confidenceScore}
+                  maxScore={maxScore}
+                  performance={perf}
+                  isSaved={isSaved(input)}
+                  isExpanded={expandedModelId === pred.modelName}
+                  onToggleExpand={() =>
+                    setExpandedModelId(prev => prev === pred.modelName ? null : pred.modelName)
+                  }
+                  onSave={() => handleSavePick(pred, `Analyze rank ${rank}`)}
+                  onShare={() => handleSharePick(pred)}
+                />
+              );
+            })}
 
-                    <View style={styles.numberRow}>
-                      {pred.mainNumbers.map(number => (
-                        <NumberChip key={`${pred.modelName}-main-${number}`} value={number} />
-                      ))}
-                    </View>
+            {/* Models 4–N: fade in on expand */}
+            {rest && rest.length > 0 ? (
+              <>
+                {showAllModels ? (
+                  <Animated.View style={{ opacity: extraFadeAnim, gap: 0 }}>
+                    {rest.map((pred, idx) => {
+                      const rank = idx + 4;
+                      const input = createPickInput(pred, `Analyze rank ${rank}`);
+                      const perf = perfMap.get(pred.modelName) ?? null;
+                      return (
+                        <ModelSignalCard
+                          key={`${pred.modelName}-${idx}`}
+                          rank={rank}
+                          modelId={getModelDisplayName(pred.modelName)}
+                          modelDescription={getModelDescription(pred.modelName)}
+                          picks={pred.mainNumbers}
+                          specialNumbers={pred.specialNumbers.length > 0 ? pred.specialNumbers : undefined}
+                          confidenceScore={pred.confidenceScore}
+                          maxScore={maxScore}
+                          performance={perf}
+                          isSaved={isSaved(input)}
+                          isExpanded={expandedModelId === pred.modelName}
+                          onToggleExpand={() =>
+                            setExpandedModelId(prev => prev === pred.modelName ? null : pred.modelName)
+                          }
+                          onSave={() => handleSavePick(pred, `Analyze rank ${rank}`)}
+                          onShare={() => handleSharePick(pred)}
+                        />
+                      );
+                    })}
+                  </Animated.View>
+                ) : null}
 
-                    {pred.specialNumbers.length > 0 ? (
-                      <View style={styles.specialRow}>
-                        <Text style={styles.specialLabel}>Special</Text>
-                        <View style={styles.numberRowCompact}>
-                          {pred.specialNumbers.map(number => (
-                            <NumberChip key={`${pred.modelName}-special-${number}`} value={number} muted />
-                          ))}
-                        </View>
-                      </View>
-                    ) : null}
+                {/* Show All / Show Less toggle */}
+                <PrimaryButton
+                  label={showAllModels
+                    ? 'Show Less ▲'
+                    : `Show All ${allSorted!.length} Models ▼`}
+                  onPress={toggleShowAll}
+                  variant="secondary"
+                  size="compact"
+                  style={styles.showAllButton}
+                />
+              </>
+            ) : null}
 
-                    <AllocationBar
-                      score={pred.confidenceScore}
-                      maxScore={maxScore}
-                      label="Confidence"
-                    />
-
-                    <View style={styles.rowActions}>
-                      <PrimaryButton
-                        label={saved ? 'Saved' : 'Save'}
-                        onPress={() => handleSavePick(pred, `Analyze rank ${index + 1}`)}
-                        disabled={saved}
-                        size="compact"
-                        style={styles.rowAction}
-                      />
-                      <PrimaryButton
-                        label="Share"
-                        onPress={() => handleSharePick(pred)}
-                        size="compact"
-                        variant="secondary"
-                        style={styles.rowAction}
-                      />
-                    </View>
-                  </View>
-                );
-              })}
-            </View>
-
+            {/* Ticket prep */}
             <View style={styles.actionPanel}>
               <TerminalLabel>Ticket prep</TerminalLabel>
               <View style={styles.actionRow}>
@@ -513,44 +597,6 @@ const styles = StyleSheet.create({
     marginBottom: ui.spacing.lg,
   },
 
-  predictionList: {
-    gap: ui.spacing.lg,
-  },
-  predictionRow: {
-    borderTopWidth: 1,
-    borderTopColor: ui.colors.border,
-    paddingTop: ui.spacing.lg,
-  },
-  predictionHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: ui.spacing.md,
-    marginBottom: ui.spacing.md,
-  },
-  modelTitleGroup: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: ui.spacing.sm,
-  },
-  modelDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  rank: {
-    color: ui.colors.textMuted,
-    fontSize: 11,
-    fontFamily: 'monospace',
-    fontWeight: '700',
-  },
-  modelName: {
-    color: ui.colors.text,
-    flex: 1,
-    fontSize: 13,
-    fontWeight: '700',
-  },
   numberRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -560,19 +606,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: ui.spacing.sm,
-  },
-  specialRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: ui.spacing.md,
-    marginTop: ui.spacing.md,
-  },
-  specialLabel: {
-    fontSize: 10,
-    letterSpacing: 1.2,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    color: ui.colors.textSubtle,
   },
   repeatedRow: {
     flexDirection: 'row',
@@ -590,14 +623,13 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
     fontWeight: '700',
   },
-  rowActions: {
-    flexDirection: 'row',
-    gap: ui.spacing.sm,
-    marginTop: ui.spacing.md,
+
+  showAllButton: {
+    marginTop: ui.spacing.lg,
+    borderColor: '#2a2a3a',
+    backgroundColor: 'transparent',
   },
-  rowAction: {
-    flex: 1,
-  },
+
   actionPanel: {
     borderTopWidth: 1,
     borderTopColor: ui.colors.border,
