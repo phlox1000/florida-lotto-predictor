@@ -124,15 +124,24 @@ function FetchDataSection() {
   const [gameType, setGameType] = useState<GameType>("fantasy_5");
   const fetchLatest = trpc.dataFetch.fetchLatest.useMutation();
   const fetchAll = trpc.dataFetch.fetchAll.useMutation();
-  const fetchHistory = trpc.dataFetch.fetchHistory.useMutation();
+  const fetchHistoryChunk = trpc.dataFetch.fetchHistoryChunk.useMutation();
   const utils = trpc.useUtils();
+
+  // Pagination state for the chunked bulk-history loop
+  const [chunkProgress, setChunkProgress] = useState<{
+    fetched: number;
+    total: number;
+    inserted: number;
+  } | null>(null);
+  const cancelRef = useRef(false);
 
   const gameOptions = useMemo(() =>
     GAME_TYPES.map(id => ({ id, name: FLORIDA_GAMES[id].name })),
     []
   );
 
-  const isFetching = fetchLatest.isPending || fetchAll.isPending || fetchHistory.isPending;
+  const isChunking = chunkProgress !== null;
+  const isFetching = fetchLatest.isPending || fetchAll.isPending || isChunking;
 
   const handleFetchAll = () => {
     fetchAll.mutate(undefined, {
@@ -168,20 +177,54 @@ function FetchDataSection() {
     });
   };
 
-  const handleFetchHistory = () => {
-    fetchHistory.mutate({ gameType, drawCount: 500 }, {
-      onSuccess: (data) => {
-        if (data.success) {
-          toast.success(`Loaded ${data.insertedCount} historical draws for ${FLORIDA_GAMES[gameType].name} (${data.skippedCount} duplicates skipped)`);
-          utils.draws.latest.invalidate();
-          utils.draws.all.invalidate();
-          utils.schedule.dataHealth.invalidate();
-        } else {
-          toast.error("Failed to fetch historical data");
-        }
-      },
-      onError: (err) => toast.error(err.message),
-    });
+  const handleFetchHistory = async () => {
+    cancelRef.current = false;
+    let offset = 0;
+    let totalInserted = 0;
+    const BATCH = 50;
+
+    setChunkProgress({ fetched: 0, total: 0, inserted: 0 });
+
+    try {
+      while (!cancelRef.current) {
+        const result = await fetchHistoryChunk.mutateAsync({
+          gameType,
+          offset,
+          batchSize: BATCH,
+        });
+
+        totalInserted += result.inserted;
+        offset = result.nextOffset;
+
+        setChunkProgress({
+          fetched: offset,
+          total: result.totalAvailable,
+          inserted: totalInserted,
+        });
+
+        if (!result.hasMore) break;
+      }
+
+      if (!cancelRef.current) {
+        toast.success(
+          `Loaded ${totalInserted} historical draws for ${FLORIDA_GAMES[gameType].name}.`,
+        );
+        utils.draws.latest.invalidate();
+        utils.draws.all.invalidate();
+        utils.schedule.dataHealth.invalidate();
+      } else {
+        toast.info(`Cancelled after ${totalInserted} draws inserted.`);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to fetch historical data");
+    } finally {
+      setChunkProgress(null);
+      cancelRef.current = false;
+    }
+  };
+
+  const handleCancelHistory = () => {
+    cancelRef.current = true;
   };
 
   return (
@@ -214,27 +257,62 @@ function FetchDataSection() {
         </div>
 
         <div className="space-y-3">
-          <Select value={gameType} onValueChange={(v) => setGameType(v as GameType)}>
+          <Select value={gameType} onValueChange={(v) => setGameType(v as GameType)}
+            disabled={isFetching}>
             <SelectTrigger className="bg-input"><SelectValue /></SelectTrigger>
             <SelectContent>
               {gameOptions.map(g => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
             </SelectContent>
           </Select>
+
           <div className="flex gap-2">
             <Button onClick={handleFetchSingle} disabled={isFetching} variant="outline"
               className="flex-1 border-primary/30 text-primary hover:bg-primary/10">
               <Download className="w-4 h-4 mr-1" />
               {fetchLatest.isPending ? "Fetching..." : "Latest"}
             </Button>
-            <Button onClick={handleFetchHistory} disabled={isFetching} variant="outline"
-              className="flex-1 border-accent/30 text-accent hover:bg-accent/10">
-              <History className="w-4 h-4 mr-1" />
-              {fetchHistory.isPending ? "Loading..." : "Bulk History"}
-            </Button>
+            {isChunking ? (
+              <Button onClick={handleCancelHistory} variant="outline"
+                className="flex-1 border-destructive/40 text-destructive hover:bg-destructive/10">
+                <XCircle className="w-4 h-4 mr-1" />
+                Cancel
+              </Button>
+            ) : (
+              <Button onClick={handleFetchHistory} disabled={isFetching} variant="outline"
+                className="flex-1 border-accent/30 text-accent hover:bg-accent/10">
+                <History className="w-4 h-4 mr-1" />
+                Bulk History
+              </Button>
+            )}
           </div>
-          <p className="text-[10px] text-muted-foreground text-center">
-            Bulk History fetches up to 500 past draws from official FL Lottery records.
-          </p>
+
+          {isChunking && chunkProgress ? (
+            <div className="space-y-1.5">
+              <div className="flex justify-between text-[11px] text-muted-foreground">
+                <span className="flex items-center gap-1">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Fetching batch...
+                </span>
+                <span className="font-mono">
+                  {chunkProgress.fetched}
+                  {chunkProgress.total > 0 ? ` / ${chunkProgress.total}` : ""} draws
+                </span>
+              </div>
+              <Progress
+                value={chunkProgress.total > 0
+                  ? Math.min(100, (chunkProgress.fetched / chunkProgress.total) * 100)
+                  : undefined}
+                className="h-1.5"
+              />
+              <p className="text-[10px] text-muted-foreground text-center">
+                {chunkProgress.inserted} new draws inserted so far
+              </p>
+            </div>
+          ) : (
+            <p className="text-[10px] text-muted-foreground text-center">
+              Bulk History fetches all past draws in 50-draw batches to avoid timeouts.
+            </p>
+          )}
         </div>
       </CardContent>
     </Card>

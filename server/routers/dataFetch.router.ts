@@ -4,7 +4,7 @@ import { getUserPdfUploads } from "../db";
 import { gameTypeSchema } from "./routerUtils";
 import {
   getAutoFetchStatus, triggerAutoFetch,
-  fetchLatestForGame, fetchAllGames, fetchHistoryForGame,
+  fetchLatestForGame, fetchAllGames, fetchHistoryForGame, fetchHistoryChunk,
 } from "../services/dataFetch.service";
 
 export const dataFetchRouter = router({
@@ -45,5 +45,21 @@ export const dataFetchRouter = router({
     }))
     .mutation(async ({ input }) => {
       return fetchHistoryForGame(input.gameType, input.drawCount);
+    }),
+
+  /**
+   * Chunked variant of fetchHistory designed to stay under Render's 30s
+   * request timeout. Call repeatedly with nextOffset until hasMore===false.
+   *
+   * Returns: { fetched, inserted, hasMore, nextOffset, totalAvailable }
+   */
+  fetchHistoryChunk: adminProcedure
+    .input(z.object({
+      gameType: gameTypeSchema,
+      offset: z.number().min(0).default(0),
+      batchSize: z.number().min(1).max(100).default(50),
+    }))
+    .mutation(async ({ input }) => {
+      return fetchHistoryChunk(input.gameType, input.offset, input.batchSize);
     }),
 });
