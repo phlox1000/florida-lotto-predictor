@@ -46,6 +46,20 @@ const REGISTER_RATE_LIMIT = { max: 5, windowMs: 60 * 60_000 } as const;
 // per-process, so the noise is bounded to one line per pod-lifetime.
 let hasLoggedIpTopologyOnce = false;
 
+function createSessionUser(user: {
+  openId: string;
+  name?: string | null;
+  email?: string | null;
+  role?: string | null;
+}) {
+  return {
+    openId: user.openId,
+    name: user.name ?? "",
+    email: user.email ?? null,
+    role: user.role ?? "user",
+  };
+}
+
 /**
  * Apply a rate limit to the current request and throw TRPCError on lockout.
  *
@@ -138,7 +152,16 @@ export const authRouter = router({
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
 
-      return { success: true as const };
+      return {
+        success: true as const,
+        sessionToken,
+        user: createSessionUser({
+          openId,
+          name: input.name,
+          email: input.email,
+          role,
+        }),
+      };
     }),
 
   login: publicProcedure
@@ -170,6 +193,18 @@ export const authRouter = router({
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
 
-      return { success: true as const };
+      console.log('[auth.login] returning:', {
+        hasSessionToken: !!sessionToken,
+        sessionTokenLength: sessionToken?.length,
+        userId: user?.id,
+        openIdLength: user?.openId?.length,
+        openIdTrimmed: user?.openId?.trim().length,
+      });
+
+      return {
+        success: true as const,
+        sessionToken,
+        user: createSessionUser(user),
+      };
     }),
 });
