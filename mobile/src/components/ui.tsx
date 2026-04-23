@@ -1,6 +1,7 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,9 +12,12 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { colors, radii, spacing, typography } from '../theme';
 
 type Tone = 'neutral' | 'accent' | 'success' | 'warning' | 'danger';
+
+// ─── Screen ─────────────────────────────────────────────────────────────────
 
 type ScreenProps = {
   eyebrow?: string;
@@ -45,6 +49,8 @@ export function Screen({ eyebrow, title, subtitle, children, footer }: ScreenPro
   );
 }
 
+// ─── Card ────────────────────────────────────────────────────────────────────
+
 type CardProps = {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
@@ -53,6 +59,20 @@ type CardProps = {
 export function Card({ children, style }: CardProps) {
   return <View style={[styles.card, style]}>{children}</View>;
 }
+
+// ─── TerminalLabel ───────────────────────────────────────────────────────────
+// Bloomberg-style section category label: small-caps, letter-spaced, top border
+
+type TerminalLabelProps = {
+  children: string;
+  style?: StyleProp<TextStyle>;
+};
+
+export function TerminalLabel({ children, style }: TerminalLabelProps) {
+  return <Text style={[styles.terminalLabel, style]}>{children}</Text>;
+}
+
+// ─── SectionHeader ───────────────────────────────────────────────────────────
 
 type SectionHeaderProps = {
   eyebrow?: string;
@@ -73,6 +93,8 @@ export function SectionHeader({ eyebrow, title, caption, right }: SectionHeaderP
     </View>
   );
 }
+
+// ─── PrimaryButton ───────────────────────────────────────────────────────────
 
 type ButtonProps = {
   label: string;
@@ -124,6 +146,8 @@ export function PrimaryButton({
   );
 }
 
+// ─── Chip ────────────────────────────────────────────────────────────────────
+
 type ChipProps = {
   label: string;
   selected?: boolean;
@@ -146,6 +170,35 @@ export function Chip({ label, selected = false, onPress }: ChipProps) {
   );
 }
 
+// ─── InstrumentTab ───────────────────────────────────────────────────────────
+
+type InstrumentTabProps = {
+  label: string;
+  selected: boolean;
+  onPress: () => void;
+  isLast?: boolean;
+};
+
+export function InstrumentTab({ label, selected, onPress, isLast = false }: InstrumentTabProps) {
+  return (
+    <Pressable
+      accessibilityRole="tab"
+      onPress={onPress}
+      style={[
+        styles.instrTab,
+        selected ? styles.instrTabActive : null,
+        isLast ? null : styles.instrTabDivider,
+      ]}
+    >
+      <Text style={[styles.instrTabText, selected ? styles.instrTabTextActive : null]}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+// ─── StatusPill ──────────────────────────────────────────────────────────────
+
 type StatusPillProps = {
   label: string;
   tone?: Tone;
@@ -159,33 +212,159 @@ export function StatusPill({ label, tone = 'neutral' }: StatusPillProps) {
   );
 }
 
+// ─── NumberChip ──────────────────────────────────────────────────────────────
+
 type NumberChipProps = {
   value: string | number;
   muted?: boolean;
+  large?: boolean;
 };
 
-export function NumberChip({ value, muted = false }: NumberChipProps) {
+export function NumberChip({ value, muted = false, large = false }: NumberChipProps) {
   return (
-    <View style={[styles.numberChip, muted ? styles.numberChipMuted : null]}>
-      <Text style={[styles.numberText, muted ? styles.numberTextMuted : null]}>{value}</Text>
+    <View style={[styles.numberChip, muted ? styles.numberChipMuted : null, large ? styles.numberChipLarge : null]}>
+      <Text style={[
+        styles.numberText,
+        muted ? styles.numberTextMuted : null,
+        large ? styles.numberTextLarge : null,
+      ]}>
+        {value}
+      </Text>
     </View>
   );
 }
+
+// ─── MetricRow ───────────────────────────────────────────────────────────────
 
 type MetricRowProps = {
   label: string;
   value: string;
   valueStyle?: StyleProp<TextStyle>;
+  valueTone?: 'default' | 'positive' | 'negative' | 'accent';
 };
 
-export function MetricRow({ label, value, valueStyle }: MetricRowProps) {
+export function MetricRow({ label, value, valueStyle, valueTone = 'default' }: MetricRowProps) {
+  const toneColor =
+    valueTone === 'positive' ? colors.success :
+    valueTone === 'negative' ? colors.danger :
+    valueTone === 'accent' ? colors.accent :
+    colors.text;
+
   return (
     <View style={styles.metricRow}>
       <Text style={styles.metricLabel}>{label}</Text>
-      <Text style={[styles.metricValue, valueStyle]}>{value}</Text>
+      <Text style={[styles.metricValue, { color: toneColor }, valueStyle]}>{value}</Text>
     </View>
   );
 }
+
+// ─── AllocationBar ───────────────────────────────────────────────────────────
+// Confidence score shown as a proportional fill bar (trading signal style)
+
+type AllocationBarProps = {
+  score: number;
+  maxScore?: number;
+  label?: string;
+  showValue?: boolean;
+};
+
+export function AllocationBar({ score, maxScore = 100, label, showValue = true }: AllocationBarProps) {
+  const pct = Math.min(1, Math.max(0, score / maxScore));
+  const displayValue = score >= 10 ? score.toFixed(0) : score.toFixed(1);
+
+  return (
+    <View style={styles.allocContainer}>
+      {label ? <Text style={styles.allocLabel}>{label}</Text> : null}
+      <View style={styles.allocRow}>
+        <View style={styles.allocTrack}>
+          <View style={[styles.allocFill, { width: `${Math.round(pct * 100)}%` as any }]} />
+        </View>
+        {showValue ? <Text style={styles.allocValue}>{displayValue}</Text> : null}
+      </View>
+    </View>
+  );
+}
+
+// ─── SkeletonBlock ───────────────────────────────────────────────────────────
+// Animated pulsing placeholder — replaces spinners during data load
+
+type SkeletonBlockProps = {
+  height?: number;
+  width?: string | number;
+  style?: StyleProp<ViewStyle>;
+};
+
+export function SkeletonBlock({ height = 14, width, style }: SkeletonBlockProps) {
+  const anim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(anim, { toValue: 1, duration: 700, useNativeDriver: false }),
+        Animated.timing(anim, { toValue: 0, duration: 700, useNativeDriver: false }),
+      ])
+    ).start();
+    return () => anim.stopAnimation();
+  }, [anim]);
+
+  const backgroundColor = anim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [colors.surfaceRaised, colors.border],
+  });
+
+  return (
+    <Animated.View
+      style={[
+        { height, borderRadius: radii.sm, backgroundColor },
+        width ? { width } : { alignSelf: 'stretch' },
+        style,
+      ]}
+    />
+  );
+}
+
+// Preset card-shaped skeleton for loading screens
+export function SkeletonCard() {
+  return (
+    <View style={[styles.card, { gap: spacing.md }]}>
+      <SkeletonBlock height={10} width="35%" />
+      <SkeletonBlock height={18} width="60%" />
+      <SkeletonBlock height={10} width="80%" />
+      <SkeletonBlock height={10} width="50%" />
+    </View>
+  );
+}
+
+// ─── EmptyState ──────────────────────────────────────────────────────────────
+// Bloomberg-style "no data" — clinical, not apologetic
+
+type EmptyStateProps = {
+  icon?: keyof typeof Ionicons.glyphMap;
+  headline: string;
+  description?: string;
+  action?: string;
+  onAction?: () => void;
+};
+
+export function EmptyState({ icon = 'analytics-outline', headline, description, action, onAction }: EmptyStateProps) {
+  return (
+    <View style={styles.emptyContainer}>
+      <Ionicons name={icon} size={28} color={colors.textSubtle} style={styles.emptyIcon} />
+      <Text style={styles.emptyHeadline}>{headline}</Text>
+      {description ? <Text style={styles.emptyDescription}>{description}</Text> : null}
+      {action && onAction ? (
+        <PrimaryButton
+          label={action}
+          onPress={onAction}
+          size="compact"
+          style={styles.emptyAction}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+// ─── StateBlock ──────────────────────────────────────────────────────────────
 
 type StateBlockProps = {
   title: string;
@@ -206,6 +385,8 @@ export function StateBlock({ title, body, tone = 'neutral', loading = false }: S
   );
 }
 
+// ─── FeatureRow ──────────────────────────────────────────────────────────────
+
 type FeatureRowProps = {
   title: string;
   detail: string;
@@ -224,21 +405,25 @@ export function FeatureRow({ title, detail, meta }: FeatureRowProps) {
   );
 }
 
+// ─── Exports ─────────────────────────────────────────────────────────────────
+
 export const ui = {
   colors,
   spacing,
   radii,
 };
 
+// ─── Tone map ────────────────────────────────────────────────────────────────
+
 const toneStyles = {
   neutral: {
     pill: { backgroundColor: colors.surfaceRaised, borderColor: colors.border },
     text: { color: colors.textMuted },
-    state: { backgroundColor: colors.surfaceMuted, borderColor: colors.borderMuted },
+    state: { backgroundColor: colors.surfaceRaised, borderColor: colors.border },
   },
   accent: {
     pill: { backgroundColor: colors.accentSoft, borderColor: colors.accent },
-    text: { color: colors.accentStrong },
+    text: { color: colors.accent },
     state: { backgroundColor: colors.accentSoft, borderColor: colors.accent },
   },
   success: {
@@ -258,7 +443,10 @@ const toneStyles = {
   },
 };
 
+// ─── Styles ──────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
+  // Screen
   screen: {
     flex: 1,
     backgroundColor: colors.background,
@@ -294,13 +482,30 @@ const styles = StyleSheet.create({
   footer: {
     marginTop: spacing.xl,
   },
+
+  // Card — 1px border, 8px radius, 16px padding per spec
   card: {
     backgroundColor: colors.surface,
-    borderColor: colors.borderMuted,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: radii.lg,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radii.md,
     padding: spacing.lg,
   },
+
+  // TerminalLabel — Bloomberg section category label
+  terminalLabel: {
+    fontSize: 10,
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+    color: colors.textMuted,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: spacing.sm,
+    marginBottom: spacing.md,
+    fontWeight: '700',
+  },
+
+  // SectionHeader
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -314,8 +519,11 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   },
   sectionEyebrow: {
-    ...typography.eyebrow,
-    color: colors.textSubtle,
+    fontSize: 10,
+    letterSpacing: 1.5,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    color: colors.textMuted,
     marginBottom: spacing.xs,
   },
   sectionTitle: {
@@ -327,13 +535,15 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     marginTop: spacing.xs,
   },
+
+  // Button
   button: {
     minHeight: 46,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: radii.md,
     paddingHorizontal: spacing.lg,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: 1,
   },
   buttonCompact: {
     minHeight: 34,
@@ -357,6 +567,7 @@ const styles = StyleSheet.create({
     color: colors.background,
     fontSize: 15,
     fontWeight: '800',
+    letterSpacing: 0.5,
   },
   buttonTextCompact: {
     fontSize: 12,
@@ -364,13 +575,42 @@ const styles = StyleSheet.create({
   buttonTextSecondary: {
     color: colors.text,
   },
+
+  // InstrumentTab — Bloomberg terminal ticker tab
+  instrTab: {
+    backgroundColor: colors.surface,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  instrTabActive: {
+    backgroundColor: '#0a1628',
+    borderBottomColor: colors.accent,
+  },
+  instrTabDivider: {
+    borderRightWidth: 1,
+    borderRightColor: colors.border,
+  },
+  instrTabText: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  instrTabTextActive: {
+    color: colors.accent,
+  },
+
+  // Chip — filter chips keep pill radius; game tabs can override
   chip: {
-    minHeight: 36,
+    minHeight: 32,
     justifyContent: 'center',
     borderRadius: radii.pill,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: colors.surfaceMuted,
+    backgroundColor: colors.surfaceRaised,
     paddingHorizontal: spacing.md,
   },
   chipSelected: {
@@ -382,50 +622,69 @@ const styles = StyleSheet.create({
   },
   chipText: {
     color: colors.textMuted,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
+    letterSpacing: 0.3,
   },
   chipTextSelected: {
-    color: colors.accentStrong,
+    color: colors.accent,
   },
+
+  // StatusPill
   statusPill: {
-    borderRadius: radii.pill,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: radii.sm,
+    borderWidth: 1,
     paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
+    paddingVertical: 3,
   },
   statusText: {
-    fontSize: 11,
-    fontWeight: '800',
+    fontSize: 10,
+    fontWeight: '700',
     textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    fontFamily: 'monospace',
   },
+
+  // NumberChip — monospace, data terminal style
   numberChip: {
-    minWidth: 34,
-    height: 34,
+    minWidth: 36,
+    height: 36,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: radii.sm,
-    backgroundColor: colors.backgroundRaised,
+    backgroundColor: colors.surfaceRaised,
     borderColor: colors.border,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: 1,
   },
   numberChipMuted: {
     backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
+  },
+  numberChipLarge: {
+    minWidth: 48,
+    height: 48,
+    borderRadius: radii.sm,
   },
   numberText: {
-    color: colors.text,
+    color: colors.accent,
     fontSize: 15,
-    fontWeight: '800',
+    fontWeight: '700',
+    fontFamily: 'monospace',
   },
   numberTextMuted: {
-    color: colors.accentStrong,
+    color: colors.textMuted,
   },
+  numberTextLarge: {
+    fontSize: 20,
+  },
+
+  // MetricRow — value in monospace
   metricRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.borderMuted,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
     paddingTop: spacing.md,
     marginTop: spacing.md,
     gap: spacing.lg,
@@ -433,16 +692,91 @@ const styles = StyleSheet.create({
   metricLabel: {
     ...typography.caption,
     color: colors.textSubtle,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    fontSize: 10,
   },
   metricValue: {
     color: colors.text,
     fontSize: 13,
     fontWeight: '700',
+    fontFamily: 'monospace',
     textAlign: 'right',
     flexShrink: 1,
   },
+
+  // AllocationBar
+  allocContainer: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: spacing.md,
+    marginTop: spacing.md,
+  },
+  allocLabel: {
+    fontSize: 10,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    color: colors.textSubtle,
+    fontWeight: '700',
+    marginBottom: spacing.xs,
+  },
+  allocRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  allocTrack: {
+    flex: 1,
+    height: 4,
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  allocFill: {
+    height: '100%',
+    backgroundColor: colors.accent,
+    borderRadius: 2,
+  },
+  allocValue: {
+    color: colors.accent,
+    fontSize: 12,
+    fontFamily: 'monospace',
+    fontWeight: '700',
+    minWidth: 32,
+    textAlign: 'right',
+  },
+
+  // Empty state
+  emptyContainer: {
+    alignItems: 'center',
+    paddingVertical: spacing.xl,
+    paddingHorizontal: spacing.lg,
+  },
+  emptyIcon: {
+    marginBottom: spacing.md,
+    opacity: 0.6,
+  },
+  emptyHeadline: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: spacing.xs,
+  },
+  emptyDescription: {
+    color: colors.textMuted,
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'center',
+  },
+  emptyAction: {
+    marginTop: spacing.lg,
+    minWidth: 140,
+  },
+
+  // StateBlock
   stateBlock: {
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: 1,
     borderRadius: radii.md,
     padding: spacing.lg,
   },
@@ -452,21 +786,25 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   stateTitle: {
-    fontSize: 14,
-    fontWeight: '800',
+    fontSize: 13,
+    fontWeight: '700',
+    flexShrink: 1,
   },
   stateBody: {
     ...typography.body,
     color: colors.textMuted,
     marginTop: spacing.sm,
+    fontSize: 12,
   },
+
+  // FeatureRow
   featureRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: spacing.md,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.borderMuted,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
     paddingTop: spacing.md,
     marginTop: spacing.md,
   },
@@ -475,8 +813,8 @@ const styles = StyleSheet.create({
   },
   featureTitle: {
     color: colors.text,
-    fontSize: 14,
-    fontWeight: '800',
+    fontSize: 13,
+    fontWeight: '700',
   },
   featureDetail: {
     ...typography.caption,

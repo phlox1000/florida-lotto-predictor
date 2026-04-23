@@ -1,12 +1,13 @@
 import { useMemo } from 'react';
 import {
   Card,
+  EmptyState,
   FeatureRow,
   MetricRow,
   Screen,
   SectionHeader,
-  StateBlock,
   StatusPill,
+  TerminalLabel,
 } from '../components/ui';
 import { useSavedPicks } from '../lib/SavedPicksProvider';
 import { deriveLedgerStats } from '../lib/ticketGrading';
@@ -52,6 +53,7 @@ export default function ModelsScreen() {
 
         {topModel ? (
           <>
+            <TerminalLabel>Most active</TerminalLabel>
             <FeatureRow
               title="Most saved model"
               detail={`${topModel.label} appears in ${topModel.count} saved pick${topModel.count === 1 ? '' : 's'} with ${topModel.checked} checked locally.`}
@@ -67,9 +69,10 @@ export default function ModelsScreen() {
             ))}
           </>
         ) : (
-          <StateBlock
-            title="No saved model activity yet"
-            body="Save generated picks from Analyze to build local diagnostics without inventing leaderboard data."
+          <EmptyState
+            icon="analytics-outline"
+            headline="No model activity yet"
+            description="Save generated picks from Analyze to build local diagnostics without inventing leaderboard data."
           />
         )}
       </Card>
@@ -91,9 +94,10 @@ export default function ModelsScreen() {
             />
           ))
         ) : (
-          <StateBlock
-            title="No game coverage yet"
-            body="Saved picks will populate this diagnostic view."
+          <EmptyState
+            icon="grid-outline"
+            headline="No game coverage yet"
+            description="Saved picks will populate this diagnostic view."
           />
         )}
       </Card>
@@ -115,9 +119,10 @@ export default function ModelsScreen() {
             />
           ))
         ) : (
-          <StateBlock
-            title="No source activity yet"
-            body="Generated and manually entered tickets will populate this diagnostic view."
+          <EmptyState
+            icon="layers-outline"
+            headline="No source activity yet"
+            description="Generated and manually entered tickets will populate this diagnostic view."
           />
         )}
       </Card>
@@ -139,9 +144,10 @@ export default function ModelsScreen() {
             />
           ))
         ) : (
-          <StateBlock
-            title="No checked tier labels yet"
-            body="Run Check Results in Track after saved tickets have matching draw results."
+          <EmptyState
+            icon="trophy-outline"
+            headline="No tier labels yet"
+            description="Run Check Results in Track after saved tickets have matching draw results."
           />
         )}
       </Card>

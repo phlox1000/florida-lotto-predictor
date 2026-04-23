@@ -64,7 +64,8 @@ export default function App() {
                   tabBarInactiveTintColor: colors.textSubtle,
                   tabBarStyle: {
                     backgroundColor: colors.backgroundRaised,
-                    borderTopColor: colors.borderMuted,
+                    borderTopColor: colors.border,
+                    borderTopWidth: 1,
                     minHeight: 72,
                     paddingTop: 8,
                     paddingBottom: 12,
@@ -73,9 +74,11 @@ export default function App() {
                     paddingVertical: 2,
                   },
                   tabBarLabelStyle: {
-                    fontSize: 11,
+                    fontSize: 10,
                     fontWeight: '700',
-                    marginTop: 1,
+                    letterSpacing: 1.2,
+                    textTransform: 'uppercase',
+                    marginTop: 2,
                   },
                 })}
               >

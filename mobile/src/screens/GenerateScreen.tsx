@@ -3,14 +3,15 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { FLORIDA_GAMES, GAME_TYPES, type GameType } from '@florida-lotto/shared';
 import {
   Card,
-  Chip,
+  EmptyState,
   FeatureRow,
+  InstrumentTab,
   MetricRow,
   PrimaryButton,
   Screen,
   SectionHeader,
-  StateBlock,
   StatusPill,
+  TerminalLabel,
   ui,
 } from '../components/ui';
 import { useSavedPicks } from '../lib/SavedPicksProvider';
@@ -65,11 +66,12 @@ export default function GenerateScreen({ navigation }: GenerateScreenProps) {
         style={styles.selectorRow}
         contentContainerStyle={styles.selectorContent}
       >
-        {ACTIVE_GAMES.map(gt => (
-          <Chip
+        {ACTIVE_GAMES.map((gt, index) => (
+          <InstrumentTab
             key={gt}
             label={FLORIDA_GAMES[gt].name}
             selected={selectedGame === gt}
+            isLast={index === ACTIVE_GAMES.length - 1}
             onPress={() => setSelectedGame(gt)}
           />
         ))}
@@ -83,6 +85,7 @@ export default function GenerateScreen({ navigation }: GenerateScreenProps) {
           right={<StatusPill label={isLoaded ? 'Local' : 'Loading'} tone={isLoaded ? 'accent' : 'neutral'} />}
         />
 
+        <TerminalLabel>Ledger snapshot</TerminalLabel>
         <View style={styles.summaryGrid}>
           <View style={styles.summaryTile}>
             <Text style={styles.summaryValue}>{savedForGame.length}</Text>
@@ -109,9 +112,12 @@ export default function GenerateScreen({ navigation }: GenerateScreenProps) {
             <MetricRow label="Model sources" value={`${modelCountForGame}`} />
           </>
         ) : (
-          <StateBlock
-            title="No saved picks for this game yet"
-            body="Use Analyze to generate and save a pick. It will appear here as local generation context."
+          <EmptyState
+            icon="bar-chart-outline"
+            headline="No saved picks for this game"
+            description="Use Analyze to generate and save a pick. It will appear here as local generation context."
+            action="Open Analyze"
+            onAction={() => navigation?.navigate('Analyze')}
           />
         )}
       </Card>
@@ -167,12 +173,12 @@ export default function GenerateScreen({ navigation }: GenerateScreenProps) {
 
 const styles = StyleSheet.create({
   selectorRow: {
+    borderBottomWidth: 1,
+    borderBottomColor: ui.colors.border,
+    marginBottom: ui.spacing.lg,
     marginHorizontal: -ui.spacing.lg,
   },
-  selectorContent: {
-    gap: ui.spacing.sm,
-    paddingHorizontal: ui.spacing.lg,
-  },
+  selectorContent: {},
   summaryGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -181,15 +187,16 @@ const styles = StyleSheet.create({
   },
   summaryTile: {
     backgroundColor: ui.colors.backgroundRaised,
-    borderColor: ui.colors.borderMuted,
+    borderColor: ui.colors.border,
     borderRadius: ui.radii.md,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: 1,
     flexBasis: '46%',
     flexGrow: 1,
     padding: ui.spacing.lg,
   },
   summaryValue: {
-    color: ui.colors.text,
+    color: ui.colors.accent,
+    fontFamily: 'monospace',
     fontSize: 24,
     fontWeight: '900',
   },

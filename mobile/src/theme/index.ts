@@ -1,23 +1,37 @@
 export const colors = {
-  background: '#08090b',
-  backgroundRaised: '#0d1117',
-  surface: '#12161d',
-  surfaceRaised: '#171c24',
-  surfaceMuted: '#0f131a',
-  border: '#2a313c',
-  borderMuted: '#1f2630',
-  text: '#f4f7fa',
-  textMuted: '#a7b2c0',
-  textSubtle: '#6f7f91',
-  accent: '#5ad4c8',
-  accentStrong: '#8cefe7',
-  accentSoft: 'rgba(90, 212, 200, 0.14)',
-  success: '#7dd3a8',
-  successSoft: 'rgba(125, 211, 168, 0.12)',
-  warning: '#e8c66f',
-  warningSoft: 'rgba(232, 198, 111, 0.12)',
-  danger: '#f08282',
-  dangerSoft: 'rgba(240, 130, 130, 0.12)',
+  // Backgrounds
+  background: '#0a0a0f',
+  backgroundRaised: '#111118',
+  surface: '#111118',
+  surfaceRaised: '#1a1a24',
+  surfaceMuted: '#0a0a0f',
+
+  // Borders
+  border: '#2a2a3a',
+  borderMuted: '#2a2a3a',
+
+  // Text
+  text: '#e8e8f0',
+  textMuted: '#8888aa',
+  textSubtle: '#555570',
+
+  // Primary accent — cyan (data, active states)
+  accent: '#00d4ff',
+  accentStrong: '#33ddff',
+  accentSoft: 'rgba(0, 212, 255, 0.10)',
+
+  // Secondary accent — gold (highlights, wins)
+  gold: '#ffd700',
+  goldSoft: 'rgba(255, 215, 0, 0.10)',
+
+  // Semantic
+  success: '#00ff88',
+  successSoft: 'rgba(0, 255, 136, 0.08)',
+  warning: '#ffd700',
+  warningSoft: 'rgba(255, 215, 0, 0.10)',
+  danger: '#ff4444',
+  dangerSoft: 'rgba(255, 68, 68, 0.10)',
+
   white: '#ffffff',
 };
 
@@ -32,16 +46,16 @@ export const spacing = {
 };
 
 export const radii = {
-  sm: 6,
-  md: 8,
-  lg: 10,
+  sm: 4,   // data elements
+  md: 8,   // cards
+  lg: 8,   // same as cards
   pill: 999,
 };
 
 export const typography = {
   eyebrow: {
-    fontSize: 11,
-    letterSpacing: 0.6,
+    fontSize: 10,
+    letterSpacing: 1.5,
     fontWeight: '700' as const,
     textTransform: 'uppercase' as const,
   },
@@ -60,5 +74,8 @@ export const typography = {
   caption: {
     fontSize: 12,
     lineHeight: 17,
+  },
+  mono: {
+    fontFamily: 'monospace' as const,
   },
 };

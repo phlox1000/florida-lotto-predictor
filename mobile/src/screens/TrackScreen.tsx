@@ -1,16 +1,20 @@
 import { useMemo, useState } from 'react';
-import { Image, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { FLORIDA_GAMES, GAME_TYPES, type GameType } from '@florida-lotto/shared';
 import {
   Card,
   Chip,
+  EmptyState,
   FeatureRow,
+  InstrumentTab,
   NumberChip,
   PrimaryButton,
   Screen,
   SectionHeader,
+  SkeletonCard,
   StateBlock,
   StatusPill,
+  TerminalLabel,
   ui,
 } from '../components/ui';
 import { useSavedPicks, type SavedPick, type SavedPickSourceType, type SavedPickStatus } from '../lib/SavedPicksProvider';
@@ -170,7 +174,13 @@ function formatMatchedNumbers(pick: SavedPick) {
   return `Matched: ${main}${special}`;
 }
 
-export default function TrackScreen() {
+type TrackScreenProps = {
+  navigation?: {
+    navigate: (screen: 'Analyze') => void;
+  };
+};
+
+export default function TrackScreen({ navigation }: TrackScreenProps) {
   const {
     clearSavedPicks,
     deletePick,
@@ -432,11 +442,17 @@ export default function TrackScreen() {
         />
 
         {!isLoaded ? (
-          <StateBlock loading tone="accent" title="Loading ledger" body="Reading saved picks from local storage." />
+          <>
+            <SkeletonCard />
+            <SkeletonCard />
+          </>
         ) : savedPicks.length === 0 ? (
-          <StateBlock
-            title="Generate, save, then track"
-            body="Run Analyze, save a pick, and it will persist here between app launches."
+          <EmptyState
+            icon="reader-outline"
+            headline="No saved picks yet"
+            description="Run Analyze, save a pick, and it will persist here between app launches."
+            action="Open Analyze"
+            onAction={() => navigation?.navigate('Analyze')}
           />
         ) : (
           <>
@@ -485,7 +501,7 @@ export default function TrackScreen() {
             ) : null}
 
             <View style={styles.filterBlock}>
-              <Text style={styles.filterLabel}>Status</Text>
+              <TerminalLabel>Status</TerminalLabel>
               <View style={styles.filterRow}>
                 {STATUS_FILTERS.map(filter => (
                   <Chip
@@ -499,7 +515,7 @@ export default function TrackScreen() {
             </View>
 
             <View style={styles.filterBlock}>
-              <Text style={styles.filterLabel}>Game</Text>
+              <TerminalLabel>Game</TerminalLabel>
               <View style={styles.filterRow}>
                 <Chip
                   label="All Games"
@@ -518,7 +534,7 @@ export default function TrackScreen() {
             </View>
 
             <View style={styles.filterBlock}>
-              <Text style={styles.filterLabel}>Source</Text>
+              <TerminalLabel>Source</TerminalLabel>
               <View style={styles.filterRow}>
                 {SOURCE_FILTERS.map(filter => (
                   <Chip
@@ -707,13 +723,18 @@ export default function TrackScreen() {
         ) : null}
 
         <View style={styles.formBlock}>
-          <Text style={styles.filterLabel}>Game</Text>
-          <View style={styles.filterRow}>
-            {ACTIVE_GAMES.map(gameType => (
-              <Chip
+          <TerminalLabel>Game</TerminalLabel>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.formTabRow}
+          >
+            {ACTIVE_GAMES.map((gameType, index) => (
+              <InstrumentTab
                 key={`manual-${gameType}`}
                 label={FLORIDA_GAMES[gameType].name}
                 selected={manualDraft.gameType === gameType}
+                isLast={index === ACTIVE_GAMES.length - 1}
                 onPress={() => updateManualDraft({
                   gameType,
                   mainNumbersText: '',
@@ -721,7 +742,7 @@ export default function TrackScreen() {
                 })}
               />
             ))}
-          </View>
+          </ScrollView>
 
           <Text style={styles.inputLabel}>Main numbers</Text>
           <TextInput
@@ -990,15 +1011,16 @@ const styles = StyleSheet.create({
   },
   summaryTile: {
     backgroundColor: ui.colors.backgroundRaised,
-    borderColor: ui.colors.borderMuted,
+    borderColor: ui.colors.border,
     borderRadius: ui.radii.md,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: 1,
     flexBasis: '46%',
     flexGrow: 1,
     padding: ui.spacing.lg,
   },
   summaryValue: {
-    color: ui.colors.text,
+    color: ui.colors.accent,
+    fontFamily: 'monospace',
     fontSize: 24,
     fontWeight: '900',
   },
@@ -1023,13 +1045,6 @@ const styles = StyleSheet.create({
   },
   filterBlock: {
     marginTop: ui.spacing.lg,
-  },
-  filterLabel: {
-    color: ui.colors.textSubtle,
-    fontSize: 12,
-    fontWeight: '800',
-    marginBottom: ui.spacing.sm,
-    textTransform: 'uppercase',
   },
   filterRow: {
     flexDirection: 'row',
@@ -1118,6 +1133,12 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     marginTop: ui.spacing.lg,
     paddingTop: ui.spacing.lg,
+  },
+  formTabRow: {
+    borderBottomWidth: 1,
+    borderBottomColor: ui.colors.border,
+    marginHorizontal: -ui.spacing.md,
+    marginBottom: ui.spacing.md,
   },
   inputLabel: {
     color: ui.colors.textSubtle,
@@ -1224,6 +1245,7 @@ const styles = StyleSheet.create({
   },
   detailText: {
     color: ui.colors.textMuted,
+    fontFamily: 'monospace',
     fontSize: 12,
     fontWeight: '700',
   },
@@ -1244,6 +1266,7 @@ const styles = StyleSheet.create({
   },
   gradeText: {
     color: ui.colors.textMuted,
+    fontFamily: 'monospace',
     fontSize: 12,
     fontWeight: '700',
     lineHeight: 17,

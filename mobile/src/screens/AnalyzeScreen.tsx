@@ -2,15 +2,19 @@ import { useEffect, useState } from 'react';
 import { ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { FLORIDA_GAMES, GAME_TYPES, type GameType } from '@florida-lotto/shared';
 import {
+  AllocationBar,
   Card,
-  Chip,
+  EmptyState,
+  InstrumentTab,
   MetricRow,
   NumberChip,
   PrimaryButton,
   Screen,
   SectionHeader,
+  SkeletonCard,
   StateBlock,
   StatusPill,
+  TerminalLabel,
   ui,
 } from '../components/ui';
 import { derivePredictionSignals } from '../lib/predictionSignals';
@@ -18,6 +22,9 @@ import { useSavedPicks, type SavePickInput } from '../lib/SavedPicksProvider';
 import { trpc } from '../lib/trpc';
 
 const ACTIVE_GAMES = GAME_TYPES.filter(gt => !FLORIDA_GAMES[gt].schedule.ended);
+
+// Rank → color mapping for model performance dots
+const RANK_COLORS = [ui.colors.success, ui.colors.accent, ui.colors.textMuted];
 
 type PredictionRow = {
   modelName: string;
@@ -36,7 +43,6 @@ function formatScore(score: number | null | undefined) {
   if (typeof score !== 'number' || !Number.isFinite(score)) {
     return null;
   }
-
   return score >= 10 ? score.toFixed(0) : score.toFixed(1);
 }
 
@@ -64,7 +70,6 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
       setShowSlowWarning(false);
       return;
     }
-
     const timer = setTimeout(() => setShowSlowWarning(true), 3000);
     return () => clearTimeout(timer);
   }, [schedule.isLoading]);
@@ -99,7 +104,6 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
   function handleSavePick(prediction: PredictionRow, sourceContext: string) {
     const input = createPickInput(prediction, sourceContext);
     const alreadySaved = isSaved(input);
-
     savePick(input);
     setActionMessage(alreadySaved
       ? 'This pick is already in your local ledger.'
@@ -135,11 +139,14 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
   const topPickInput = topPick ? createPickInput(topPick, 'Analyze top pick') : null;
   const topPickSaved = topPickInput ? isSaved(topPickInput) : false;
 
+  // Max score for allocation bar scale
+  const maxScore = top3 ? Math.max(...top3.map(p => p.confidenceScore), 1) : 100;
+
   return (
     <Screen
       eyebrow="Florida Forecasting"
       title="Analyze"
-      subtitle="A daily decision dashboard for live draw context, model output, and saved ticket prep."
+      subtitle="Live draw context, model output, and signal summary."
     >
       <ScrollView
         horizontal
@@ -147,11 +154,12 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
         style={styles.selectorRow}
         contentContainerStyle={styles.selectorContent}
       >
-        {ACTIVE_GAMES.map(gt => (
-          <Chip
+        {ACTIVE_GAMES.map((gt, index) => (
+          <InstrumentTab
             key={gt}
             label={FLORIDA_GAMES[gt].name}
             selected={selectedGame === gt}
+            isLast={index === ACTIVE_GAMES.length - 1}
             onPress={() => {
               setSelectedGame(gt);
               setActionMessage(null);
@@ -162,13 +170,10 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
       </ScrollView>
 
       {storageError ? (
-        <StateBlock
-          tone="warning"
-          title="Local ledger warning"
-          body={storageError}
-        />
+        <StateBlock tone="warning" title="Local ledger warning" body={storageError} />
       ) : null}
 
+      {/* Next Draw */}
       <Card>
         <SectionHeader
           eyebrow="Live schedule"
@@ -178,82 +183,82 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
         />
 
         {schedule.isLoading ? (
-          <StateBlock
-            loading
-            tone="accent"
-            title={showSlowWarning ? 'Connecting to server' : 'Loading schedule'}
-            body="Retrieving the latest draw window."
-          />
+          <View style={{ gap: ui.spacing.md }}>
+            <SkeletonCard />
+          </View>
         ) : schedule.isError ? (
           <StateBlock
             tone="danger"
             title="Schedule unavailable"
-            body="Could not load the draw schedule. Check your connection and try again."
+            body={showSlowWarning ? 'Server connection is slow. Check your network.' : 'Could not load the draw schedule.'}
           />
         ) : (
           <>
             <View style={styles.countdownPanel}>
-              <Text style={styles.countdownLabel}>Countdown</Text>
+              <Text style={styles.countdownLabel}>Time to draw</Text>
               <Text style={styles.countdown}>{schedule.data?.countdown ?? 'Pending'}</Text>
             </View>
             <MetricRow label="Game" value={schedule.data?.gameName ?? selectedGameName} />
-            <MetricRow label="Saved locally" value={`${savedPicks.length} pick${savedPicks.length === 1 ? '' : 's'}`} />
+            <MetricRow label="Saved locally" value={`${savedPicks.length}`} />
           </>
         )}
       </Card>
 
+      {/* Signal Summary */}
       <Card>
         <SectionHeader
           eyebrow="Current signal"
           title="Signal Summary"
-          caption="Computed locally from the latest generated model output."
+          caption="Computed from the latest model output."
           right={<StatusPill label={topPick ? 'Current' : 'Awaiting'} tone={topPick ? 'accent' : 'neutral'} />}
         />
 
         {topPick ? (
           <>
             <View style={styles.signalHero}>
+              <View style={styles.signalDot} />
               <View style={styles.signalText}>
-                <Text style={styles.signalLabel}>Top-ranked pick</Text>
+                <Text style={styles.signalLabel}>Top-ranked signal</Text>
                 <Text style={styles.signalModel}>{topPick.modelName}</Text>
               </View>
               {signals.topScoreLabel ? (
-                <StatusPill label={`Score ${signals.topScoreLabel}`} tone="accent" />
+                <Text style={styles.signalScore}>{signals.topScoreLabel}</Text>
               ) : null}
             </View>
 
+            <TerminalLabel>Main numbers</TerminalLabel>
             <View style={styles.numberRow}>
               {topPick.mainNumbers.map(number => (
-                <NumberChip key={`signal-main-${number}`} value={number} />
+                <NumberChip key={`signal-main-${number}`} value={number} large />
               ))}
             </View>
 
             {topPick.specialNumbers.length > 0 ? (
-              <View style={styles.specialRow}>
-                <Text style={styles.specialLabel}>Special</Text>
+              <>
+                <TerminalLabel style={{ marginTop: ui.spacing.md }}>Special</TerminalLabel>
                 <View style={styles.numberRowCompact}>
                   {topPick.specialNumbers.map(number => (
                     <NumberChip key={`signal-special-${number}`} value={number} muted />
                   ))}
                 </View>
-              </View>
+              </>
             ) : null}
 
-            <MetricRow label="Lead over next model" value={signals.leadLabel} />
-            <MetricRow label="Consensus read" value={signals.consensusLabel} />
+            <MetricRow label="Lead over #2" value={signals.leadLabel} />
+            <MetricRow label="Consensus" value={signals.consensusLabel} />
 
             {signals.repeatedMainNumbers.length > 0 ? (
-              <View style={styles.repeatedBlock}>
-                <Text style={styles.repeatedLabel}>Repeated across top 3</Text>
+              <>
+                <TerminalLabel style={{ marginTop: ui.spacing.md }}>Repeated across top 3</TerminalLabel>
                 <View style={styles.repeatedRow}>
                   {signals.repeatedMainNumbers.slice(0, 5).map(item => (
                     <View key={`repeat-${item.number}`} style={styles.repeatedItem}>
                       <NumberChip value={item.number} />
-                      <Text style={styles.repeatedCount}>{item.count}x</Text>
+                      <Text style={styles.repeatedCount}>{item.count}×</Text>
                     </View>
                   ))}
                 </View>
-              </View>
+              </>
             ) : null}
 
             {signals.repeatedSpecialNumbers.length > 0 ? (
@@ -261,24 +266,26 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
                 label="Special repeat"
                 value={signals.repeatedSpecialNumbers
                   .slice(0, 3)
-                  .map(item => `${item.number} (${item.count}x)`)
+                  .map(item => `${item.number} (${item.count}×)`)
                   .join(', ')}
               />
             ) : null}
           </>
         ) : (
-          <StateBlock
-            title="Generate to reveal the current signal"
-            body="The summary will highlight the top-ranked pick, model lead, and repeated numbers using only the returned model output."
+          <EmptyState
+            icon="pulse-outline"
+            headline="No signal data"
+            description="Generate model output to reveal the top-ranked pick, lead, and repeated numbers."
           />
         )}
       </Card>
 
+      {/* Top Predictions */}
       <Card>
         <SectionHeader
           eyebrow="Model output"
           title="Top Predictions"
-          caption="Ranked from the current server response."
+          caption="Ranked by confidence score."
           right={
             generate.data ? (
               <StatusPill label={generate.data.weightsUsed ? 'Weighted' : 'Generated'} tone="accent" />
@@ -309,28 +316,37 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
         ) : null}
 
         {!generate.isPending && !generate.isError && !top3 ? (
-          <StateBlock
-            title="No analysis run yet"
-            body="Generate model picks for the selected game to review the top-ranked outputs."
+          <EmptyState
+            icon="bar-chart-outline"
+            headline="No analysis run yet"
+            description="Select a game and generate picks to review model outputs."
           />
         ) : null}
 
-        {top3 ? (
+        {generate.isPending ? (
+          <View style={{ gap: ui.spacing.md, marginTop: ui.spacing.sm }}>
+            <SkeletonCard />
+            <SkeletonCard />
+          </View>
+        ) : null}
+
+        {top3 && !generate.isPending ? (
           <>
+            <TerminalLabel>Ranked signals</TerminalLabel>
             <View style={styles.predictionList}>
               {top3.map((pred, index) => {
-                const score = formatScore(pred.confidenceScore);
                 const input = createPickInput(pred, `Analyze rank ${index + 1}`);
                 const saved = isSaved(input);
+                const dotColor = RANK_COLORS[index] ?? ui.colors.textMuted;
 
                 return (
                   <View key={`${pred.modelName}-${index}`} style={styles.predictionRow}>
                     <View style={styles.predictionHeader}>
                       <View style={styles.modelTitleGroup}>
+                        <View style={[styles.modelDot, { backgroundColor: dotColor }]} />
                         <Text style={styles.rank}>#{index + 1}</Text>
                         <Text style={styles.modelName}>{pred.modelName}</Text>
                       </View>
-                      {score ? <StatusPill label={`Score ${score}`} tone="neutral" /> : null}
                     </View>
 
                     <View style={styles.numberRow}>
@@ -349,6 +365,12 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
                         </View>
                       </View>
                     ) : null}
+
+                    <AllocationBar
+                      score={pred.confidenceScore}
+                      maxScore={maxScore}
+                      label="Confidence"
+                    />
 
                     <View style={styles.rowActions}>
                       <PrimaryButton
@@ -372,11 +394,7 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
             </View>
 
             <View style={styles.actionPanel}>
-              <SectionHeader
-                eyebrow="Ticket prep"
-                title="Next action"
-                caption="Save selected model output into your private local ledger, then check outcomes in Track."
-              />
+              <TerminalLabel>Ticket prep</TerminalLabel>
               <View style={styles.actionRow}>
                 <PrimaryButton
                   label={topPickSaved ? 'Top Pick Saved' : 'Save Top Pick'}
@@ -406,7 +424,7 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
                 <StateBlock title={actionMessage} tone={topPickSaved ? 'success' : 'neutral'} />
               ) : (
                 <Text style={styles.localNote}>
-                  Saved picks persist locally on this device. Result checks compare against fetched draw records when available.
+                  Picks persist locally. Results are checked against fetched draw records.
                 </Text>
               )}
             </View>
@@ -419,68 +437,89 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
 
 const styles = StyleSheet.create({
   selectorRow: {
+    borderBottomWidth: 1,
+    borderBottomColor: ui.colors.border,
+    marginBottom: ui.spacing.lg,
     marginHorizontal: -ui.spacing.lg,
   },
-  selectorContent: {
-    gap: ui.spacing.sm,
-    paddingHorizontal: ui.spacing.lg,
-  },
+  selectorContent: {},
+
+  // Countdown — monospace + cyan, terminal data style
   countdownPanel: {
-    backgroundColor: ui.colors.backgroundRaised,
-    borderColor: ui.colors.borderMuted,
+    backgroundColor: ui.colors.surfaceRaised,
+    borderColor: ui.colors.border,
     borderRadius: ui.radii.md,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: 1,
     padding: ui.spacing.lg,
   },
   countdownLabel: {
-    color: ui.colors.textSubtle,
-    fontSize: 12,
-    fontWeight: '800',
+    fontSize: 10,
+    letterSpacing: 1.5,
+    fontWeight: '700',
     textTransform: 'uppercase',
+    color: ui.colors.textSubtle,
     marginBottom: ui.spacing.xs,
   },
   countdown: {
-    color: ui.colors.text,
-    fontSize: 34,
+    color: ui.colors.accent,
+    fontSize: 36,
     fontWeight: '900',
+    fontFamily: 'monospace',
+    letterSpacing: -0.5,
   },
+
+  // Signal hero
   signalHero: {
-    alignItems: 'flex-start',
-    backgroundColor: ui.colors.backgroundRaised,
-    borderColor: ui.colors.borderMuted,
-    borderRadius: ui.radii.md,
-    borderWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: ui.colors.surfaceRaised,
+    borderColor: ui.colors.border,
+    borderRadius: ui.radii.md,
+    borderWidth: 1,
     gap: ui.spacing.md,
-    justifyContent: 'space-between',
     marginBottom: ui.spacing.md,
     padding: ui.spacing.lg,
+  },
+  signalDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: ui.colors.success,
   },
   signalText: {
     flex: 1,
   },
   signalLabel: {
-    color: ui.colors.textSubtle,
-    fontSize: 12,
-    fontWeight: '800',
-    marginBottom: ui.spacing.xs,
+    fontSize: 10,
+    letterSpacing: 1.2,
+    fontWeight: '700',
     textTransform: 'uppercase',
+    color: ui.colors.textSubtle,
+    marginBottom: ui.spacing.xs,
   },
   signalModel: {
     color: ui.colors.text,
-    fontSize: 18,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  signalScore: {
+    color: ui.colors.accent,
+    fontSize: 22,
+    fontFamily: 'monospace',
     fontWeight: '900',
   },
+
   generateButton: {
     marginBottom: ui.spacing.lg,
   },
+
   predictionList: {
-    gap: ui.spacing.md,
+    gap: ui.spacing.lg,
   },
   predictionRow: {
-    borderTopColor: ui.colors.borderMuted,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingTop: ui.spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: ui.colors.border,
+    paddingTop: ui.spacing.lg,
   },
   predictionHeader: {
     alignItems: 'center',
@@ -495,16 +534,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: ui.spacing.sm,
   },
+  modelDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
   rank: {
-    color: ui.colors.accentStrong,
-    fontSize: 12,
-    fontWeight: '900',
+    color: ui.colors.textMuted,
+    fontSize: 11,
+    fontFamily: 'monospace',
+    fontWeight: '700',
   },
   modelName: {
     color: ui.colors.text,
     flex: 1,
-    fontSize: 14,
-    fontWeight: '800',
+    fontSize: 13,
+    fontWeight: '700',
   },
   numberRow: {
     flexDirection: 'row',
@@ -523,23 +568,11 @@ const styles = StyleSheet.create({
     marginTop: ui.spacing.md,
   },
   specialLabel: {
-    color: ui.colors.textSubtle,
-    fontSize: 12,
-    fontWeight: '800',
+    fontSize: 10,
+    letterSpacing: 1.2,
+    fontWeight: '700',
     textTransform: 'uppercase',
-  },
-  repeatedBlock: {
-    borderTopColor: ui.colors.borderMuted,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    marginTop: ui.spacing.md,
-    paddingTop: ui.spacing.md,
-  },
-  repeatedLabel: {
     color: ui.colors.textSubtle,
-    fontSize: 12,
-    fontWeight: '800',
-    marginBottom: ui.spacing.sm,
-    textTransform: 'uppercase',
   },
   repeatedRow: {
     flexDirection: 'row',
@@ -553,8 +586,9 @@ const styles = StyleSheet.create({
   },
   repeatedCount: {
     color: ui.colors.textMuted,
-    fontSize: 12,
-    fontWeight: '800',
+    fontSize: 11,
+    fontFamily: 'monospace',
+    fontWeight: '700',
   },
   rowActions: {
     flexDirection: 'row',
@@ -565,8 +599,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   actionPanel: {
-    borderTopColor: ui.colors.borderMuted,
-    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopWidth: 1,
+    borderTopColor: ui.colors.border,
     marginTop: ui.spacing.lg,
     paddingTop: ui.spacing.lg,
   },
@@ -580,7 +614,7 @@ const styles = StyleSheet.create({
   },
   localNote: {
     color: ui.colors.textSubtle,
-    fontSize: 12,
-    lineHeight: 17,
+    fontSize: 11,
+    lineHeight: 16,
   },
 });
