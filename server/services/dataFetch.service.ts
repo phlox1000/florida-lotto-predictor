@@ -187,3 +187,77 @@ export async function fetchHistoryForGame(gameType: string, drawCount: number) {
     return { success: false, insertedCount: 0, skippedCount: 0, totalFound: 0 };
   }
 }
+
+/**
+ * Fetch and insert one chunk of historical draws, designed to stay under
+ * Render's 30-second request timeout. Each call:
+ *   1. Scrapes the full history from FL Lottery (one HTTP fetch)
+ *   2. Slices [offset .. offset+batchSize]
+ *   3. Inserts only that slice
+ *   4. Returns pagination cursors so the client can loop until hasMore===false
+ *
+ * A 25-second guard (5s under Render's hard limit) wraps the scrape so a
+ * slow upstream response returns hasMore:true at the same offset instead of
+ * crashing — the client will retry from where it left off.
+ */
+export async function fetchHistoryChunk(
+  gameType: string,
+  offset: number,
+  batchSize: number,
+): Promise<{
+  fetched: number;
+  inserted: number;
+  hasMore: boolean;
+  nextOffset: number;
+  totalAvailable: number;
+}> {
+  const TIMEOUT_MS = 25_000;
+
+  const work = async () => {
+    // Fetch the full parsed list (maxDraws=0 means all), then slice client-side.
+    // The HTML file is downloaded once per request; slicing is free in memory.
+    const draws = await fetchHistoricalDraws(gameType as GameType, 0);
+    const chunk = draws.slice(offset, offset + batchSize);
+
+    let inserted = 0;
+    for (const draw of chunk) {
+      try {
+        await insertDrawResult({
+          gameType,
+          drawDate: new Date(draw.drawDate).getTime(),
+          mainNumbers: draw.mainNumbers,
+          specialNumbers: draw.specialNumbers,
+          drawTime: draw.drawTime,
+          source: "lotteryusa.com",
+        });
+        inserted++;
+      } catch (_e) {
+        // duplicate — skip silently
+      }
+    }
+
+    const nextOffset = offset + batchSize;
+    return {
+      fetched: chunk.length,
+      inserted,
+      hasMore: nextOffset < draws.length,
+      nextOffset,
+      totalAvailable: draws.length,
+    };
+  };
+
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error("chunk-timeout")), TIMEOUT_MS),
+  );
+
+  try {
+    return await Promise.race([work(), timeoutPromise]);
+  } catch (e) {
+    if (e instanceof Error && e.message === "chunk-timeout") {
+      console.warn(`[DataFetch] fetchHistoryChunk timed out at offset=${offset}, will retry`);
+      // Return a safe partial result — client retries from the same offset.
+      return { fetched: 0, inserted: 0, hasMore: true, nextOffset: offset, totalAvailable: 0 };
+    }
+    throw e;
+  }
+}
