@@ -3,6 +3,7 @@ import { publicProcedure, adminProcedure, router } from "../_core/trpc";
 import { getDrawResults, getLatestDrawResults, getAllDrawResults } from "../db";
 import { gameTypeSchema } from "./routerUtils";
 import { addManualDraw } from "../services/draws.service";
+import { emitDrawResultEntered } from "../services/eventService";
 
 export const drawsRouter = router({
   /** Get latest draw results across all games */
@@ -35,13 +36,24 @@ export const drawsRouter = router({
       specialNumbers: z.array(z.number()).optional(),
       drawTime: z.string().optional(),
     }))
-    .mutation(async ({ input }) => {
-      return addManualDraw({
+    .mutation(async ({ input, ctx }) => {
+      const result = await addManualDraw({
         gameType: input.gameType,
         drawDate: input.drawDate,
         mainNumbers: input.mainNumbers,
         specialNumbers: input.specialNumbers || [],
         drawTime: input.drawTime,
       });
+      const drawDateStr = new Date(input.drawDate).toISOString().split("T")[0];
+      emitDrawResultEntered({
+        userId: ctx.user.id,
+        game: input.gameType,
+        drawDate: drawDateStr,
+        winningNumbers: input.mainNumbers,
+        occurredAt: new Date(),
+        platformVersion: "1.0.0",
+        schemaVersion: "1.0",
+      }).catch(err => console.error("[event]", err));
+      return result;
     }),
 });

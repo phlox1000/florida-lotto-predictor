@@ -29,8 +29,9 @@ async function insertAndEvaluateDraw(
 
   const drawId = (insertResult as any)?.[0]?.insertId ?? 0;
   if (drawId) {
+    const drawDateStr = new Date(draw.drawDate).toISOString().split("T")[0];
     const evalResult = await evaluatePredictionsAgainstDraw(
-      drawId, gameType, draw.mainNumbers, draw.specialNumbers,
+      drawId, gameType, draw.mainNumbers, draw.specialNumbers, drawDateStr,
     );
     if (evalResult.highAccuracy > 3) {
       await notifyOwner({
