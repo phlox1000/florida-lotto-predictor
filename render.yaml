@@ -84,9 +84,18 @@ services:
         sync: false
       - key: OWNER_OPEN_ID
         sync: false
+      # LLM / Forge gateway (preferred). Values set in the Render dashboard.
+      - key: FORGE_API_URL
+        sync: false
+      - key: FORGE_API_KEY
+        sync: false
+      # Legacy aliases (still read by the server; migrate to FORGE_API_* when convenient).
       - key: BUILT_IN_FORGE_API_URL
         sync: false
       - key: BUILT_IN_FORGE_API_KEY
+        sync: false
+      # OpenAI-style key alias (optional; only used as a key fallback, same as FORGE_API_KEY).
+      - key: OPENAI_API_KEY
         sync: false
 
       # Optional. Connection string for a Render Key Value (Redis-compatible)
@@ -132,9 +141,15 @@ services:
         sync: false
       - key: OWNER_OPEN_ID
         sync: false
+      - key: FORGE_API_URL
+        sync: false
+      - key: FORGE_API_KEY
+        sync: false
       - key: BUILT_IN_FORGE_API_URL
         sync: false
       - key: BUILT_IN_FORGE_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
         sync: false
       - key: REDIS_URL
         sync: false
