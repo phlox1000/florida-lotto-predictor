@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Text,
   View,
+  type DimensionValue,
   type StyleProp,
   type TextStyle,
   type ViewStyle,
@@ -290,7 +291,7 @@ export function AllocationBar({ score, maxScore = 100, label, showValue = true }
 
 type SkeletonBlockProps = {
   height?: number;
-  width?: string | number;
+  width?: DimensionValue;
   style?: StyleProp<ViewStyle>;
 };
 

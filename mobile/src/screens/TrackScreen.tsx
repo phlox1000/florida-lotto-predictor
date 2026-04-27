@@ -581,7 +581,6 @@ export default function TrackScreen({ navigation }: TrackScreenProps) {
               <Text style={styles.authIdentity}>
                 {auth.user?.email ?? auth.user?.name ?? 'Signed in account'}
               </Text>
-<<<<<<< release/mobile-beta-v1
               <View style={styles.roleRow}>
                 <Text style={styles.roleLabel}>Role</Text>
                 <Text style={[
@@ -591,8 +590,6 @@ export default function TrackScreen({ navigation }: TrackScreenProps) {
                   {auth.user?.role ?? 'user'}
                 </Text>
               </View>
-=======
->>>>>>> main
               <PrimaryButton
                 label="Log Out"
                 onPress={logout}
@@ -718,15 +715,11 @@ export default function TrackScreen({ navigation }: TrackScreenProps) {
           </View>
           <View style={styles.importOption}>
             <Text style={styles.importTitle}>PDF import</Text>
-<<<<<<< release/mobile-beta-v1
             <Text style={styles.importText}>
               PDF imports are handled via the web admin panel. Visit{'\n'}
               <Text style={styles.importLink}>florida-lotto-predictor.onrender.com</Text>
               {'\n'}to import draw history PDFs.
             </Text>
-=======
-            <Text style={styles.importText}>Server PDF import is admin-only and imports draw history, not mobile ticket entries.</Text>
->>>>>>> main
             <StatusPill label="Admin" tone="warning" />
           </View>
         </View>
@@ -1093,14 +1086,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     lineHeight: 17,
   },
-<<<<<<< release/mobile-beta-v1
   importLink: {
     color: ui.colors.accent,
     fontFamily: 'monospace',
     fontSize: 11,
   },
-=======
->>>>>>> main
   authPanel: {
     backgroundColor: ui.colors.backgroundRaised,
     borderColor: ui.colors.borderMuted,
@@ -1129,7 +1119,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
   },
-<<<<<<< release/mobile-beta-v1
   roleRow: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -1153,8 +1142,6 @@ const styles = StyleSheet.create({
   roleUser: {
     color: ui.colors.textMuted,
   },
-=======
->>>>>>> main
   authSubmit: {
     alignSelf: 'stretch',
   },

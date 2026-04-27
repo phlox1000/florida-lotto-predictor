@@ -1,0 +1,31 @@
+# The EXPO_TOKEN secret must be added in GitHub repo settings:
+# Settings -> Secrets and variables -> Actions -> New repository secret
+# Name: EXPO_TOKEN
+# Value: create at expo.dev -> Account Settings -> Access Tokens, then paste here.
+name: EAS Update
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "mobile/**"
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 8
+      - name: Install dependencies
+        run: pnpm install
+        working-directory: mobile
+      - name: Publish update
+        run: pnpm exec eas update --branch production --message "${{ github.event.head_commit.message }}" --non-interactive
+        working-directory: mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
