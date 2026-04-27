@@ -7,7 +7,9 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "tunnel": "expo start --tunnel"
+    "tunnel": "expo start --tunnel",
+    "update:preview": "eas update --branch preview --message",
+    "update:production": "eas update --branch production --message"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
@@ -25,6 +27,7 @@
     "expo-image-picker": "~17.0.10",
     "expo-secure-store": "~15.0.8",
     "expo-status-bar": "~3.0.9",
+    "expo-updates": "^29.0.16",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
@@ -35,6 +38,7 @@
   "devDependencies": {
     "@expo/ngrok": "^4.1.0",
     "@types/react": "~19.1.0",
+    "eas-cli": "^16.32.0",
     "typescript": "~5.9.2"
   },
   "private": true
