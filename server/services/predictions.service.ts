@@ -1,11 +1,21 @@
 import { FLORIDA_GAMES, type GameType } from "@shared/lottery";
 import { runAllModels, applySumRangeFilter } from "../predictions";
-import { getDrawResults, insertPredictions, getModelWeights } from "../db";
+import {
+  getDrawResults,
+  insertPredictions,
+  getModelWeights,
+  getRecentPredictionLearningEvents,
+} from "../db";
+import {
+  deriveLearningFactorWeights,
+  scorePredictionsExplainably,
+} from "./predictionIntelligence.service";
 
 export async function generatePredictions(
   gameType: GameType,
   sumRangeFilter: boolean,
   userId?: number,
+  correlationId?: string,
 ) {
   const cfg = FLORIDA_GAMES[gameType];
   const historyRows = await getDrawResults(gameType, 200);
@@ -15,12 +25,25 @@ export async function generatePredictions(
     drawDate: r.drawDate,
   }));
 
-  const modelWeights = await getModelWeights(gameType, userId);
+  const [modelWeights, learningEvents] = await Promise.all([
+    getModelWeights(gameType, userId),
+    getRecentPredictionLearningEvents(gameType, userId),
+  ]);
+  const learningFactorWeights = deriveLearningFactorWeights(learningEvents);
   let allPredictions = runAllModels(cfg, history, Object.keys(modelWeights).length > 0 ? modelWeights : undefined);
 
   if (sumRangeFilter) {
     allPredictions = applySumRangeFilter(allPredictions, cfg, history);
   }
+
+  allPredictions = scorePredictionsExplainably({
+    cfg,
+    history,
+    predictions: allPredictions,
+    modelWeights,
+    learningFactorWeights,
+    correlationId,
+  });
 
   if (userId) {
     try {
@@ -43,6 +66,7 @@ export async function generatePredictions(
     gameType,
     gameName: cfg.name,
     modelWeights,
+    learningFactorWeights,
     weightsUsed: Object.keys(modelWeights).length > 0,
     sumRangeFilterApplied: sumRangeFilter,
   };

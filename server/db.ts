@@ -392,6 +392,30 @@ export async function getModelWeights(gameType: string, userId?: number): Promis
   return blended;
 }
 
+/** Recent prediction accuracy events used to adapt explainable scoring factor weights. */
+export async function getRecentPredictionLearningEvents(
+  gameType: string,
+  userId?: number,
+  limit = 200,
+) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [
+    eq(appEvents.event_type, "prediction_accuracy_calculated"),
+    sql`JSON_UNQUOTE(JSON_EXTRACT(${appEvents.payload}, '$.game')) = ${gameType}`,
+  ];
+  if (userId != null) {
+    conditions.push(eq(appEvents.user_id, userId));
+  }
+
+  return db.select({ payload: appEvents.payload })
+    .from(appEvents)
+    .where(and(...conditions))
+    .orderBy(desc(appEvents.occurred_at))
+    .limit(limit);
+}
+
 /**
  * Evaluate predictions against a draw result and record performance.
  * Called after a new draw result is added.
@@ -427,6 +451,8 @@ export async function evaluatePredictionsAgainstDraw(
     matchedNumbers: number;
     totalPicks: number;
     modelScores: Record<string, number>;
+    factorSnapshot: Record<string, number>;
+    game: string;
   }> = [];
   let highAccuracy = 0;
 
@@ -462,6 +488,8 @@ export async function evaluatePredictionsAgainstDraw(
         matchedNumbers: mainHits,
         totalPicks: predMain.length,
         modelScores: { [pred.modelName]: predMain.length > 0 ? mainHits / predMain.length : 0 },
+        factorSnapshot: ((pred.metadata as Record<string, any> | null)?.explainable?.factorSnapshot ?? {}) as Record<string, number>,
+        game: gameType,
       });
     }
   }
@@ -485,6 +513,9 @@ export async function evaluatePredictionsAgainstDraw(
           ...evt,
           triggeredBy,
           netOutcome: 0,
+          factorSnapshot: evt.factorSnapshot,
+          matchRatio: evt.totalPicks > 0 ? evt.matchedNumbers / evt.totalPicks : 0,
+          game: evt.game,
           occurredAt,
           platformVersion: "1.0.0",
           schemaVersion: "1.0",
