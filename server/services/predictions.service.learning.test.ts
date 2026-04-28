@@ -38,6 +38,16 @@ describe("prediction learning integration", () => {
     expect(result.learningFactorWeights.historicalFrequency).toBeGreaterThan(1);
     expect(result.predictions.length).toBeGreaterThan(0);
     expect((result.predictions[0].metadata as any).explainable.correlationId).toBe("prediction:fantasy_5:7:111");
+    expect(result.predictions[0]).toHaveProperty("aiScore");
+    expect(result.predictions[0]).toHaveProperty("confidenceLabel");
+    expect(result.predictions[0]).toHaveProperty("explanationSummary");
+    expect(result.predictions[0]).toHaveProperty("topSupportingFactors");
+    expect(result.predictions[0]).toHaveProperty("riskLevel");
+    expect(result.predictions[0]).toHaveProperty("modelAgreement");
+    expect(result.predictions[0]).toHaveProperty("tableLearningUsed", true);
+    expect(result.predictions[0]).toHaveProperty("learningWindowLabel");
+    expect((result.predictions[0] as any).factorSnapshot).toBeUndefined();
+    expect((result.predictions[0] as any).llm).toBeUndefined();
   });
 
   it("falls back to event payload learning when table is empty", async () => {

@@ -13,6 +13,54 @@ import {
   scorePredictionsExplainably,
 } from "./predictionIntelligence.service";
 
+function buildPublicPredictionShape(
+  prediction: {
+    modelName: string;
+    mainNumbers: number[];
+    specialNumbers: number[];
+    confidenceScore: number;
+    metadata: Record<string, unknown>;
+  },
+  learning: { tableLearningUsed: boolean; learningWindowLabel: string | null },
+) {
+  const explainable = ((prediction.metadata as any)?.explainable ?? {}) as Record<string, any>;
+  const supporting = Array.isArray(explainable.supportingFactors) ? explainable.supportingFactors : [];
+  const topSupportingFactors = supporting
+    .slice()
+    .sort((a: any, b: any) => Number(b?.contribution ?? 0) - Number(a?.contribution ?? 0))
+    .slice(0, 3)
+    .map((f: any) => ({
+      key: String(f.key ?? ""),
+      note: String(f.note ?? ""),
+      contribution: Number(f.contribution ?? 0),
+    }));
+
+  return {
+    ...prediction,
+    metadata: {
+      ...(prediction.metadata || {}),
+      explainable: {
+        aiScore: Number(explainable.aiScore ?? 0),
+        confidenceLabel: String(explainable.confidenceLabel ?? "low"),
+        explanationSummary: String(explainable.explanationSummary ?? ""),
+        riskLevel: String(explainable.riskLevel ?? "high"),
+        modelAgreement: Number(explainable.modelAgreement ?? 0),
+        historicalSignals: explainable.historicalSignals ?? {},
+        generatedAt: explainable.generatedAt ?? new Date().toISOString(),
+        correlationId: explainable.correlationId ?? null,
+      },
+    } as Record<string, unknown>,
+    aiScore: Number(explainable.aiScore ?? 0),
+    confidenceLabel: String(explainable.confidenceLabel ?? "low"),
+    explanationSummary: String(explainable.explanationSummary ?? ""),
+    topSupportingFactors,
+    riskLevel: String(explainable.riskLevel ?? "high"),
+    modelAgreement: Number(explainable.modelAgreement ?? 0),
+    tableLearningUsed: learning.tableLearningUsed,
+    learningWindowLabel: learning.learningWindowLabel,
+  };
+}
+
 export async function generatePredictions(
   gameType: GameType,
   sumRangeFilter: boolean,
@@ -91,12 +139,19 @@ export async function generatePredictions(
     }
   }
 
+  const tableLearningUsed = Object.keys(tableFactorWeights).length > 0 || Object.keys(tableModelWeights).length > 0;
+  const learningWindowLabel = factorMetrics[0]?.windowLabel ?? modelMetrics[0]?.windowLabel ?? null;
+  const publicPredictions = allPredictions.map((pred) =>
+    buildPublicPredictionShape(pred as any, { tableLearningUsed, learningWindowLabel }),
+  );
+
   return {
-    predictions: allPredictions,
+    predictions: publicPredictions,
     gameType,
     gameName: cfg.name,
     modelWeights,
-    tableLearningUsed: Object.keys(tableFactorWeights).length > 0 || Object.keys(tableModelWeights).length > 0,
+    tableLearningUsed,
+    learningWindowLabel,
     learningFactorWeights,
     weightsUsed: Object.keys(modelWeights).length > 0,
     sumRangeFilterApplied: sumRangeFilter,
