@@ -59,10 +59,28 @@ describe("predictions.generate persistence", () => {
       expect(pred).toHaveProperty("mainNumbers");
       expect(pred).toHaveProperty("specialNumbers");
       expect(pred).toHaveProperty("confidenceScore");
+      expect(pred).toHaveProperty("metadata.explainable.aiScore");
+      expect(pred).toHaveProperty("metadata.explainable.confidenceLabel");
+      expect(pred).toHaveProperty("metadata.explainable.explanationSummary");
+      expect(pred).toHaveProperty("metadata.explainable.riskLevel");
+      expect(pred).toHaveProperty("metadata.explainable.historicalSignals");
+      expect(pred).toHaveProperty("metadata.explainable.generatedAt");
+      expect(pred).toHaveProperty("aiScore");
+      expect(pred).toHaveProperty("confidenceLabel");
+      expect(pred).toHaveProperty("explanationSummary");
+      expect(pred).toHaveProperty("topSupportingFactors");
+      expect(pred).toHaveProperty("riskLevel");
+      expect(pred).toHaveProperty("modelAgreement");
+      expect(pred).toHaveProperty("tableLearningUsed");
+      expect(pred).toHaveProperty("learningWindowLabel");
       expect(typeof pred.modelName).toBe("string");
       expect(Array.isArray(pred.mainNumbers)).toBe(true);
       expect(Array.isArray(pred.specialNumbers)).toBe(true);
       expect(typeof pred.confidenceScore).toBe("number");
+      expect((pred.metadata as any).explainable.aiScore).toBeGreaterThanOrEqual(0);
+      expect((pred.metadata as any).explainable.aiScore).toBeLessThanOrEqual(100);
+      expect((pred as any).factorSnapshot).toBeUndefined();
+      expect((pred as any).llm).toBeUndefined();
     }
   });
 
