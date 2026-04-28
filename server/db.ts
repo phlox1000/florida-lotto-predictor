@@ -559,6 +559,7 @@ export async function rebuildPredictionLearningMetricsFromEvents(input?: {
   return { updated: upserts.length, factors: factorAgg.size, models: modelAgg.size };
 }
 
+
 /**
  * Evaluate predictions against a draw result and record performance.
  * Called after a new draw result is added.
