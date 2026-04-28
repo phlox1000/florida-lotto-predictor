@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { publicProcedure, protectedProcedure, router } from "../_core/trpc";
 import { getModelPerformanceStats, getModelWeights } from "../db";
 import { gameTypeSchema } from "./routerUtils";
@@ -26,6 +27,9 @@ export const performanceRouter = router({
       windowDays: z.number().min(7).max(365).default(90),
     }))
     .query(async ({ input, ctx }) => {
+      if (ctx.user.role !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required for learning diagnostics." });
+      }
       return getLearningStatusByGame(input.gameType, ctx.user.id, input.windowDays);
     }),
 
@@ -37,6 +41,9 @@ export const performanceRouter = router({
       windowDays: z.number().min(7).max(365).default(90),
     }))
     .query(async ({ input, ctx }) => {
+      if (ctx.user.role !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required for learning diagnostics." });
+      }
       return runLearningBacktestComparison({
         gameType: input.gameType,
         lookbackDraws: input.lookbackDraws,
