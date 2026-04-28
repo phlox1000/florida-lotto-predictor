@@ -385,3 +385,20 @@ export function deriveLearningFactorWeights(events: Array<{ payload: unknown }>)
   }
   return learned;
 }
+
+export function deriveLearningWeightsFromMetrics(
+  metrics: Array<{
+    metricName: string;
+    sampleCount: number;
+    weightedScore: number;
+  }>,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const row of metrics) {
+    const sampleDamp = clamp((row.sampleCount || 0) / 40, 0, 1);
+    const centered = (row.weightedScore || 0) - 0.5;
+    const shift = centered * 0.35 * sampleDamp;
+    out[row.metricName] = clamp(1 + shift, 0.85, 1.15);
+  }
+  return out;
+}

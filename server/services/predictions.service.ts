@@ -5,9 +5,11 @@ import {
   insertPredictions,
   getModelWeights,
   getRecentPredictionLearningEvents,
+  getPredictionLearningMetrics,
 } from "../db";
 import {
   deriveLearningFactorWeights,
+  deriveLearningWeightsFromMetrics,
   scorePredictionsExplainably,
 } from "./predictionIntelligence.service";
 
@@ -25,12 +27,40 @@ export async function generatePredictions(
     drawDate: r.drawDate,
   }));
 
-  const [modelWeights, learningEvents] = await Promise.all([
+  const [modelWeights, learningEvents, factorMetrics, modelMetrics] = await Promise.all([
     getModelWeights(gameType, userId),
     getRecentPredictionLearningEvents(gameType, userId),
+    getPredictionLearningMetrics(gameType, "factor"),
+    getPredictionLearningMetrics(gameType, "model"),
   ]);
-  const learningFactorWeights = deriveLearningFactorWeights(learningEvents);
-  let allPredictions = runAllModels(cfg, history, Object.keys(modelWeights).length > 0 ? modelWeights : undefined);
+  const tableFactorWeights = deriveLearningWeightsFromMetrics(
+    factorMetrics.map(m => ({
+      metricName: m.metricName,
+      sampleCount: m.sampleCount ?? 0,
+      weightedScore: m.weightedScore ?? 0,
+    })),
+  );
+  const learningFactorWeights = Object.keys(tableFactorWeights).length > 0
+    ? tableFactorWeights
+    : deriveLearningFactorWeights(learningEvents);
+
+  const tableModelWeights = deriveLearningWeightsFromMetrics(
+    modelMetrics.map(m => ({
+      metricName: m.metricName,
+      sampleCount: m.sampleCount ?? 0,
+      weightedScore: m.weightedScore ?? 0,
+    })),
+  );
+
+  const effectiveModelWeights = Object.keys(tableModelWeights).length > 0
+    ? Object.fromEntries(Object.entries(modelWeights).map(([k, v]) => [k, v * (tableModelWeights[k] ?? 1)]))
+    : modelWeights;
+
+  let allPredictions = runAllModels(
+    cfg,
+    history,
+    Object.keys(effectiveModelWeights).length > 0 ? effectiveModelWeights : undefined,
+  );
 
   if (sumRangeFilter) {
     allPredictions = applySumRangeFilter(allPredictions, cfg, history);
@@ -66,6 +96,7 @@ export async function generatePredictions(
     gameType,
     gameName: cfg.name,
     modelWeights,
+    tableLearningUsed: Object.keys(tableFactorWeights).length > 0 || Object.keys(tableModelWeights).length > 0,
     learningFactorWeights,
     weightsUsed: Object.keys(modelWeights).length > 0,
     sumRangeFilterApplied: sumRangeFilter,
