@@ -93,6 +93,9 @@ export async function emitPredictionAccuracyCalculated(input: {
   totalPicks: number;
   netOutcome: number;
   modelScores: Record<string, number>;
+  factorSnapshot?: Record<string, number>;
+  matchRatio?: number;
+  game?: string;
   occurredAt: Date;
   platformVersion: string;
   schemaVersion: string;
@@ -115,6 +118,11 @@ export async function emitPredictionAccuracyCalculated(input: {
         net_outcome: input.netOutcome,
         model_scores: input.modelScores,
         triggered_by: input.triggeredBy,
+        factor_snapshot: input.factorSnapshot ?? {},
+        match_ratio: typeof input.matchRatio === "number"
+          ? input.matchRatio
+          : (input.totalPicks > 0 ? input.matchedNumbers / input.totalPicks : 0),
+        game: input.game ?? null,
       },
     };
 

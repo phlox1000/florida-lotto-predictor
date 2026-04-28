@@ -11,11 +11,16 @@ export const predictionsRouter = router({
   generate: publicProcedure
     .input(z.object({ gameType: gameTypeSchema, sumRangeFilter: z.boolean().default(false) }))
     .mutation(async ({ input, ctx }) => {
-      const result = await generatePredictions(input.gameType, input.sumRangeFilter, ctx.user?.id);
       const ts = Date.now();
       const correlationId = ctx.user?.id
         ? buildPredictionCorrelationId(ctx.user.id, input.gameType, ts)
         : null;
+      const result = await generatePredictions(
+        input.gameType,
+        input.sumRangeFilter,
+        ctx.user?.id,
+        correlationId ?? undefined,
+      );
       if (ctx.user?.id && correlationId) {
         emitPredictionGenerated({
           userId: ctx.user.id,
