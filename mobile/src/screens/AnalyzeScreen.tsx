@@ -66,6 +66,7 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
   const [expandedModelId, setExpandedModelId] = useState<string | null>(null);
   const [showAllModels, setShowAllModels] = useState(false);
   const extraFadeAnim = useRef(new Animated.Value(0)).current;
+  const featuredFadeAnim = useRef(new Animated.Value(0)).current;
 
   const selectedGameName = FLORIDA_GAMES[selectedGame].name;
   const { isSaved, savePick, savedPicks, storageError } = useSavedPicks();
@@ -96,15 +97,22 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
     setExpandedModelId(null);
     setShowAllModels(false);
     extraFadeAnim.setValue(0);
-  }, [selectedGame, extraFadeAnim]);
+    featuredFadeAnim.setValue(0);
+  }, [selectedGame, extraFadeAnim, featuredFadeAnim]);
 
   useEffect(() => {
     if (generate.isSuccess) {
       setExpandedModelId(null);
       setShowAllModels(false);
       extraFadeAnim.setValue(0);
+      featuredFadeAnim.setValue(0);
+      Animated.timing(featuredFadeAnim, {
+        toValue: 1,
+        duration: 220,
+        useNativeDriver: true,
+      }).start();
     }
-  }, [generate.isSuccess, extraFadeAnim]);
+  }, [generate.isSuccess, extraFadeAnim, featuredFadeAnim]);
 
   const toggleShowAll = useCallback(() => {
     if (!showAllModels) {
@@ -408,7 +416,8 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
         ) : null}
 
         {generate.isPending ? (
-          <View style={{ gap: ui.spacing.md, marginTop: ui.spacing.sm }}>
+          <View style={styles.loadingStack}>
+            <Text style={styles.loadingLabel}>Refreshing model outputs…</Text>
             <SkeletonCard />
             <SkeletonCard />
             <SkeletonCard />
@@ -418,7 +427,7 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
         {top3 && !generate.isPending ? (
           <>
             {featuredPick ? (
-              <View style={styles.featuredCard}>
+              <Animated.View style={[styles.featuredCard, { opacity: featuredFadeAnim }]}>
                 <View style={styles.featuredHeader}>
                   <Text style={styles.featuredEyebrow}>Featured pick</Text>
                   <StatusPill label={typeof featuredPick.aiScore === 'number' ? `AI ${featuredPick.aiScore}` : 'Top-ranked'} tone="success" />
@@ -444,7 +453,7 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
                 <Text style={styles.featuredDisclaimer}>
                   Lottery outcomes are random. Signals are informational only and do not guarantee results.
                 </Text>
-              </View>
+              </Animated.View>
             ) : null}
 
             <TerminalLabel>Ranked signals</TerminalLabel>
@@ -480,7 +489,10 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
                         tone={typeof pred.aiScore === 'number' ? 'accent' : 'neutral'}
                       />
                       <StatusPill label={`Confidence ${pred.confidenceLabel ?? 'Pending'}`} tone="neutral" />
+                    </View>
+                    <View style={styles.trustRow}>
                       <StatusPill label={`Risk ${pred.riskLevel ?? 'Pending'}`} tone="warning" />
+                      <StatusPill label={pred.tableLearningUsed ? 'Learning table active' : 'Event fallback active'} tone="neutral" />
                     </View>
                     <MetricRow
                       label="Model agreement"
@@ -692,10 +704,14 @@ const styles = StyleSheet.create({
     backgroundColor: ui.colors.surfaceRaised,
     borderColor: ui.colors.success,
     borderWidth: 1,
-    borderRadius: ui.radii.md,
+    borderRadius: ui.radii.lg,
     padding: ui.spacing.lg,
-    marginBottom: ui.spacing.lg,
-    gap: ui.spacing.sm,
+    marginBottom: ui.spacing.xl,
+    gap: ui.spacing.md,
+    shadowColor: ui.colors.success,
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
   },
   featuredHeader: {
     flexDirection: 'row',
@@ -711,7 +727,7 @@ const styles = StyleSheet.create({
   },
   featuredModel: {
     color: ui.colors.text,
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '800',
   },
   featuredReason: {
@@ -768,9 +784,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: ui.radii.md,
     padding: ui.spacing.md,
-    marginTop: -ui.spacing.sm,
-    marginBottom: ui.spacing.md,
-    gap: ui.spacing.sm,
+    marginTop: -ui.spacing.xs,
+    marginBottom: ui.spacing.lg,
+    gap: ui.spacing.md,
   },
   trustRow: {
     flexDirection: 'row',
@@ -790,7 +806,8 @@ const styles = StyleSheet.create({
   factorRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: ui.spacing.xs,
+    gap: ui.spacing.sm,
+    marginTop: ui.spacing.xs,
   },
   factorItem: {
     color: ui.colors.accent,
@@ -819,7 +836,7 @@ const styles = StyleSheet.create({
   },
   actionRow: {
     flexDirection: 'row',
-    gap: ui.spacing.sm,
+    gap: ui.spacing.md,
     marginBottom: ui.spacing.md,
   },
   actionButton: {
@@ -829,5 +846,16 @@ const styles = StyleSheet.create({
     color: ui.colors.textSubtle,
     fontSize: 11,
     lineHeight: 16,
+  },
+  loadingStack: {
+    gap: ui.spacing.md,
+    marginTop: ui.spacing.sm,
+  },
+  loadingLabel: {
+    color: ui.colors.textSubtle,
+    fontSize: 11,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    fontWeight: '700',
   },
 });
