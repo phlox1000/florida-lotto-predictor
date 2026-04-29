@@ -66,7 +66,7 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
   const [expandedModelId, setExpandedModelId] = useState<string | null>(null);
   const [showAllModels, setShowAllModels] = useState(false);
   const extraFadeAnim = useRef(new Animated.Value(0)).current;
-  const featuredFadeAnim = useRef(new Animated.Value(0)).current;
+  const rankedFadeAnim = useRef(new Animated.Value(0)).current;
 
   const selectedGameName = FLORIDA_GAMES[selectedGame].name;
   const { isSaved, savePick, savedPicks, storageError } = useSavedPicks();
@@ -97,22 +97,18 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
     setExpandedModelId(null);
     setShowAllModels(false);
     extraFadeAnim.setValue(0);
-    featuredFadeAnim.setValue(0);
-  }, [selectedGame, extraFadeAnim, featuredFadeAnim]);
+    rankedFadeAnim.setValue(0);
+  }, [selectedGame, extraFadeAnim, rankedFadeAnim]);
 
   useEffect(() => {
     if (generate.isSuccess) {
       setExpandedModelId(null);
       setShowAllModels(false);
       extraFadeAnim.setValue(0);
-      featuredFadeAnim.setValue(0);
-      Animated.timing(featuredFadeAnim, {
-        toValue: 1,
-        duration: 220,
-        useNativeDriver: true,
-      }).start();
+      rankedFadeAnim.setValue(0);
+      Animated.timing(rankedFadeAnim, { toValue: 1, duration: 220, useNativeDriver: true }).start();
     }
-  }, [generate.isSuccess, extraFadeAnim, featuredFadeAnim]);
+  }, [generate.isSuccess, extraFadeAnim, rankedFadeAnim]);
 
   const toggleShowAll = useCallback(() => {
     if (!showAllModels) {
@@ -426,37 +422,10 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
 
         {top3 && !generate.isPending ? (
           <>
-            {featuredPick ? (
-              <Animated.View style={[styles.featuredCard, { opacity: featuredFadeAnim }]}>
-                <View style={styles.featuredHeader}>
-                  <Text style={styles.featuredEyebrow}>Featured pick</Text>
-                  <StatusPill label={typeof featuredPick.aiScore === 'number' ? `AI ${featuredPick.aiScore}` : 'Top-ranked'} tone="success" />
-                </View>
-                <Text style={styles.featuredModel}>{getModelDisplayName(featuredPick.modelName)}</Text>
-                <Text style={styles.featuredReason}>
-                  {typeof featuredPick.aiScore === 'number'
-                    ? `Chosen for the highest aiScore in the current model set.`
-                    : `Chosen as the highest-ranked available model output.`}
-                </Text>
-                <View style={styles.numberRow}>
-                  {featuredPick.mainNumbers.map(number => (
-                    <NumberChip key={`featured-main-${number}`} value={number} large />
-                  ))}
-                </View>
-                {featuredPick.explanationSummary ? (
-                  <Text style={styles.featuredExplanation} numberOfLines={3}>
-                    {featuredPick.explanationSummary}
-                  </Text>
-                ) : (
-                  <Text style={styles.trustFallback}>Explanation pending from API response.</Text>
-                )}
-                <Text style={styles.featuredDisclaimer}>
-                  Lottery outcomes are random. Signals are informational only and do not guarantee results.
-                </Text>
-              </Animated.View>
-            ) : null}
-
-            <TerminalLabel>Ranked signals</TerminalLabel>
+            <Animated.View style={[styles.rankedHeaderWrap, { opacity: rankedFadeAnim }]}>
+              <TerminalLabel>Ranked signals</TerminalLabel>
+              <Text style={styles.rankedCaption}>Top 3 are shown first. Expand to review all models.</Text>
+            </Animated.View>
 
             {/* Top 3 — always visible */}
             {top3.map((pred, index) => {
@@ -464,60 +433,25 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
               const input = createPickInput(pred, `Analyze rank ${rank}`);
               const perf = perfMap.get(pred.modelName) ?? null;
               return (
-                <View key={`${pred.modelName}-${index}`}>
-                  <ModelSignalCard
-                    rank={rank}
-                    modelId={getModelDisplayName(pred.modelName)}
-                    modelDescription={getModelDescription(pred.modelName)}
-                    picks={pred.mainNumbers}
-                    specialNumbers={pred.specialNumbers.length > 0 ? pred.specialNumbers : undefined}
-                    confidenceScore={pred.confidenceScore}
-                    maxScore={maxScore}
-                    performance={perf}
-                    isSaved={isSaved(input)}
-                    isExpanded={expandedModelId === pred.modelName}
-                    onToggleExpand={() =>
-                      setExpandedModelId(prev => prev === pred.modelName ? null : pred.modelName)
-                    }
-                    onSave={() => handleSavePick(pred, `Analyze rank ${rank}`)}
-                    onShare={() => handleSharePick(pred)}
-                  />
-                  <View style={styles.trustPanel}>
-                    <View style={styles.trustRow}>
-                      <StatusPill
-                        label={typeof pred.aiScore === 'number' ? `AI ${pred.aiScore}` : 'AI score —'}
-                        tone={typeof pred.aiScore === 'number' ? 'accent' : 'neutral'}
-                      />
-                      <StatusPill label={`Confidence ${pred.confidenceLabel ?? 'Pending'}`} tone="neutral" />
-                    </View>
-                    <View style={styles.trustRow}>
-                      <StatusPill label={`Risk ${pred.riskLevel ?? 'Pending'}`} tone="warning" />
-                      <StatusPill label={pred.tableLearningUsed ? 'Learning table active' : 'Event fallback active'} tone="neutral" />
-                    </View>
-                    <MetricRow
-                      label="Model agreement"
-                      value={typeof pred.modelAgreement === 'number' ? `${(pred.modelAgreement * 100).toFixed(0)}%` : 'Pending'}
-                    />
-                    <MetricRow
-                      label="Learning window"
-                      value={pred.learningWindowLabel ?? (pred.tableLearningUsed ? 'Table-backed' : 'Event fallback')}
-                    />
-                    {pred.explanationSummary ? (
-                      <Text style={styles.trustExplanation} numberOfLines={3}>{pred.explanationSummary}</Text>
-                    ) : (
-                      <Text style={styles.trustFallback}>Explanation pending from API response.</Text>
-                    )}
-                    <View style={styles.factorRow}>
-                      {(pred.topSupportingFactors ?? []).slice(0, 3).map((factor, factorIdx) => (
-                        <Text key={`${pred.modelName}-factor-${factorIdx}`} style={styles.factorItem}>
-                          {(factor.note || factor.key || 'Signal').slice(0, 26)}
-                        </Text>
-                      ))}
-                      {(!pred.topSupportingFactors || pred.topSupportingFactors.length === 0) ? (
-                        <Text style={styles.trustFallback}>Supporting factors pending.</Text>
-                      ) : null}
-                    </View>
-                  </View>
+                <View style={styles.modelCardWrap}>
+                <ModelSignalCard
+                  key={`${pred.modelName}-${index}`}
+                  rank={rank}
+                  modelId={getModelDisplayName(pred.modelName)}
+                  modelDescription={getModelDescription(pred.modelName)}
+                  picks={pred.mainNumbers}
+                  specialNumbers={pred.specialNumbers.length > 0 ? pred.specialNumbers : undefined}
+                  confidenceScore={pred.confidenceScore}
+                  maxScore={maxScore}
+                  performance={perf}
+                  isSaved={isSaved(input)}
+                  isExpanded={expandedModelId === pred.modelName}
+                  onToggleExpand={() =>
+                    setExpandedModelId(prev => prev === pred.modelName ? null : pred.modelName)
+                  }
+                  onSave={() => handleSavePick(pred, `Analyze rank ${rank}`)}
+                  onShare={() => handleSharePick(pred)}
+                />
                 </View>
               );
             })}
@@ -532,38 +466,25 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
                       const input = createPickInput(pred, `Analyze rank ${rank}`);
                       const perf = perfMap.get(pred.modelName) ?? null;
                       return (
-                        <View key={`${pred.modelName}-${idx}`}>
-                          <ModelSignalCard
-                            rank={rank}
-                            modelId={getModelDisplayName(pred.modelName)}
-                            modelDescription={getModelDescription(pred.modelName)}
-                            picks={pred.mainNumbers}
-                            specialNumbers={pred.specialNumbers.length > 0 ? pred.specialNumbers : undefined}
-                            confidenceScore={pred.confidenceScore}
-                            maxScore={maxScore}
-                            performance={perf}
-                            isSaved={isSaved(input)}
-                            isExpanded={expandedModelId === pred.modelName}
-                            onToggleExpand={() =>
-                              setExpandedModelId(prev => prev === pred.modelName ? null : pred.modelName)
-                            }
-                            onSave={() => handleSavePick(pred, `Analyze rank ${rank}`)}
-                            onShare={() => handleSharePick(pred)}
-                          />
-                          <View style={styles.trustPanel}>
-                            <View style={styles.trustRow}>
-                              <StatusPill
-                                label={typeof pred.aiScore === 'number' ? `AI ${pred.aiScore}` : 'AI score —'}
-                                tone={typeof pred.aiScore === 'number' ? 'accent' : 'neutral'}
-                              />
-                              <StatusPill label={`Confidence ${pred.confidenceLabel ?? 'Pending'}`} tone="neutral" />
-                            </View>
-                            {pred.explanationSummary ? (
-                              <Text style={styles.trustExplanation} numberOfLines={2}>{pred.explanationSummary}</Text>
-                            ) : (
-                              <Text style={styles.trustFallback}>Explanation pending from API response.</Text>
-                            )}
-                          </View>
+                        <View style={styles.modelCardWrap}>
+                        <ModelSignalCard
+                          key={`${pred.modelName}-${idx}`}
+                          rank={rank}
+                          modelId={getModelDisplayName(pred.modelName)}
+                          modelDescription={getModelDescription(pred.modelName)}
+                          picks={pred.mainNumbers}
+                          specialNumbers={pred.specialNumbers.length > 0 ? pred.specialNumbers : undefined}
+                          confidenceScore={pred.confidenceScore}
+                          maxScore={maxScore}
+                          performance={perf}
+                          isSaved={isSaved(input)}
+                          isExpanded={expandedModelId === pred.modelName}
+                          onToggleExpand={() =>
+                            setExpandedModelId(prev => prev === pred.modelName ? null : pred.modelName)
+                          }
+                          onSave={() => handleSavePick(pred, `Analyze rank ${rank}`)}
+                          onShare={() => handleSharePick(pred)}
+                        />
                         </View>
                       );
                     })}
@@ -748,7 +669,7 @@ const styles = StyleSheet.create({
   },
 
   generateButton: {
-    marginBottom: ui.spacing.lg,
+    marginBottom: ui.spacing.xl,
   },
 
   numberRow: {
@@ -857,5 +778,17 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 1,
     fontWeight: '700',
+  },
+  rankedHeaderWrap: {
+    gap: ui.spacing.xs,
+    marginBottom: ui.spacing.sm,
+  },
+  rankedCaption: {
+    color: ui.colors.textSubtle,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  modelCardWrap: {
+    marginBottom: ui.spacing.sm,
   },
 });
