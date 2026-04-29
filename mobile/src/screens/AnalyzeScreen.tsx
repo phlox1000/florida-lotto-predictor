@@ -29,6 +29,14 @@ type PredictionRow = {
   mainNumbers: number[];
   specialNumbers: number[];
   confidenceScore: number;
+  aiScore?: number;
+  confidenceLabel?: string;
+  explanationSummary?: string;
+  topSupportingFactors?: Array<{ key?: string; note?: string; contribution?: number }>;
+  riskLevel?: string;
+  modelAgreement?: number;
+  tableLearningUsed?: boolean;
+  learningWindowLabel?: string | null;
 };
 
 type AnalyzeScreenProps = {
@@ -187,6 +195,14 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
   const topPickSaved = topPickInput ? isSaved(topPickInput) : false;
 
   const maxScore = allSorted ? Math.max(...allSorted.map(p => p.confidenceScore), 1) : 100;
+  const featuredPick = useMemo(() => {
+    if (!allSorted || allSorted.length === 0) return null;
+    const withAi = allSorted.filter(p => typeof p.aiScore === 'number' && Number.isFinite(p.aiScore));
+    if (withAi.length > 0) {
+      return withAi.slice().sort((a, b) => (b.aiScore ?? 0) - (a.aiScore ?? 0))[0] ?? allSorted[0];
+    }
+    return allSorted[0];
+  }, [allSorted]);
 
   // Build performance map keyed by modelName
   const perfMap = useMemo(() => {
@@ -605,6 +621,53 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
 
+  featuredCard: {
+    backgroundColor: ui.colors.surfaceRaised,
+    borderColor: ui.colors.success,
+    borderWidth: 1,
+    borderRadius: ui.radii.lg,
+    padding: ui.spacing.lg,
+    marginBottom: ui.spacing.xl,
+    gap: ui.spacing.md,
+    shadowColor: ui.colors.success,
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  featuredHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  featuredEyebrow: {
+    color: ui.colors.textSubtle,
+    fontSize: 11,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    fontWeight: '700',
+  },
+  featuredModel: {
+    color: ui.colors.text,
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  featuredReason: {
+    color: ui.colors.textMuted,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  featuredExplanation: {
+    color: ui.colors.text,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  featuredDisclaimer: {
+    color: ui.colors.textSubtle,
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: ui.spacing.xs,
+  },
+
   generateButton: {
     marginBottom: ui.spacing.xl,
   },
@@ -633,6 +696,50 @@ const styles = StyleSheet.create({
     color: ui.colors.textMuted,
     fontSize: 11,
     fontFamily: 'monospace',
+    fontWeight: '700',
+  },
+
+  trustPanel: {
+    backgroundColor: ui.colors.surfaceRaised,
+    borderColor: ui.colors.border,
+    borderWidth: 1,
+    borderRadius: ui.radii.md,
+    padding: ui.spacing.md,
+    marginTop: -ui.spacing.xs,
+    marginBottom: ui.spacing.lg,
+    gap: ui.spacing.md,
+  },
+  trustRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: ui.spacing.xs,
+  },
+  trustExplanation: {
+    color: ui.colors.text,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  trustFallback: {
+    color: ui.colors.textSubtle,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  factorRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: ui.spacing.sm,
+    marginTop: ui.spacing.xs,
+  },
+  factorItem: {
+    color: ui.colors.accent,
+    backgroundColor: ui.colors.accentSoft,
+    borderColor: ui.colors.accent,
+    borderWidth: 1,
+    borderRadius: ui.radii.pill,
+    overflow: 'hidden',
+    paddingHorizontal: ui.spacing.sm,
+    paddingVertical: 4,
+    fontSize: 10,
     fontWeight: '700',
   },
 

@@ -1,4 +1,16 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, float, json, bigint } from "drizzle-orm/mysql-core";
+import {
+  int,
+  mysqlEnum,
+  mysqlTable,
+  text,
+  timestamp,
+  varchar,
+  float,
+  json,
+  bigint,
+  uniqueIndex,
+  index,
+} from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -213,3 +225,29 @@ export const personalizationMetrics = mysqlTable("personalization_metrics", {
 
 export type PersonalizationMetric = typeof personalizationMetrics.$inferSelect;
 export type InsertPersonalizationMetric = typeof personalizationMetrics.$inferInsert;
+
+/** Compact rolling learning metrics for factor/model scoring adaptation. */
+export const predictionLearningMetrics = mysqlTable("prediction_learning_metrics", {
+  id: int("id").autoincrement().primaryKey(),
+  gameType: varchar("gameType", { length: 32 }).notNull(),
+  metricType: mysqlEnum("metricType", ["factor", "model"]).notNull(),
+  metricName: varchar("metricName", { length: 64 }).notNull(),
+  windowDays: int("windowDays").notNull().default(90),
+  windowLabel: varchar("windowLabel", { length: 32 }).notNull().default("rolling_90d"),
+  sampleCount: int("sampleCount").notNull().default(0),
+  averageMatchRatio: float("averageMatchRatio").notNull().default(0),
+  weightedScore: float("weightedScore").notNull().default(0),
+  lastUpdatedAt: timestamp("lastUpdatedAt").defaultNow().onUpdateNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({
+  plmUnique: uniqueIndex("plm_unique_metric").on(
+    table.gameType,
+    table.metricType,
+    table.metricName,
+    table.windowDays,
+  ),
+  plmLookup: index("plm_lookup_idx").on(table.gameType, table.metricType, table.windowDays),
+}));
+
+export type PredictionLearningMetric = typeof predictionLearningMetrics.$inferSelect;
+export type InsertPredictionLearningMetric = typeof predictionLearningMetrics.$inferInsert;
