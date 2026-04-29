@@ -1,11 +1,71 @@
 import { FLORIDA_GAMES, type GameType } from "@shared/lottery";
 import { runAllModels, applySumRangeFilter } from "../predictions";
-import { getDrawResults, insertPredictions, getModelWeights } from "../db";
+import {
+  getDrawResults,
+  insertPredictions,
+  getModelWeights,
+  getRecentPredictionLearningEvents,
+  getPredictionLearningMetrics,
+} from "../db";
+import {
+  deriveLearningFactorWeights,
+  deriveLearningWeightsFromMetrics,
+  scorePredictionsExplainably,
+} from "./predictionIntelligence.service";
+
+function buildPublicPredictionShape(
+  prediction: {
+    modelName: string;
+    mainNumbers: number[];
+    specialNumbers: number[];
+    confidenceScore: number;
+    metadata: Record<string, unknown>;
+  },
+  learning: { tableLearningUsed: boolean; learningWindowLabel: string | null },
+) {
+  const explainable = ((prediction.metadata as any)?.explainable ?? {}) as Record<string, any>;
+  const supporting = Array.isArray(explainable.supportingFactors) ? explainable.supportingFactors : [];
+  const topSupportingFactors = supporting
+    .slice()
+    .sort((a: any, b: any) => Number(b?.contribution ?? 0) - Number(a?.contribution ?? 0))
+    .slice(0, 3)
+    .map((f: any) => ({
+      key: String(f.key ?? ""),
+      note: String(f.note ?? ""),
+      contribution: Number(f.contribution ?? 0),
+    }));
+
+  return {
+    ...prediction,
+    metadata: {
+      ...(prediction.metadata || {}),
+      explainable: {
+        aiScore: Number(explainable.aiScore ?? 0),
+        confidenceLabel: String(explainable.confidenceLabel ?? "low"),
+        explanationSummary: String(explainable.explanationSummary ?? ""),
+        riskLevel: String(explainable.riskLevel ?? "high"),
+        modelAgreement: Number(explainable.modelAgreement ?? 0),
+        historicalSignals: explainable.historicalSignals ?? {},
+        generatedAt: explainable.generatedAt ?? new Date().toISOString(),
+        correlationId: explainable.correlationId ?? null,
+      },
+    } as Record<string, unknown>,
+    aiScore: Number(explainable.aiScore ?? 0),
+    confidenceLabel: String(explainable.confidenceLabel ?? "low"),
+    explanationSummary: String(explainable.explanationSummary ?? ""),
+    topSupportingFactors,
+    riskLevel: String(explainable.riskLevel ?? "high"),
+    modelAgreement: Number(explainable.modelAgreement ?? 0),
+    tableLearningUsed: learning.tableLearningUsed,
+    learningWindowLabel: learning.learningWindowLabel,
+  };
+}
 
 export async function generatePredictions(
   gameType: GameType,
   sumRangeFilter: boolean,
   userId?: number,
+  correlationId?: string,
 ) {
   const cfg = FLORIDA_GAMES[gameType];
   const historyRows = await getDrawResults(gameType, 200);
@@ -15,12 +75,53 @@ export async function generatePredictions(
     drawDate: r.drawDate,
   }));
 
-  const modelWeights = await getModelWeights(gameType, userId);
-  let allPredictions = runAllModels(cfg, history, Object.keys(modelWeights).length > 0 ? modelWeights : undefined);
+  const [modelWeights, learningEvents, factorMetrics, modelMetrics] = await Promise.all([
+    getModelWeights(gameType, userId),
+    getRecentPredictionLearningEvents(gameType, userId),
+    getPredictionLearningMetrics(gameType, "factor"),
+    getPredictionLearningMetrics(gameType, "model"),
+  ]);
+  const tableFactorWeights = deriveLearningWeightsFromMetrics(
+    factorMetrics.map(m => ({
+      metricName: m.metricName,
+      sampleCount: m.sampleCount ?? 0,
+      weightedScore: m.weightedScore ?? 0,
+    })),
+  );
+  const learningFactorWeights = Object.keys(tableFactorWeights).length > 0
+    ? tableFactorWeights
+    : deriveLearningFactorWeights(learningEvents);
+
+  const tableModelWeights = deriveLearningWeightsFromMetrics(
+    modelMetrics.map(m => ({
+      metricName: m.metricName,
+      sampleCount: m.sampleCount ?? 0,
+      weightedScore: m.weightedScore ?? 0,
+    })),
+  );
+
+  const effectiveModelWeights = Object.keys(tableModelWeights).length > 0
+    ? Object.fromEntries(Object.entries(modelWeights).map(([k, v]) => [k, v * (tableModelWeights[k] ?? 1)]))
+    : modelWeights;
+
+  let allPredictions = runAllModels(
+    cfg,
+    history,
+    Object.keys(effectiveModelWeights).length > 0 ? effectiveModelWeights : undefined,
+  );
 
   if (sumRangeFilter) {
     allPredictions = applySumRangeFilter(allPredictions, cfg, history);
   }
+
+  allPredictions = scorePredictionsExplainably({
+    cfg,
+    history,
+    predictions: allPredictions,
+    modelWeights,
+    learningFactorWeights,
+    correlationId,
+  });
 
   if (userId) {
     try {
@@ -38,11 +139,20 @@ export async function generatePredictions(
     }
   }
 
+  const tableLearningUsed = Object.keys(tableFactorWeights).length > 0 || Object.keys(tableModelWeights).length > 0;
+  const learningWindowLabel = factorMetrics[0]?.windowLabel ?? modelMetrics[0]?.windowLabel ?? null;
+  const publicPredictions = allPredictions.map((pred) =>
+    buildPublicPredictionShape(pred as any, { tableLearningUsed, learningWindowLabel }),
+  );
+
   return {
-    predictions: allPredictions,
+    predictions: publicPredictions,
     gameType,
     gameName: cfg.name,
     modelWeights,
+    tableLearningUsed,
+    learningWindowLabel,
+    learningFactorWeights,
     weightsUsed: Object.keys(modelWeights).length > 0,
     sumRangeFilterApplied: sumRangeFilter,
   };
