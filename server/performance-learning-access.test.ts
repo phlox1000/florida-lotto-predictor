@@ -35,6 +35,9 @@ describe("performance learning route access", () => {
       .rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(caller.performance.learningBacktest({ gameType: "fantasy_5", lookbackDraws: 10, windowDays: 90 }))
       .rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    expect(learningMocks.getLearningStatusByGame).not.toHaveBeenCalled();
+    expect(learningMocks.runLearningBacktestComparison).not.toHaveBeenCalled();
   });
 
   it("allows admin users", async () => {
@@ -45,5 +48,12 @@ describe("performance learning route access", () => {
 
     expect(status).toEqual({ tableLearningUsed: true });
     expect(backtest).toEqual({ scenarios: [] });
+    expect(learningMocks.getLearningStatusByGame).toHaveBeenCalledWith("fantasy_5", 1, 90);
+    expect(learningMocks.runLearningBacktestComparison).toHaveBeenCalledWith({
+      gameType: "fantasy_5",
+      lookbackDraws: 10,
+      userId: 1,
+      windowDays: 90,
+    });
   });
 });
