@@ -58,6 +58,7 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
   const [expandedModelId, setExpandedModelId] = useState<string | null>(null);
   const [showAllModels, setShowAllModels] = useState(false);
   const extraFadeAnim = useRef(new Animated.Value(0)).current;
+  const rankedFadeAnim = useRef(new Animated.Value(0)).current;
 
   const selectedGameName = FLORIDA_GAMES[selectedGame].name;
   const { isSaved, savePick, savedPicks, storageError } = useSavedPicks();
@@ -88,15 +89,18 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
     setExpandedModelId(null);
     setShowAllModels(false);
     extraFadeAnim.setValue(0);
-  }, [selectedGame, extraFadeAnim]);
+    rankedFadeAnim.setValue(0);
+  }, [selectedGame, extraFadeAnim, rankedFadeAnim]);
 
   useEffect(() => {
     if (generate.isSuccess) {
       setExpandedModelId(null);
       setShowAllModels(false);
       extraFadeAnim.setValue(0);
+      rankedFadeAnim.setValue(0);
+      Animated.timing(rankedFadeAnim, { toValue: 1, duration: 220, useNativeDriver: true }).start();
     }
-  }, [generate.isSuccess, extraFadeAnim]);
+  }, [generate.isSuccess, extraFadeAnim, rankedFadeAnim]);
 
   const toggleShowAll = useCallback(() => {
     if (!showAllModels) {
@@ -392,7 +396,8 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
         ) : null}
 
         {generate.isPending ? (
-          <View style={{ gap: ui.spacing.md, marginTop: ui.spacing.sm }}>
+          <View style={styles.loadingStack}>
+            <Text style={styles.loadingLabel}>Refreshing model outputs…</Text>
             <SkeletonCard />
             <SkeletonCard />
             <SkeletonCard />
@@ -401,7 +406,10 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
 
         {top3 && !generate.isPending ? (
           <>
-            <TerminalLabel>Ranked signals</TerminalLabel>
+            <Animated.View style={[styles.rankedHeaderWrap, { opacity: rankedFadeAnim }]}>
+              <TerminalLabel>Ranked signals</TerminalLabel>
+              <Text style={styles.rankedCaption}>Top 3 are shown first. Expand to review all models.</Text>
+            </Animated.View>
 
             {/* Top 3 — always visible */}
             {top3.map((pred, index) => {
@@ -409,6 +417,7 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
               const input = createPickInput(pred, `Analyze rank ${rank}`);
               const perf = perfMap.get(pred.modelName) ?? null;
               return (
+                <View style={styles.modelCardWrap}>
                 <ModelSignalCard
                   key={`${pred.modelName}-${index}`}
                   rank={rank}
@@ -427,6 +436,7 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
                   onSave={() => handleSavePick(pred, `Analyze rank ${rank}`)}
                   onShare={() => handleSharePick(pred)}
                 />
+                </View>
               );
             })}
 
@@ -440,6 +450,7 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
                       const input = createPickInput(pred, `Analyze rank ${rank}`);
                       const perf = perfMap.get(pred.modelName) ?? null;
                       return (
+                        <View style={styles.modelCardWrap}>
                         <ModelSignalCard
                           key={`${pred.modelName}-${idx}`}
                           rank={rank}
@@ -458,6 +469,7 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
                           onSave={() => handleSavePick(pred, `Analyze rank ${rank}`)}
                           onShare={() => handleSharePick(pred)}
                         />
+                        </View>
                       );
                     })}
                   </Animated.View>
@@ -594,7 +606,7 @@ const styles = StyleSheet.create({
   },
 
   generateButton: {
-    marginBottom: ui.spacing.lg,
+    marginBottom: ui.spacing.xl,
   },
 
   numberRow: {
@@ -638,7 +650,7 @@ const styles = StyleSheet.create({
   },
   actionRow: {
     flexDirection: 'row',
-    gap: ui.spacing.sm,
+    gap: ui.spacing.md,
     marginBottom: ui.spacing.md,
   },
   actionButton: {
@@ -648,5 +660,28 @@ const styles = StyleSheet.create({
     color: ui.colors.textSubtle,
     fontSize: 11,
     lineHeight: 16,
+  },
+  loadingStack: {
+    gap: ui.spacing.md,
+    marginTop: ui.spacing.sm,
+  },
+  loadingLabel: {
+    color: ui.colors.textSubtle,
+    fontSize: 11,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    fontWeight: '700',
+  },
+  rankedHeaderWrap: {
+    gap: ui.spacing.xs,
+    marginBottom: ui.spacing.sm,
+  },
+  rankedCaption: {
+    color: ui.colors.textSubtle,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  modelCardWrap: {
+    marginBottom: ui.spacing.sm,
   },
 });
