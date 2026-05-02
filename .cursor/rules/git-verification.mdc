@@ -1,0 +1,22 @@
+---
+description: Force every task to end with explicit git verification
+alwaysApply: true
+---
+
+# Git verification rule
+
+Every task that modifies files MUST end with these steps in order:
+
+1. Run `git status` and report the full output verbatim.
+2. Run `git log origin/<current-branch>..HEAD --oneline` (or `git log origin/main..HEAD --oneline` if on `main`) and report the full output verbatim.
+3. If there are uncommitted changes that are part of the task: stage them, commit with a clear message, and report the resulting SHA.
+4. If there are committed changes that haven't been pushed: push them and report the push output verbatim.
+5. State explicitly in your final summary: "Final commit SHA on remote: <SHA>" or "No commits made — nothing to push."
+
+Never claim a task is "implemented", "fixed", "deployed", or "ready" if `git log origin/<branch>..HEAD` is empty. Empty `git log` means nothing happened from the perspective of anyone reviewing the work.
+
+Do not amend, rebase, force-push, or rewrite history unless explicitly authorized.
+
+When ending a session that involved a feature branch, suggest the next action (open a PR, or merge if authorized).
+
+This rule exists because of an incident on 2026-05-02 where multiple agent sessions reported "fix implemented" without committing, leading to a 12-hour production outage. See `docs/incidents/2026-05-02-prediction-learning-metrics-missing.md`.
