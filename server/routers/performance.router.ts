@@ -1,7 +1,9 @@
 import { z } from "zod";
-import { publicProcedure, router } from "../_core/trpc";
+import { TRPCError } from "@trpc/server";
+import { publicProcedure, protectedProcedure, router } from "../_core/trpc";
 import { getModelPerformanceStats, getModelWeights } from "../db";
 import { gameTypeSchema } from "./routerUtils";
+import { getLearningStatusByGame, runLearningBacktestComparison } from "../services/learningValidation.service";
 
 export const performanceRouter = router({
   /** Get model performance stats for a game */
@@ -16,5 +18,37 @@ export const performanceRouter = router({
     .input(z.object({ gameType: gameTypeSchema }))
     .query(async ({ input }) => {
       return getModelWeights(input.gameType);
+    }),
+
+  /** Developer-facing visibility into learning status by game */
+  learningStatus: protectedProcedure
+    .input(z.object({
+      gameType: gameTypeSchema,
+      windowDays: z.number().min(7).max(365).default(90),
+    }))
+    .query(async ({ input, ctx }) => {
+      if (ctx.user.role !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required for learning diagnostics." });
+      }
+      return getLearningStatusByGame(input.gameType, ctx.user.id, input.windowDays);
+    }),
+
+  /** Lightweight deterministic comparison: baseline vs event fallback vs table-backed learning */
+  learningBacktest: protectedProcedure
+    .input(z.object({
+      gameType: gameTypeSchema,
+      lookbackDraws: z.number().min(5).max(60).default(20),
+      windowDays: z.number().min(7).max(365).default(90),
+    }))
+    .query(async ({ input, ctx }) => {
+      if (ctx.user.role !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required for learning diagnostics." });
+      }
+      return runLearningBacktestComparison({
+        gameType: input.gameType,
+        lookbackDraws: input.lookbackDraws,
+        windowDays: input.windowDays,
+        userId: ctx.user.id,
+      });
     }),
 });

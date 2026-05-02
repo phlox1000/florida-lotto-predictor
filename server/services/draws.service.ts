@@ -20,11 +20,13 @@ export async function addManualDraw(input: {
 
   const drawId = (result as any)?.[0]?.insertId ?? 0;
   try {
+    const drawDateStr = new Date(input.drawDate).toISOString().split("T")[0];
     const evalResult = await evaluatePredictionsAgainstDraw(
       drawId,
       input.gameType,
       input.mainNumbers,
       input.specialNumbers,
+      drawDateStr,
     );
 
     if (evalResult.highAccuracy > 3) {

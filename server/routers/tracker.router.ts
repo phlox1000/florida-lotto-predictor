@@ -5,6 +5,7 @@ import {
   deletePurchasedTicket, getUserROIStats, getROIByGame,
 } from "../db";
 import { gameTypeSchema } from "./routerUtils";
+import { emitPredictionActedOn } from "../services/eventService";
 
 export const trackerRouter = router({
   /** Log a purchased ticket */
@@ -18,6 +19,7 @@ export const trackerRouter = router({
       cost: z.number().min(0),
       notes: z.string().optional(),
       modelSource: z.string().optional(),
+      correlationId: z.string().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
       const id = await insertPurchasedTicket({
@@ -31,6 +33,16 @@ export const trackerRouter = router({
         notes: input.notes,
         modelSource: input.modelSource,
       });
+      const correlationId = input.correlationId ?? `unlinked:${ctx.user.id}:${Date.now()}`;
+      emitPredictionActedOn({
+        userId: ctx.user.id,
+        correlationId,
+        action: "purchased",
+        ticketCost: input.cost,
+        occurredAt: new Date(),
+        platformVersion: "1.0.0",
+        schemaVersion: "1.0",
+      }).catch(err => console.error("[event]", err));
       return { success: true, id };
     }),
 
@@ -46,8 +58,10 @@ export const trackerRouter = router({
       })),
       purchaseDate: z.number(),
       drawDate: z.number().optional(),
+      correlationId: z.string().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
+      const correlationId = input.correlationId ?? `unlinked:${ctx.user.id}:${Date.now()}`;
       let count = 0;
       for (const ticket of input.tickets) {
         try {
@@ -62,6 +76,15 @@ export const trackerRouter = router({
             modelSource: ticket.modelSource,
           });
           count++;
+          emitPredictionActedOn({
+            userId: ctx.user.id,
+            correlationId,
+            action: "purchased",
+            ticketCost: ticket.cost,
+            occurredAt: new Date(),
+            platformVersion: "1.0.0",
+            schemaVersion: "1.0",
+          }).catch(err => console.error("[event]", err));
         } catch (e) {
           console.warn("[Tracker] Failed to log ticket:", e);
         }

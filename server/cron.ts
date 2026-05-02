@@ -14,6 +14,7 @@ import {
   finishAutoFetchRun,
 } from "./db";
 import { notifyOwner } from "./_core/notification";
+import { emitDrawResultEntered } from "./services/eventService";
 
 export interface AutoFetchResult {
   timestamp: number;
@@ -101,12 +102,23 @@ export async function runAutoFetch(
           if (insertResult.status === "inserted") {
             gameResult.newDraws++;
 
+            const drawDateStr = new Date(draw.drawDate).toISOString().split("T")[0];
+            emitDrawResultEntered({
+              userId: null,
+              game: gt,
+              drawDate: drawDateStr,
+              winningNumbers: draw.mainNumbers,
+              occurredAt: new Date(),
+              platformVersion: "1.0.0",
+              schemaVersion: "1.0",
+            }).catch(err => console.error("[event]", err));
+
             // Auto-evaluate predictions against this new draw
             const drawId = insertResult.insertId;
             if (drawId) {
               try {
                 const evalResult = await evaluatePredictionsAgainstDraw(
-                  drawId, gt, draw.mainNumbers, draw.specialNumbers
+                  drawId, gt, draw.mainNumbers, draw.specialNumbers, drawDateStr
                 );
                 gameResult.evaluations += evalResult.evaluated;
                 if (evalResult.highAccuracy > 0) {

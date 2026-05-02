@@ -28,6 +28,18 @@ const navTheme = {
   },
 };
 
+const navigationTheme = {
+  ...DarkTheme,
+  colors: {
+    ...DarkTheme.colors,
+    background: colors.background,
+    card: colors.surface,
+    border: colors.borderMuted,
+    primary: colors.accent,
+    text: colors.text,
+  },
+};
+
 export default function App() {
   return (
     <QueryProvider>

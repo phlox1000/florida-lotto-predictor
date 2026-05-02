@@ -12,7 +12,9 @@ import {
   purchasedTickets, InsertPurchasedTicket,
   personalizationMetrics, InsertPersonalizationMetric,
   autoFetchRuns, AutoFetchRun,
+  predictionLearningMetrics,
 } from "../drizzle/schema";
+import { appEvents } from "./db/schema/appEvents";
 import { ENV } from './_core/env';
 import { FLORIDA_GAMES, type GameType } from '@shared/lottery';
 
@@ -300,17 +302,25 @@ const modelWeightsCache = new Map<string, {
 }>();
 const MODEL_WEIGHTS_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-export async function getModelWeights(gameType: string): Promise<Record<string, number>> {
+// PERSONALIZATION LOOP: Personal accuracy (60%) blended with
+// global accuracy (40%) when >= 5 user events exist.
+// Threshold and blend ratio are tunable — do not hardcode elsewhere.
+export async function getModelWeights(gameType: string, userId?: number): Promise<Record<string, number>> {
+  const cacheKey = userId != null ? `${gameType}:${userId}` : gameType;
+
   // Check cache first
-  const cached = modelWeightsCache.get(gameType);
+  const cached = modelWeightsCache.get(cacheKey);
   if (cached && Date.now() - cached.cachedAt < MODEL_WEIGHTS_TTL_MS) {
     return cached.weights;
   }
 
   const stats = await getModelPerformanceStats(gameType);
-  const weights: Record<string, number> = {};
+  const globalWeights: Record<string, number> = {};
 
-  if (stats.length === 0) return weights; // empty = use defaults
+  if (stats.length === 0) {
+    modelWeightsCache.set(cacheKey, { weights: globalWeights, cachedAt: Date.now() });
+    return globalWeights; // empty = use defaults
+  }
 
   // Find the max average hits for normalization
   const maxAvg = Math.max(...stats.map(s => Number(s.avgMainHits) || 0), 0.001);
@@ -321,12 +331,232 @@ export async function getModelWeights(gameType: string): Promise<Record<string, 
     // Weight = normalized accuracy * confidence factor (more data = more confidence)
     const accuracyNorm = avg / maxAvg;
     const confidenceFactor = Math.min(total / 10, 1); // full confidence after 10 evaluations
-    weights[s.modelName] = 0.3 + 0.7 * accuracyNorm * confidenceFactor; // floor at 0.3
+    globalWeights[s.modelName] = 0.3 + 0.7 * accuracyNorm * confidenceFactor; // floor at 0.3
   }
 
-  // Cache the result
-  modelWeightsCache.set(gameType, { weights, cachedAt: Date.now() });
-  return weights;
+  // No userId — return global weights unchanged (no regression)
+  if (userId == null) {
+    modelWeightsCache.set(cacheKey, { weights: globalWeights, cachedAt: Date.now() });
+    return globalWeights;
+  }
+
+  // Personalization path: blend personal accuracy history with global weights
+  const db = await getDb();
+  if (!db) {
+    return globalWeights; // DB unavailable — fall back gracefully
+  }
+
+  const userEvents = await db.select()
+    .from(appEvents)
+    .where(and(
+      eq(appEvents.event_type, "prediction_accuracy_calculated"),
+      eq(appEvents.user_id, userId),
+    ))
+    .orderBy(desc(appEvents.occurred_at))
+    .limit(50);
+
+  if (userEvents.length < 5) {
+    // Not enough personal data — return global weights only
+    modelWeightsCache.set(cacheKey, { weights: globalWeights, cachedAt: Date.now() });
+    return globalWeights;
+  }
+
+  // Aggregate per-model accuracy scores from personal events
+  const personalScores: Record<string, { total: number; count: number }> = {};
+  for (const event of userEvents) {
+    const payload = event.payload as { model_scores?: Record<string, number> } | null;
+    if (!payload?.model_scores) continue;
+    for (const [model, score] of Object.entries(payload.model_scores)) {
+      if (!personalScores[model]) personalScores[model] = { total: 0, count: 0 };
+      personalScores[model].total += score;
+      personalScores[model].count++;
+    }
+  }
+
+  // Blend: personal 60% + global 40%, then normalize to sum to 1.0
+  const blended: Record<string, number> = {};
+  for (const model of Object.keys(globalWeights)) {
+    const personal = personalScores[model]
+      ? personalScores[model].total / personalScores[model].count
+      : 0;
+    blended[model] = personal * 0.6 + globalWeights[model] * 0.4;
+  }
+
+  const weightSum = Object.values(blended).reduce((a, b) => a + b, 0);
+  if (weightSum > 0) {
+    for (const model of Object.keys(blended)) {
+      blended[model] /= weightSum;
+    }
+  }
+
+  modelWeightsCache.set(cacheKey, { weights: blended, cachedAt: Date.now() });
+  return blended;
+}
+
+/** Recent prediction accuracy events used to adapt explainable scoring factor weights. */
+export async function getRecentPredictionLearningEvents(
+  gameType: string,
+  userId?: number,
+  limit = 200,
+) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [
+    eq(appEvents.event_type, "prediction_accuracy_calculated"),
+    sql`JSON_UNQUOTE(JSON_EXTRACT(${appEvents.payload}, '$.game')) = ${gameType}`,
+  ];
+  if (userId != null) {
+    conditions.push(eq(appEvents.user_id, userId));
+  }
+
+  return db.select({ payload: appEvents.payload })
+    .from(appEvents)
+    .where(and(...conditions))
+    .orderBy(desc(appEvents.occurred_at))
+    .limit(limit);
+}
+
+type LearningMetricType = "factor" | "model";
+
+export function buildLearningRollupsFromAccuracyPayloads(
+  payloads: Array<{
+    game?: string;
+    factor_snapshot?: Record<string, number>;
+    model_scores?: Record<string, number>;
+    match_ratio?: number;
+  }>,
+) {
+  const factorAgg = new Map<string, { total: number; count: number }>();
+  const modelAgg = new Map<string, { total: number; count: number }>();
+  const add = (
+    map: Map<string, { total: number; count: number }>,
+    key: string,
+    value: number,
+  ) => {
+    const row = map.get(key) ?? { total: 0, count: 0 };
+    row.total += value;
+    row.count += 1;
+    map.set(key, row);
+  };
+
+  for (const payload of payloads) {
+    const game = payload.game;
+    if (!game) continue;
+    const matchRatio = typeof payload.match_ratio === "number" ? payload.match_ratio : 0;
+
+    if (payload.factor_snapshot) {
+      for (const [factor, factorValue] of Object.entries(payload.factor_snapshot)) {
+        if (typeof factorValue !== "number") continue;
+        add(factorAgg, `${game}|${factor}`, factorValue * matchRatio);
+      }
+    }
+    if (payload.model_scores) {
+      for (const [modelName, modelScore] of Object.entries(payload.model_scores)) {
+        if (typeof modelScore !== "number") continue;
+        add(modelAgg, `${game}|${modelName}`, modelScore);
+      }
+    }
+  }
+
+  return { factorAgg, modelAgg };
+}
+
+export async function getPredictionLearningMetrics(
+  gameType: string,
+  metricType: LearningMetricType,
+  windowDays = 90,
+) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(predictionLearningMetrics)
+    .where(and(
+      eq(predictionLearningMetrics.gameType, gameType),
+      eq(predictionLearningMetrics.metricType, metricType),
+      eq(predictionLearningMetrics.windowDays, windowDays),
+    ))
+    .orderBy(desc(predictionLearningMetrics.weightedScore));
+}
+
+/**
+ * Rebuild rolling learning metrics from prediction_accuracy_calculated events.
+ * Safe to run from cron/manual endpoints; deterministic and idempotent.
+ */
+export async function rebuildPredictionLearningMetricsFromEvents(input?: {
+  gameType?: string;
+  windowDays?: number;
+}) {
+  const db = await getDb();
+  if (!db) return { updated: 0, factors: 0, models: 0 };
+
+  const windowDays = input?.windowDays ?? 90;
+  const cutoff = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
+  const conditions = [
+    eq(appEvents.event_type, "prediction_accuracy_calculated"),
+    gte(appEvents.occurred_at, cutoff),
+  ];
+  if (input?.gameType) {
+    conditions.push(sql`JSON_UNQUOTE(JSON_EXTRACT(${appEvents.payload}, '$.game')) = ${input.gameType}`);
+  }
+
+  const events = await db.select({
+    payload: appEvents.payload,
+  })
+    .from(appEvents)
+    .where(and(...conditions))
+    .orderBy(desc(appEvents.occurred_at))
+    .limit(5000);
+
+  const { factorAgg, modelAgg } = buildLearningRollupsFromAccuracyPayloads(
+    events.map(evt => (evt.payload || {}) as {
+      game?: string;
+      factor_snapshot?: Record<string, number>;
+      model_scores?: Record<string, number>;
+      match_ratio?: number;
+    }),
+  );
+
+  const upserts: Array<any> = [];
+  const toRows = (
+    map: Map<string, { total: number; count: number }>,
+    metricType: LearningMetricType,
+  ) => {
+    for (const [key, row] of map.entries()) {
+      const [gameType, metricName] = key.split("|");
+      const avg = row.count > 0 ? row.total / row.count : 0;
+      const confidence = Math.min(row.count / 30, 1);
+      const weighted = avg * confidence;
+      upserts.push({
+        gameType,
+        metricType,
+        metricName,
+        windowDays,
+        windowLabel: `rolling_${windowDays}d`,
+        sampleCount: row.count,
+        averageMatchRatio: avg,
+        weightedScore: weighted,
+      });
+    }
+  };
+
+  toRows(factorAgg, "factor");
+  toRows(modelAgg, "model");
+
+  if (upserts.length > 0) {
+    await db.insert(predictionLearningMetrics)
+      .values(upserts)
+      .onDuplicateKeyUpdate({
+        set: {
+          sampleCount: sql`VALUES(sampleCount)`,
+          averageMatchRatio: sql`VALUES(averageMatchRatio)`,
+          weightedScore: sql`VALUES(weightedScore)`,
+          windowLabel: sql`VALUES(windowLabel)`,
+          lastUpdatedAt: new Date(),
+        },
+      });
+  }
+
+  return { updated: upserts.length, factors: factorAgg.size, models: modelAgg.size };
 }
 
 /**
@@ -337,7 +567,8 @@ export async function evaluatePredictionsAgainstDraw(
   drawId: number,
   gameType: string,
   mainNumbers: number[],
-  specialNumbers: number[]
+  specialNumbers: number[],
+  drawDate: string = "",
 ) {
   const db = await getDb();
   if (!db) return { evaluated: 0, highAccuracy: 0 };
@@ -357,6 +588,15 @@ export async function evaluatePredictionsAgainstDraw(
   const resultMainSet = new Set(mainNumbers);
   const resultSpecialSet = new Set(specialNumbers);
   const perfRecords: InsertModelPerformance[] = [];
+  const accuracyEvents: Array<{
+    userId: number;
+    correlationId: string;
+    matchedNumbers: number;
+    totalPicks: number;
+    modelScores: Record<string, number>;
+    factorSnapshot: Record<string, number>;
+    game: string;
+  }> = [];
   let highAccuracy = 0;
 
   for (const pred of recentPreds) {
@@ -379,6 +619,22 @@ export async function evaluatePredictionsAgainstDraw(
     if (mainHits >= Math.ceil(predMain.length * 0.6)) {
       highAccuracy++;
     }
+
+    // Collect accuracy events for attributed predictions (userId required)
+    if (pred.userId != null) {
+      // Reconstruct correlationId from prediction row — the predictions table does not
+      // store the original correlationId, so we approximate using createdAt timestamp.
+      const correlationId = `prediction:${gameType}:${pred.userId}:${(pred.createdAt as Date).getTime()}`;
+      accuracyEvents.push({
+        userId: pred.userId,
+        correlationId,
+        matchedNumbers: mainHits,
+        totalPicks: predMain.length,
+        modelScores: { [pred.modelName]: predMain.length > 0 ? mainHits / predMain.length : 0 },
+        factorSnapshot: ((pred.metadata as Record<string, any> | null)?.explainable?.factorSnapshot ?? {}) as Record<string, number>,
+        game: gameType,
+      });
+    }
   }
 
   if (perfRecords.length > 0) {
@@ -388,6 +644,32 @@ export async function evaluatePredictionsAgainstDraw(
       await tx.insert(modelPerformance).values(perfRecords);
     });
   }
+
+  // Fire-and-forget accuracy events after the transaction. Dynamic import avoids
+  // a circular dependency (eventService imports getDb from this module).
+  if (accuracyEvents.length > 0 && drawDate) {
+    import("./services/eventService").then(({ emitPredictionAccuracyCalculated, buildDrawCorrelationId }) => {
+      const triggeredBy = buildDrawCorrelationId(gameType, drawDate);
+      const occurredAt = new Date();
+      for (const evt of accuracyEvents) {
+        emitPredictionAccuracyCalculated({
+          ...evt,
+          triggeredBy,
+          netOutcome: 0,
+          factorSnapshot: evt.factorSnapshot,
+          matchRatio: evt.totalPicks > 0 ? evt.matchedNumbers / evt.totalPicks : 0,
+          game: evt.game,
+          occurredAt,
+          platformVersion: "1.0.0",
+          schemaVersion: "1.0",
+        }).catch(err => console.error("[event]", err));
+      }
+    }).catch(() => {});
+  }
+
+  // Keep compact rolling metrics fresh after evaluation.
+  rebuildPredictionLearningMetricsFromEvents({ gameType, windowDays: 90 })
+    .catch(err => console.warn("[LearningMetrics] rebuild failed:", err));
 
   return { evaluated: perfRecords.length, highAccuracy };
 }

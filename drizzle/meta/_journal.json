@@ -64,6 +64,20 @@
       "when": 1776729600000,
       "tag": "0011_auto_fetch_runs",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1776912984827,
+      "tag": "0009_app_events_clean",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1777310000000,
+      "tag": "0012_prediction_learning_metrics",
+      "breakpoints": true
     }
   ]
 }
