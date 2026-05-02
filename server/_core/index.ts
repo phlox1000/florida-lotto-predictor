@@ -44,7 +44,7 @@ async function startServer() {
   // to enable zero-downtime rollouts (new container must answer 200
   // on /healthz before old container is retired).
   app.get("/healthz", (_req, res) => {
-    res.status(200).json({ status: "ok", uptime: process.uptime() });
+    res.status(200).json({ ok: true, uptime: process.uptime() });
   });
 
   // Configure body parser with larger size limit for file uploads
@@ -56,14 +56,13 @@ async function startServer() {
   const { registerUploadRoutes } = await import("../upload");
   registerUploadRoutes(app);
 
-  // tRPC API
-  app.use(
-    "/api/trpc",
-    createExpressMiddleware({
-      router: appRouter,
-      createContext,
-    })
-  );
+  // tRPC API (root `/trpc` for explicit mobile/API contracts; `/api/trpc` retained for web SPA)
+  const trpcExpressMiddleware = createExpressMiddleware({
+    router: appRouter,
+    createContext,
+  });
+  app.use("/trpc", trpcExpressMiddleware);
+  app.use("/api/trpc", trpcExpressMiddleware);
   // development mode uses Vite, production mode uses static files
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);
