@@ -52,6 +52,16 @@ jobs:
       - name: Type check
         run: pnpm check
 
+      # Mobile workspace has its own tsconfig (extends expo/tsconfig.base)
+      # which does not pull node types by default. `--types node` matches
+      # the canonical command in mobile/AGENTS.md so server files re-exported
+      # via type imports (e.g. server/lib/rateLimiter.ts referencing
+      # NodeJS.Timeout.unref) don't false-fail. This is the gate that would
+      # have caught PR #37's 739 mobile tsc errors before merge.
+      - name: Type check (mobile workspace)
+        working-directory: mobile
+        run: pnpm exec tsc --noEmit --types node
+
       # --passWithNoTests so the absence of test files (current state
       # of the repo) does not fail CI. The instant any *.test.ts file
       # lands, vitest will pick it up automatically.
