@@ -7,8 +7,18 @@ import { fileURLToPath } from "node:url";
 import { createServer as createViteServer } from "vite";
 import viteConfig from "../../vite.config";
 
-/** Directory containing this module (`server/_core` in dev; bundled output dir when built). */
+/**
+ * Directory containing this module. After esbuild, the bundle is `dist/index.js`, so this is
+ * `.../dist`. Static assets from `vite build` live in `dist/public` → **same directory as the
+ * bundle, plus `/public`**. Using `../..` from `dist/` incorrectly escapes the repo (styled 404).
+ */
 const _CORE_DIR = path.dirname(fileURLToPath(import.meta.url));
+
+function resolveClientDistPublic(): string {
+  return path.basename(_CORE_DIR) === "dist"
+    ? path.join(_CORE_DIR, "public")
+    : path.resolve(_CORE_DIR, "..", "..", "dist", "public");
+}
 
 export async function setupVite(app: Express, server: Server) {
   const serverOptions = {
@@ -29,7 +39,7 @@ export async function setupVite(app: Express, server: Server) {
     const url = req.originalUrl;
 
     try {
-      const clientTemplate = path.resolve(_CORE_DIR, "../..", "client", "index.html");
+      const clientTemplate = path.resolve(_CORE_DIR, "../../client/index.html");
 
       // always reload the index.html file from disk incase it changes
       let template = await fs.promises.readFile(clientTemplate, "utf-8");
@@ -47,18 +57,17 @@ export async function setupVite(app: Express, server: Server) {
 }
 
 export function serveStatic(app: Express) {
-  // Vite build writes to `dist/public` at repo root (see vite.config.ts `build.outDir`).
-  const distPath = path.resolve(_CORE_DIR, "../..", "dist", "public");
+  const distPath = resolveClientDistPublic();
   if (!fs.existsSync(distPath)) {
     console.error(
-      `Could not find the build directory: ${distPath}, make sure to build the client first`
+      `[serveStatic] Client build not found at ${distPath} (resolved from ${_CORE_DIR}). Run \`pnpm build\`.`
     );
   }
 
-  app.use(express.static(distPath));
+  app.use(express.static(distPath, { index: ["index.html"] }));
 
-  // fall through to index.html if the file doesn't exist
-  app.use("*", (_req, res) => {
+  // SPA: client routes (GET only; APIs are mounted earlier on the main app)
+  app.get("*", (_req, res) => {
     res.sendFile(path.resolve(distPath, "index.html"));
   });
 }
