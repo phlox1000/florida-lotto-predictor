@@ -1,59 +1,16 @@
-import { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { FLORIDA_GAMES, GAME_TYPES, type GameType } from '@florida-lotto/shared';
-import {
-  Card,
-  EmptyState,
-  FeatureRow,
-  InstrumentTab,
-  MetricRow,
-  PrimaryButton,
-  Screen,
-  SectionHeader,
-  StatusPill,
-  TerminalLabel,
-  ui,
-} from '../components/ui';
-import { useSavedPicks } from '../lib/SavedPicksProvider';
-import { deriveLedgerStats } from '../lib/ticketGrading';
+import { useCallback } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
+import { useDashboardState } from '../lib/DashboardStateProvider';
+import { colors } from '../theme';
 
-const ACTIVE_GAMES = GAME_TYPES.filter(gt => !FLORIDA_GAMES[gt].schedule.ended);
-
-type GenerateScreenProps = {
-  navigation?: {
-    navigate: (screen: 'Analyze' | 'Track') => void;
-  };
-};
-
-function formatSavedDate(savedAt: string) {
-  const parsed = new Date(savedAt);
-
-  if (Number.isNaN(parsed.getTime())) {
-    return 'Saved locally';
-  }
-
-  return parsed.toLocaleString([], {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
-
-export default function GenerateScreen({ navigation }: GenerateScreenProps) {
-  const [selectedGame, setSelectedGame] = useState<GameType>(ACTIVE_GAMES[0]);
-  const { isLoaded, savedPicks } = useSavedPicks();
-  const selectedGameName = FLORIDA_GAMES[selectedGame].name;
-  const savedForGame = savedPicks.filter(pick => pick.gameType === selectedGame);
-  const latestForGame = savedForGame[0] ?? null;
-  const stats = useMemo(() => deriveLedgerStats(savedPicks), [savedPicks]);
-  const selectedGameStats = stats.byGame.find(item => item.key === selectedGame);
-
-  const modelCountForGame = useMemo(() => {
-    const models = new Set(savedForGame.map(pick => pick.modelName));
-    return models.size;
-  }, [savedForGame]);
-
+export default function GenerateScreen() {
+  const { recordTabOpen } = useDashboardState();
+  useFocusEffect(
+    useCallback(() => {
+      recordTabOpen('generate', null);
+    }, [recordTabOpen]),
+  );
   return (
     <Screen
       eyebrow="Generation"
@@ -172,55 +129,6 @@ export default function GenerateScreen({ navigation }: GenerateScreenProps) {
 }
 
 const styles = StyleSheet.create({
-  selectorRow: {
-    borderBottomWidth: 1,
-    borderBottomColor: ui.colors.border,
-    marginBottom: ui.spacing.lg,
-    marginHorizontal: -ui.spacing.lg,
-  },
-  selectorContent: {},
-  summaryGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: ui.spacing.md,
-    marginBottom: ui.spacing.md,
-  },
-  summaryTile: {
-    backgroundColor: ui.colors.backgroundRaised,
-    borderColor: ui.colors.border,
-    borderRadius: ui.radii.md,
-    borderWidth: 1,
-    flexBasis: '46%',
-    flexGrow: 1,
-    padding: ui.spacing.lg,
-  },
-  summaryValue: {
-    color: ui.colors.accent,
-    fontFamily: 'monospace',
-    fontSize: 24,
-    fontWeight: '900',
-  },
-  summaryLabel: {
-    color: ui.colors.textSubtle,
-    fontSize: 12,
-    fontWeight: '800',
-    marginTop: ui.spacing.xs,
-    textTransform: 'uppercase',
-  },
-  actionArea: {
-    marginTop: ui.spacing.lg,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    gap: ui.spacing.sm,
-  },
-  actionButton: {
-    flex: 1,
-  },
-  note: {
-    color: ui.colors.textSubtle,
-    fontSize: 12,
-    lineHeight: 17,
-    paddingHorizontal: ui.spacing.xs,
-  },
+  container: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
+  title: { fontSize: 24, fontWeight: '600', color: colors.text },
 });

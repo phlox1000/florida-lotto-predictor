@@ -1,134 +1,31 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
-import { TRPCClientError } from '@trpc/client';
-import { FLORIDA_GAMES, GAME_TYPES, getModelDisplayName, type GameType } from '@florida-lotto/shared';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Card,
-  EmptyState,
-  InstrumentTab,
-  MetricRow,
-  ModelSignalCard,
-  NumberChip,
-  PrimaryButton,
-  Screen,
-  SectionHeader,
-  SkeletonCard,
-  StateBlock,
-  StatusPill,
-  TerminalLabel,
-  ui,
-} from '../components/ui';
-import { getModelDescription } from '../lib/modelDescriptions';
-import { derivePredictionSignals } from '../lib/predictionSignals';
-import { useSavedPicks, type SavePickInput } from '../lib/SavedPicksProvider';
+  ActivityIndicator,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { useFocusEffect, useRoute, type RouteProp } from '@react-navigation/native';
+import { FLORIDA_GAMES, GAME_TYPES, type GameType } from '@florida-lotto/shared';
 import { trpc } from '../lib/trpc';
+import { useDashboardState } from '../lib/DashboardStateProvider';
+import type { MainTabParamList } from '../navigation/types';
 
 const ACTIVE_GAMES = GAME_TYPES.filter(gt => !FLORIDA_GAMES[gt].schedule.ended);
 
-type PredictionRow = {
-  modelName: string;
-  mainNumbers: number[];
-  specialNumbers: number[];
-  confidenceScore: number;
-  aiScore?: number;
-  confidenceLabel?: string;
-  explanationSummary?: string;
-  topSupportingFactors?: Array<{ key?: string; note?: string; contribution?: number }>;
-  riskLevel?: string;
-  modelAgreement?: number;
-  tableLearningUsed?: boolean;
-  learningWindowLabel?: string | null;
-};
-
-type AnalyzeScreenProps = {
-  navigation?: {
-    navigate: (screen: 'Track') => void;
-  };
-};
-
-function formatScore(score: number | null | undefined) {
-  if (typeof score !== 'number' || !Number.isFinite(score)) {
-    return null;
-  }
-  return score >= 10 ? score.toFixed(0) : score.toFixed(1);
-}
-
-type GenerateErrorCopy = { title: string; body: string };
-
-const GENERATE_ERROR_BY_CODE: Record<string, GenerateErrorCopy> = {
-  UNAUTHORIZED: {
-    title: 'Session expired',
-    body: 'Sign in again to continue.',
-  },
-  TOO_MANY_REQUESTS: {
-    title: 'Rate limit active',
-    body: 'Wait a moment, then run the model set again.',
-  },
-  INTERNAL_SERVER_ERROR: {
-    title: 'Server error',
-    body: 'The model service hit an error. Try again in a moment.',
-  },
-  BAD_REQUEST: {
-    title: 'Invalid request',
-    body: 'The app sent something the server rejected. Update may be needed.',
-  },
-  TIMEOUT: {
-    title: 'Request timed out',
-    body: 'The model took too long to respond. Try again.',
-  },
-};
-
-const GENERATE_ERROR_FALLBACK: GenerateErrorCopy = {
-  title: 'Generation failed',
-  body: 'The request did not complete. Check your connection and try again.',
-};
-
-function getTrpcErrorCode(err: unknown): string | undefined {
-  if (err instanceof TRPCClientError) {
-    const code = (err.data as { code?: string } | undefined)?.code;
-    return typeof code === 'string' ? code : undefined;
-  }
-  return undefined;
-}
-
-function getTrpcHttpStatus(err: unknown): number | undefined {
-  if (err instanceof TRPCClientError) {
-    const status = (err.data as { httpStatus?: number } | undefined)?.httpStatus;
-    return typeof status === 'number' ? status : undefined;
-  }
-  return undefined;
-}
-
-function getGenerateErrorCopy(err: unknown): GenerateErrorCopy {
-  let code = getTrpcErrorCode(err);
-  const msg = err instanceof Error ? err.message : '';
-  if (!code && msg.includes('Too many')) {
-    code = 'TOO_MANY_REQUESTS';
-  }
-  if (code && GENERATE_ERROR_BY_CODE[code]) {
-    return GENERATE_ERROR_BY_CODE[code];
-  }
-  return GENERATE_ERROR_FALLBACK;
-}
-
-function formatPick(mainNumbers: number[], specialNumbers: number[]) {
-  const main = mainNumbers.join(' - ');
-  return specialNumbers.length > 0
-    ? `${main} | Special ${specialNumbers.join(' - ')}`
-    : main;
-}
-
-export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
-  const [selectedGame, setSelectedGame] = useState<GameType>(ACTIVE_GAMES[0]);
+export default function AnalyzeScreen() {
+  const route = useRoute<RouteProp<MainTabParamList, 'Analyze'>>();
+  const { recordTabOpen, recordGamePicked, recordAnalyzeGenerate } = useDashboardState();
+  const [selectedGame, setSelectedGame] = useState<GameType>(
+    () => (route.params?.focusGame && ACTIVE_GAMES.includes(route.params.focusGame)
+      ? route.params.focusGame
+      : ACTIVE_GAMES[0]),
+  );
   const [showSlowWarning, setShowSlowWarning] = useState(false);
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const [expandedModelId, setExpandedModelId] = useState<string | null>(null);
-  const [showAllModels, setShowAllModels] = useState(false);
-  const extraFadeAnim = useRef(new Animated.Value(0)).current;
-  const rankedFadeAnim = useRef(new Animated.Value(0)).current;
-
-  const selectedGameName = FLORIDA_GAMES[selectedGame].name;
-  const { isSaved, savePick, savedPicks, storageError } = useSavedPicks();
+  const selectedGameRef = useRef(selectedGame);
+  selectedGameRef.current = selectedGame;
 
   const schedule = trpc.schedule.next.useQuery(
     { gameType: selectedGame },
@@ -157,73 +54,31 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
     return () => clearTimeout(timer);
   }, [schedule.isLoading]);
 
-  const prevGenerateErrorRef = useRef(false);
-
   useEffect(() => {
-    if (generate.isError && generate.error && !prevGenerateErrorRef.current) {
-      console.error('[predictions.generate] error:', JSON.stringify(generate.error, null, 2));
+    const g = route.params?.focusGame;
+    if (g && ACTIVE_GAMES.includes(g)) {
+      setSelectedGame(g);
     }
-    prevGenerateErrorRef.current = generate.isError;
-  }, [generate.isError, generate.error]);
+  }, [route.params?.focusGame]);
 
-  // Reset expanded/show-all state when game changes or new generation runs
-  useEffect(() => {
-    setExpandedModelId(null);
-    setShowAllModels(false);
-    extraFadeAnim.setValue(0);
-    rankedFadeAnim.setValue(0);
-  }, [selectedGame, extraFadeAnim, rankedFadeAnim]);
+  useFocusEffect(
+    useCallback(() => {
+      recordTabOpen('analyze', selectedGameRef.current);
+    }, [recordTabOpen]),
+  );
 
-  useEffect(() => {
-    if (generate.isSuccess) {
-      setExpandedModelId(null);
-      setShowAllModels(false);
-      extraFadeAnim.setValue(0);
-      rankedFadeAnim.setValue(0);
-      Animated.timing(rankedFadeAnim, { toValue: 1, duration: 220, useNativeDriver: true }).start();
-    }
-  }, [generate.isSuccess, extraFadeAnim, rankedFadeAnim]);
-
-  const toggleShowAll = useCallback(() => {
-    if (!showAllModels) {
-      setShowAllModels(true);
-      Animated.timing(extraFadeAnim, {
-        toValue: 1,
-        duration: 250,
-        useNativeDriver: true,
-      }).start();
-    } else {
-      Animated.timing(extraFadeAnim, {
-        toValue: 0,
-        duration: 150,
-        useNativeDriver: true,
-      }).start(() => setShowAllModels(false));
-    }
-  }, [showAllModels, extraFadeAnim]);
-
-  function createPickInput(prediction: PredictionRow, sourceContext: string): SavePickInput {
-    const drawDate = schedule.data?.nextDraw ?? null;
-    const drawLabel = schedule.data?.countdown
-      ? `${schedule.data.gameName ?? selectedGameName}: ${schedule.data.countdown}`
-      : schedule.data?.gameName ?? selectedGameName;
-
-    return {
-      gameType: selectedGame,
-      gameName: generate.data?.gameName ?? schedule.data?.gameName ?? selectedGameName,
-      modelName: prediction.modelName,
-      mainNumbers: prediction.mainNumbers,
-      specialNumbers: prediction.specialNumbers,
-      confidenceScore: prediction.confidenceScore,
-      notes: '',
-      sourceContext,
-      drawDate,
-      drawLabel,
-    };
-  }
+  // --- Predictions ---
+  const generate = trpc.predictions.generate.useMutation();
 
   function handleGenerate() {
-    setActionMessage(null);
-    generate.mutate({ gameType: selectedGame });
+    generate.mutate(
+      { gameType: selectedGame },
+      {
+        onSuccess: () => {
+          recordAnalyzeGenerate(selectedGame);
+        },
+      },
+    );
   }
 
   function handleSavePick(prediction: PredictionRow, sourceContext: string) {
@@ -324,7 +179,7 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
             isLast={index === ACTIVE_GAMES.length - 1}
             onPress={() => {
               setSelectedGame(gt);
-              setActionMessage(null);
+              recordGamePicked(gt);
               generate.reset();
             }}
           />
