@@ -5,7 +5,11 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
+import { logStartupEnv, registerProcessHandlers } from "./processHandlers";
 import { serveStatic, setupVite } from "./vite";
+
+logStartupEnv();
+registerProcessHandlers();
 
 async function startServer() {
   const app = express();
@@ -45,6 +49,16 @@ async function startServer() {
   // on /healthz before old container is retired).
   app.get("/healthz", (_req, res) => {
     res.status(200).json({ ok: true, uptime: process.uptime() });
+  });
+
+  app.get("/health", (_req, res) => {
+    res.status(200).json({
+      status: "ok",
+      timestamp: Date.now(),
+      oauthConfigured:
+        Boolean(process.env.OAUTH_SERVER_URL?.trim()) ||
+        Boolean(process.env.MANUS_OAUTH_BASE_URL?.trim()),
+    });
   });
 
   // Configure body parser with larger size limit for file uploads
