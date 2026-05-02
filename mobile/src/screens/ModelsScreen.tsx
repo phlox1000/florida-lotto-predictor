@@ -1,16 +1,27 @@
-import { useCallback } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
-import { useDashboardState } from '../lib/DashboardStateProvider';
-import { colors } from '../theme';
+import { useMemo } from 'react';
+import {
+  Card,
+  EmptyState,
+  FeatureRow,
+  MetricRow,
+  Screen,
+  SectionHeader,
+  StatusPill,
+  TerminalLabel,
+} from '../components/ui';
+import { useSavedPicks } from '../lib/SavedPicksProvider';
+import { deriveLedgerStats } from '../lib/ticketGrading';
+import { MOBILE_BUILD_LABEL } from '../lib/version';
 
 export default function ModelsScreen() {
-  const { recordTabOpen } = useDashboardState();
-  useFocusEffect(
-    useCallback(() => {
-      recordTabOpen('models', null);
-    }, [recordTabOpen]),
-  );
+  const { isLoaded, savedPicks } = useSavedPicks();
+
+  const stats = useMemo(() => deriveLedgerStats(savedPicks), [savedPicks]);
+  const modelCounts = stats.byModel;
+  const gameCounts = stats.byGame;
+  const topModel = modelCounts[0] ?? null;
+  const topGame = gameCounts[0] ?? null;
+
   return (
     <Screen
       eyebrow="Intelligence"
@@ -167,8 +178,3 @@ export default function ModelsScreen() {
     </Screen>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
-  title: { fontSize: 24, fontWeight: '600', color: colors.text },
-});

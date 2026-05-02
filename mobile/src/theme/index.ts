@@ -1,22 +1,81 @@
-/**
- * Premium dark analytics shell — used by home dashboard and future screen polish.
- */
 export const colors = {
-  bg: '#0b0f14',
-  bgElevated: '#111827',
-  border: '#1f2937',
-  text: '#f1f5f9',
-  textMuted: '#94a3b8',
-  textSubtle: '#64748b',
-  accent: '#3b82f6',
-  accentDim: 'rgba(59, 130, 246, 0.12)',
-  success: '#22c55e',
-  successDim: 'rgba(34, 197, 94, 0.12)',
-  warning: '#f59e0b',
-  warningDim: 'rgba(245, 158, 11, 0.12)',
-  danger: '#f87171',
-} as const;
+  // Backgrounds
+  background: '#0a0a0f',
+  backgroundRaised: '#111118',
+  surface: '#111118',
+  surfaceRaised: '#1a1a24',
+  surfaceMuted: '#0a0a0f',
 
-export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 20, xxl: 24 } as const;
+  // Borders
+  border: '#2a2a3a',
+  borderMuted: '#2a2a3a',
 
-export const radii = { sm: 8, md: 12, lg: 16, full: 9999 } as const;
+  // Text
+  text: '#e8e8f0',
+  textMuted: '#8888aa',
+  textSubtle: '#555570',
+
+  // Primary accent — cyan (data, active states)
+  accent: '#00d4ff',
+  accentStrong: '#33ddff',
+  accentSoft: 'rgba(0, 212, 255, 0.10)',
+
+  // Secondary accent — gold (highlights, wins)
+  gold: '#ffd700',
+  goldSoft: 'rgba(255, 215, 0, 0.10)',
+
+  // Semantic
+  success: '#00ff88',
+  successSoft: 'rgba(0, 255, 136, 0.08)',
+  warning: '#ffd700',
+  warningSoft: 'rgba(255, 215, 0, 0.10)',
+  danger: '#ff4444',
+  dangerSoft: 'rgba(255, 68, 68, 0.10)',
+
+  white: '#ffffff',
+};
+
+export const spacing = {
+  xs: 4,
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 20,
+  xxl: 28,
+  xxxl: 36,
+};
+
+export const radii = {
+  sm: 4,   // data elements
+  md: 8,   // cards
+  lg: 8,   // same as cards
+  pill: 999,
+};
+
+export const typography = {
+  eyebrow: {
+    fontSize: 10,
+    letterSpacing: 1.5,
+    fontWeight: '700' as const,
+    textTransform: 'uppercase' as const,
+  },
+  title: {
+    fontSize: 30,
+    fontWeight: '800' as const,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '700' as const,
+  },
+  body: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  caption: {
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  mono: {
+    fontFamily: 'monospace' as const,
+  },
+};
