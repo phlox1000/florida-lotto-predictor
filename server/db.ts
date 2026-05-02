@@ -462,6 +462,56 @@ export function buildLearningRollupsFromAccuracyPayloads(
   return { factorAgg, modelAgg };
 }
 
+// One-shot warning flag for the entire process. The prediction_learning_metrics
+// table is intentionally absent in some environments (notably the production
+// Railway MySQL DB while migration 0012 is still pending), and on every
+// generatePredictions call we fan out 2–4 reads + 1 conditional write against
+// it. Without this flag we'd spam the log on every request.
+let _warnedMissingPredictionLearningMetrics = false;
+
+/**
+ * Detect the mysql2 ER_NO_SUCH_TABLE for prediction_learning_metrics by walking
+ * the .cause chain. Drizzle wraps driver errors at least once, sometimes twice
+ * depending on transaction context, so we walk up to 8 levels deep before
+ * giving up and treating it as an unrelated error.
+ *
+ * Matches on either `code === 'ER_NO_SUCH_TABLE'` or `errno === 1146` so we
+ * remain resilient if a future driver upgrade only carries one of the two.
+ * The table-name check keeps us from accidentally swallowing a missing-table
+ * error from some other table that should be loud.
+ */
+function isMissingPredictionLearningMetricsTable(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 8 && current; depth += 1) {
+    if (typeof current === "object" && current !== null) {
+      const e = current as { code?: unknown; errno?: unknown; sqlMessage?: unknown; message?: unknown; cause?: unknown };
+      const codeMatch = e.code === "ER_NO_SUCH_TABLE";
+      const errnoMatch = e.errno === 1146;
+      if (codeMatch || errnoMatch) {
+        const msgFields = [e.sqlMessage, e.message]
+          .filter((m): m is string => typeof m === "string")
+          .join(" ");
+        // If we have any message text, require the table name to appear so we
+        // don't mask an ER_NO_SUCH_TABLE for something else. If neither field
+        // is present, trust the code/errno match.
+        if (!msgFields || msgFields.includes("prediction_learning_metrics")) {
+          return true;
+        }
+      }
+      current = e.cause;
+    } else {
+      break;
+    }
+  }
+  return false;
+}
+
+function logPredictionLearningMetricsMissingOnce(): void {
+  if (_warnedMissingPredictionLearningMetrics) return;
+  _warnedMissingPredictionLearningMetrics = true;
+  console.warn("[predictions] prediction_learning_metrics missing — falling back to non-personalized scoring");
+}
+
 export async function getPredictionLearningMetrics(
   gameType: string,
   metricType: LearningMetricType,
@@ -469,13 +519,21 @@ export async function getPredictionLearningMetrics(
 ) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(predictionLearningMetrics)
-    .where(and(
-      eq(predictionLearningMetrics.gameType, gameType),
-      eq(predictionLearningMetrics.metricType, metricType),
-      eq(predictionLearningMetrics.windowDays, windowDays),
-    ))
-    .orderBy(desc(predictionLearningMetrics.weightedScore));
+  try {
+    return await db.select().from(predictionLearningMetrics)
+      .where(and(
+        eq(predictionLearningMetrics.gameType, gameType),
+        eq(predictionLearningMetrics.metricType, metricType),
+        eq(predictionLearningMetrics.windowDays, windowDays),
+      ))
+      .orderBy(desc(predictionLearningMetrics.weightedScore));
+  } catch (error) {
+    if (isMissingPredictionLearningMetricsTable(error)) {
+      logPredictionLearningMetricsMissingOnce();
+      return [];
+    }
+    throw error;
+  }
 }
 
 /**
@@ -543,17 +601,30 @@ export async function rebuildPredictionLearningMetricsFromEvents(input?: {
   toRows(modelAgg, "model");
 
   if (upserts.length > 0) {
-    await db.insert(predictionLearningMetrics)
-      .values(upserts)
-      .onDuplicateKeyUpdate({
-        set: {
-          sampleCount: sql`VALUES(sampleCount)`,
-          averageMatchRatio: sql`VALUES(averageMatchRatio)`,
-          weightedScore: sql`VALUES(weightedScore)`,
-          windowLabel: sql`VALUES(windowLabel)`,
-          lastUpdatedAt: new Date(),
-        },
-      });
+    try {
+      await db.insert(predictionLearningMetrics)
+        .values(upserts)
+        .onDuplicateKeyUpdate({
+          set: {
+            sampleCount: sql`VALUES(sampleCount)`,
+            averageMatchRatio: sql`VALUES(averageMatchRatio)`,
+            weightedScore: sql`VALUES(weightedScore)`,
+            windowLabel: sql`VALUES(windowLabel)`,
+            lastUpdatedAt: new Date(),
+          },
+        });
+    } catch (error) {
+      // Approach A: this rebuild runs from the cron auto-fetch path
+      // (evaluatePredictionsAgainstDraw → fire-and-forget here). When the
+      // table is missing we no-op gracefully so the surrounding draw
+      // ingestion flow still succeeds. Same one-time warning as the read
+      // path; everything else re-throws.
+      if (isMissingPredictionLearningMetricsTable(error)) {
+        logPredictionLearningMetricsMissingOnce();
+        return { updated: 0, factors: 0, models: 0 };
+      }
+      throw error;
+    }
   }
 
   return { updated: upserts.length, factors: factorAgg.size, models: modelAgg.size };
