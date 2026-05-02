@@ -462,6 +462,21 @@ export function buildLearningRollupsFromAccuracyPayloads(
   return { factorAgg, modelAgg };
 }
 
+/** Once per process: avoid log spam when `prediction_learning_metrics` is not migrated yet. */
+let warnedPredictionLearningMetricsMissing = false;
+
+function isMysqlMissingPredictionLearningMetricsTable(err: unknown): boolean {
+  let current: unknown = err;
+  for (let depth = 0; depth < 8 && current != null; depth++) {
+    const e = current as { code?: string; errno?: number; cause?: unknown };
+    if (e.code === "ER_NO_SUCH_TABLE" || e.errno === 1146) {
+      return true;
+    }
+    current = e.cause;
+  }
+  return false;
+}
+
 export async function getPredictionLearningMetrics(
   gameType: string,
   metricType: LearningMetricType,
@@ -469,13 +484,26 @@ export async function getPredictionLearningMetrics(
 ) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(predictionLearningMetrics)
-    .where(and(
-      eq(predictionLearningMetrics.gameType, gameType),
-      eq(predictionLearningMetrics.metricType, metricType),
-      eq(predictionLearningMetrics.windowDays, windowDays),
-    ))
-    .orderBy(desc(predictionLearningMetrics.weightedScore));
+  try {
+    return await db.select().from(predictionLearningMetrics)
+      .where(and(
+        eq(predictionLearningMetrics.gameType, gameType),
+        eq(predictionLearningMetrics.metricType, metricType),
+        eq(predictionLearningMetrics.windowDays, windowDays),
+      ))
+      .orderBy(desc(predictionLearningMetrics.weightedScore));
+  } catch (err) {
+    if (isMysqlMissingPredictionLearningMetricsTable(err)) {
+      if (!warnedPredictionLearningMetricsMissing) {
+        warnedPredictionLearningMetricsMissing = true;
+        console.warn(
+          "[predictions] prediction_learning_metrics missing — falling back to non-personalized scoring",
+        );
+      }
+      return [];
+    }
+    throw err;
+  }
 }
 
 /**
