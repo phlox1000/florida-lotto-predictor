@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { TRPCClientError } from '@trpc/client';
 import { FLORIDA_GAMES, GAME_TYPES, getModelDisplayName, type GameType } from '@florida-lotto/shared';
 import {
   Card,
@@ -72,6 +73,64 @@ function formatScore(score: number | null | undefined) {
   return score >= 10 ? score.toFixed(0) : score.toFixed(1);
 }
 
+type GenerateErrorCopy = { title: string; body: string };
+
+const GENERATE_ERROR_BY_CODE: Record<string, GenerateErrorCopy> = {
+  UNAUTHORIZED: {
+    title: 'Session expired',
+    body: 'Sign in again to continue.',
+  },
+  TOO_MANY_REQUESTS: {
+    title: 'Rate limit active',
+    body: 'Wait a moment, then run the model set again.',
+  },
+  INTERNAL_SERVER_ERROR: {
+    title: 'Server error',
+    body: 'The model service hit an error. Try again in a moment.',
+  },
+  BAD_REQUEST: {
+    title: 'Invalid request',
+    body: 'The app sent something the server rejected. Update may be needed.',
+  },
+  TIMEOUT: {
+    title: 'Request timed out',
+    body: 'The model took too long to respond. Try again.',
+  },
+};
+
+const GENERATE_ERROR_FALLBACK: GenerateErrorCopy = {
+  title: 'Generation failed',
+  body: 'The request did not complete. Check your connection and try again.',
+};
+
+function getTrpcErrorCode(err: unknown): string | undefined {
+  if (err instanceof TRPCClientError) {
+    const code = (err.data as { code?: string } | undefined)?.code;
+    return typeof code === 'string' ? code : undefined;
+  }
+  return undefined;
+}
+
+function getTrpcHttpStatus(err: unknown): number | undefined {
+  if (err instanceof TRPCClientError) {
+    const status = (err.data as { httpStatus?: number } | undefined)?.httpStatus;
+    return typeof status === 'number' ? status : undefined;
+  }
+  return undefined;
+}
+
+function getGenerateErrorCopy(err: unknown): GenerateErrorCopy {
+  let code = getTrpcErrorCode(err);
+  const msg = err instanceof Error ? err.message : '';
+  if (!code && msg.includes('Too many')) {
+    code = 'TOO_MANY_REQUESTS';
+  }
+  if (code && GENERATE_ERROR_BY_CODE[code]) {
+    return GENERATE_ERROR_BY_CODE[code];
+  }
+  return GENERATE_ERROR_FALLBACK;
+}
+
 function formatPick(mainNumbers: number[], specialNumbers: number[]) {
   const main = mainNumbers.join(' - ');
   return specialNumbers.length > 0
@@ -86,6 +145,7 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
   const [expandedModelId, setExpandedModelId] = useState<string | null>(null);
   const [showAllModels, setShowAllModels] = useState(false);
   const extraFadeAnim = useRef(new Animated.Value(0)).current;
+  const rankedFadeAnim = useRef(new Animated.Value(0)).current;
 
   const selectedGameName = FLORIDA_GAMES[selectedGame].name;
   const { isSaved, savePick, savedPicks, storageError } = useSavedPicks();
@@ -100,6 +160,14 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
     { refetchOnWindowFocus: false },
   );
 
+  const generate = trpc.predictions.generate.useMutation();
+
+  const generateErrorCopy = useMemo(
+    () =>
+      generate.isError && generate.error ? getGenerateErrorCopy(generate.error) : null,
+    [generate.isError, generate.error],
+  );
+
   useEffect(() => {
     if (!schedule.isLoading) {
       setShowSlowWarning(false);
@@ -109,22 +177,32 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
     return () => clearTimeout(timer);
   }, [schedule.isLoading]);
 
-  const generate = trpc.predictions.generate.useMutation();
+  const prevGenerateErrorRef = useRef(false);
+
+  useEffect(() => {
+    if (generate.isError && generate.error && !prevGenerateErrorRef.current) {
+      console.error('[predictions.generate] error:', JSON.stringify(generate.error, null, 2));
+    }
+    prevGenerateErrorRef.current = generate.isError;
+  }, [generate.isError, generate.error]);
 
   // Reset expanded/show-all state when game changes or new generation runs
   useEffect(() => {
     setExpandedModelId(null);
     setShowAllModels(false);
     extraFadeAnim.setValue(0);
-  }, [selectedGame, extraFadeAnim]);
+    rankedFadeAnim.setValue(0);
+  }, [selectedGame, extraFadeAnim, rankedFadeAnim]);
 
   useEffect(() => {
     if (generate.isSuccess) {
       setExpandedModelId(null);
       setShowAllModels(false);
       extraFadeAnim.setValue(0);
+      rankedFadeAnim.setValue(0);
+      Animated.timing(rankedFadeAnim, { toValue: 1, duration: 220, useNativeDriver: true }).start();
     }
-  }, [generate.isSuccess, extraFadeAnim]);
+  }, [generate.isSuccess, extraFadeAnim, rankedFadeAnim]);
 
   const toggleShowAll = useCallback(() => {
     if (!showAllModels) {
@@ -417,18 +495,25 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
 
         {generate.isError ? (
           <>
+            {__DEV__ ? (
+              <Text style={styles.debugStrip} selectable>
+                {[
+                  `code=${getTrpcErrorCode(generate.error) ?? 'n/a'}`,
+                  `http=${getTrpcHttpStatus(generate.error) ?? 'n/a'}`,
+                  generate.error?.message ?? '',
+                ].join('\n')}
+              </Text>
+            ) : null}
             <StateBlock
               tone="danger"
-              title={generate.error?.message?.includes('Too many') ? 'Rate limit active' : 'Generation failed'}
-              body={
-                generate.error?.message?.includes('Too many')
-                  ? 'Wait a moment, then run the model set again.'
-                  : 'The request did not complete. Check your connection and try again.'
-              }
+              title={generateErrorCopy?.title ?? GENERATE_ERROR_FALLBACK.title}
+              body={generateErrorCopy?.body ?? GENERATE_ERROR_FALLBACK.body}
             />
             {/* Production-safe diagnostic: surface only the tRPC code (no
                 message body, stack, or PII) so the user can read it back
-                to support if Generate Analysis keeps failing. */}
+                to support if Generate Analysis keeps failing. The dev-only
+                debugStrip above already shows the same code plus the full
+                message — this line is what production users see. */}
             <Text style={styles.errorCode} numberOfLines={1}>
               {`code: ${extractTrpcErrorCode(generate.error) ?? 'UNKNOWN'}`}
             </Text>
@@ -444,7 +529,8 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
         ) : null}
 
         {generate.isPending ? (
-          <View style={{ gap: ui.spacing.md, marginTop: ui.spacing.sm }}>
+          <View style={styles.loadingStack}>
+            <Text style={styles.loadingLabel}>Refreshing model outputs…</Text>
             <SkeletonCard />
             <SkeletonCard />
             <SkeletonCard />
@@ -453,37 +539,10 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
 
         {top3 && !generate.isPending ? (
           <>
-            {featuredPick ? (
-              <View style={styles.featuredCard}>
-                <View style={styles.featuredHeader}>
-                  <Text style={styles.featuredEyebrow}>Featured pick</Text>
-                  <StatusPill label={typeof featuredPick.aiScore === 'number' ? `AI ${featuredPick.aiScore}` : 'Top-ranked'} tone="success" />
-                </View>
-                <Text style={styles.featuredModel}>{getModelDisplayName(featuredPick.modelName)}</Text>
-                <Text style={styles.featuredReason}>
-                  {typeof featuredPick.aiScore === 'number'
-                    ? `Chosen for the highest aiScore in the current model set.`
-                    : `Chosen as the highest-ranked available model output.`}
-                </Text>
-                <View style={styles.numberRow}>
-                  {featuredPick.mainNumbers.map(number => (
-                    <NumberChip key={`featured-main-${number}`} value={number} large />
-                  ))}
-                </View>
-                {featuredPick.explanationSummary ? (
-                  <Text style={styles.featuredExplanation} numberOfLines={3}>
-                    {featuredPick.explanationSummary}
-                  </Text>
-                ) : (
-                  <Text style={styles.trustFallback}>Explanation pending from API response.</Text>
-                )}
-                <Text style={styles.featuredDisclaimer}>
-                  Lottery outcomes are random. Signals are informational only and do not guarantee results.
-                </Text>
-              </View>
-            ) : null}
-
-            <TerminalLabel>Ranked signals</TerminalLabel>
+            <Animated.View style={[styles.rankedHeaderWrap, { opacity: rankedFadeAnim }]}>
+              <TerminalLabel>Ranked signals</TerminalLabel>
+              <Text style={styles.rankedCaption}>Top 3 are shown first. Expand to review all models.</Text>
+            </Animated.View>
 
             {/* Top 3 — always visible */}
             {top3.map((pred, index) => {
@@ -491,57 +550,25 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
               const input = createPickInput(pred, `Analyze rank ${rank}`);
               const perf = perfMap.get(pred.modelName) ?? null;
               return (
-                <View key={`${pred.modelName}-${index}`}>
-                  <ModelSignalCard
-                    rank={rank}
-                    modelId={getModelDisplayName(pred.modelName)}
-                    modelDescription={getModelDescription(pred.modelName)}
-                    picks={pred.mainNumbers}
-                    specialNumbers={pred.specialNumbers.length > 0 ? pred.specialNumbers : undefined}
-                    confidenceScore={pred.confidenceScore}
-                    maxScore={maxScore}
-                    performance={perf}
-                    isSaved={isSaved(input)}
-                    isExpanded={expandedModelId === pred.modelName}
-                    onToggleExpand={() =>
-                      setExpandedModelId(prev => prev === pred.modelName ? null : pred.modelName)
-                    }
-                    onSave={() => handleSavePick(pred, `Analyze rank ${rank}`)}
-                    onShare={() => handleSharePick(pred)}
-                  />
-                  <View style={styles.trustPanel}>
-                    <View style={styles.trustRow}>
-                      <StatusPill
-                        label={typeof pred.aiScore === 'number' ? `AI ${pred.aiScore}` : 'AI score —'}
-                        tone={typeof pred.aiScore === 'number' ? 'accent' : 'neutral'}
-                      />
-                      <StatusPill label={`Confidence ${pred.confidenceLabel ?? 'Pending'}`} tone="neutral" />
-                      <StatusPill label={`Risk ${pred.riskLevel ?? 'Pending'}`} tone="warning" />
-                    </View>
-                    <MetricRow
-                      label="Model agreement"
-                      value={typeof pred.modelAgreement === 'number' ? `${(pred.modelAgreement * 100).toFixed(0)}%` : 'Pending'}
-                    />
-                    <MetricRow
-                      label="Learning window"
-                      value={pred.learningWindowLabel ?? (pred.tableLearningUsed ? 'Table-backed' : 'Event fallback')}
-                    />
-                    {pred.explanationSummary ? (
-                      <Text style={styles.trustExplanation} numberOfLines={3}>{pred.explanationSummary}</Text>
-                    ) : (
-                      <Text style={styles.trustFallback}>Explanation pending from API response.</Text>
-                    )}
-                    <View style={styles.factorRow}>
-                      {(pred.topSupportingFactors ?? []).slice(0, 3).map((factor, factorIdx) => (
-                        <Text key={`${pred.modelName}-factor-${factorIdx}`} style={styles.factorItem}>
-                          {(factor.note || factor.key || 'Signal').slice(0, 26)}
-                        </Text>
-                      ))}
-                      {(!pred.topSupportingFactors || pred.topSupportingFactors.length === 0) ? (
-                        <Text style={styles.trustFallback}>Supporting factors pending.</Text>
-                      ) : null}
-                    </View>
-                  </View>
+                <View style={styles.modelCardWrap}>
+                <ModelSignalCard
+                  key={`${pred.modelName}-${index}`}
+                  rank={rank}
+                  modelId={getModelDisplayName(pred.modelName)}
+                  modelDescription={getModelDescription(pred.modelName)}
+                  picks={pred.mainNumbers}
+                  specialNumbers={pred.specialNumbers.length > 0 ? pred.specialNumbers : undefined}
+                  confidenceScore={pred.confidenceScore}
+                  maxScore={maxScore}
+                  performance={perf}
+                  isSaved={isSaved(input)}
+                  isExpanded={expandedModelId === pred.modelName}
+                  onToggleExpand={() =>
+                    setExpandedModelId(prev => prev === pred.modelName ? null : pred.modelName)
+                  }
+                  onSave={() => handleSavePick(pred, `Analyze rank ${rank}`)}
+                  onShare={() => handleSharePick(pred)}
+                />
                 </View>
               );
             })}
@@ -556,38 +583,25 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
                       const input = createPickInput(pred, `Analyze rank ${rank}`);
                       const perf = perfMap.get(pred.modelName) ?? null;
                       return (
-                        <View key={`${pred.modelName}-${idx}`}>
-                          <ModelSignalCard
-                            rank={rank}
-                            modelId={getModelDisplayName(pred.modelName)}
-                            modelDescription={getModelDescription(pred.modelName)}
-                            picks={pred.mainNumbers}
-                            specialNumbers={pred.specialNumbers.length > 0 ? pred.specialNumbers : undefined}
-                            confidenceScore={pred.confidenceScore}
-                            maxScore={maxScore}
-                            performance={perf}
-                            isSaved={isSaved(input)}
-                            isExpanded={expandedModelId === pred.modelName}
-                            onToggleExpand={() =>
-                              setExpandedModelId(prev => prev === pred.modelName ? null : pred.modelName)
-                            }
-                            onSave={() => handleSavePick(pred, `Analyze rank ${rank}`)}
-                            onShare={() => handleSharePick(pred)}
-                          />
-                          <View style={styles.trustPanel}>
-                            <View style={styles.trustRow}>
-                              <StatusPill
-                                label={typeof pred.aiScore === 'number' ? `AI ${pred.aiScore}` : 'AI score —'}
-                                tone={typeof pred.aiScore === 'number' ? 'accent' : 'neutral'}
-                              />
-                              <StatusPill label={`Confidence ${pred.confidenceLabel ?? 'Pending'}`} tone="neutral" />
-                            </View>
-                            {pred.explanationSummary ? (
-                              <Text style={styles.trustExplanation} numberOfLines={2}>{pred.explanationSummary}</Text>
-                            ) : (
-                              <Text style={styles.trustFallback}>Explanation pending from API response.</Text>
-                            )}
-                          </View>
+                        <View style={styles.modelCardWrap}>
+                        <ModelSignalCard
+                          key={`${pred.modelName}-${idx}`}
+                          rank={rank}
+                          modelId={getModelDisplayName(pred.modelName)}
+                          modelDescription={getModelDescription(pred.modelName)}
+                          picks={pred.mainNumbers}
+                          specialNumbers={pred.specialNumbers.length > 0 ? pred.specialNumbers : undefined}
+                          confidenceScore={pred.confidenceScore}
+                          maxScore={maxScore}
+                          performance={perf}
+                          isSaved={isSaved(input)}
+                          isExpanded={expandedModelId === pred.modelName}
+                          onToggleExpand={() =>
+                            setExpandedModelId(prev => prev === pred.modelName ? null : pred.modelName)
+                          }
+                          onSave={() => handleSavePick(pred, `Analyze rank ${rank}`)}
+                          onShare={() => handleSharePick(pred)}
+                        />
                         </View>
                       );
                     })}
@@ -745,10 +759,14 @@ const styles = StyleSheet.create({
     backgroundColor: ui.colors.surfaceRaised,
     borderColor: ui.colors.success,
     borderWidth: 1,
-    borderRadius: ui.radii.md,
+    borderRadius: ui.radii.lg,
     padding: ui.spacing.lg,
-    marginBottom: ui.spacing.lg,
-    gap: ui.spacing.sm,
+    marginBottom: ui.spacing.xl,
+    gap: ui.spacing.md,
+    shadowColor: ui.colors.success,
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
   },
   featuredHeader: {
     flexDirection: 'row',
@@ -764,7 +782,7 @@ const styles = StyleSheet.create({
   },
   featuredModel: {
     color: ui.colors.text,
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '800',
   },
   featuredReason: {
@@ -785,7 +803,20 @@ const styles = StyleSheet.create({
   },
 
   generateButton: {
-    marginBottom: ui.spacing.lg,
+    marginBottom: ui.spacing.xl,
+  },
+
+  debugStrip: {
+    fontFamily: 'monospace',
+    fontSize: 10,
+    lineHeight: 14,
+    color: ui.colors.textMuted,
+    marginBottom: ui.spacing.sm,
+    padding: ui.spacing.sm,
+    backgroundColor: ui.colors.surfaceRaised,
+    borderRadius: ui.radii.sm,
+    borderWidth: 1,
+    borderColor: ui.colors.border,
   },
 
   numberRow: {
@@ -821,9 +852,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: ui.radii.md,
     padding: ui.spacing.md,
-    marginTop: -ui.spacing.sm,
-    marginBottom: ui.spacing.md,
-    gap: ui.spacing.sm,
+    marginTop: -ui.spacing.xs,
+    marginBottom: ui.spacing.lg,
+    gap: ui.spacing.md,
   },
   trustRow: {
     flexDirection: 'row',
@@ -843,7 +874,8 @@ const styles = StyleSheet.create({
   factorRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: ui.spacing.xs,
+    gap: ui.spacing.sm,
+    marginTop: ui.spacing.xs,
   },
   factorItem: {
     color: ui.colors.accent,
@@ -872,7 +904,7 @@ const styles = StyleSheet.create({
   },
   actionRow: {
     flexDirection: 'row',
-    gap: ui.spacing.sm,
+    gap: ui.spacing.md,
     marginBottom: ui.spacing.md,
   },
   actionButton: {
@@ -882,5 +914,28 @@ const styles = StyleSheet.create({
     color: ui.colors.textSubtle,
     fontSize: 11,
     lineHeight: 16,
+  },
+  loadingStack: {
+    gap: ui.spacing.md,
+    marginTop: ui.spacing.sm,
+  },
+  loadingLabel: {
+    color: ui.colors.textSubtle,
+    fontSize: 11,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    fontWeight: '700',
+  },
+  rankedHeaderWrap: {
+    gap: ui.spacing.xs,
+    marginBottom: ui.spacing.sm,
+  },
+  rankedCaption: {
+    color: ui.colors.textSubtle,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  modelCardWrap: {
+    marginBottom: ui.spacing.sm,
   },
 });
