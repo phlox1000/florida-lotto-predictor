@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { TRPCClientError } from '@trpc/client';
 import { FLORIDA_GAMES, GAME_TYPES, getModelDisplayName, type GameType } from '@florida-lotto/shared';
 import {
   Card,
@@ -52,6 +53,64 @@ function formatScore(score: number | null | undefined) {
   return score >= 10 ? score.toFixed(0) : score.toFixed(1);
 }
 
+type GenerateErrorCopy = { title: string; body: string };
+
+const GENERATE_ERROR_BY_CODE: Record<string, GenerateErrorCopy> = {
+  UNAUTHORIZED: {
+    title: 'Session expired',
+    body: 'Sign in again to continue.',
+  },
+  TOO_MANY_REQUESTS: {
+    title: 'Rate limit active',
+    body: 'Wait a moment, then run the model set again.',
+  },
+  INTERNAL_SERVER_ERROR: {
+    title: 'Server error',
+    body: 'The model service hit an error. Try again in a moment.',
+  },
+  BAD_REQUEST: {
+    title: 'Invalid request',
+    body: 'The app sent something the server rejected. Update may be needed.',
+  },
+  TIMEOUT: {
+    title: 'Request timed out',
+    body: 'The model took too long to respond. Try again.',
+  },
+};
+
+const GENERATE_ERROR_FALLBACK: GenerateErrorCopy = {
+  title: 'Generation failed',
+  body: 'The request did not complete. Check your connection and try again.',
+};
+
+function getTrpcErrorCode(err: unknown): string | undefined {
+  if (err instanceof TRPCClientError) {
+    const code = (err.data as { code?: string } | undefined)?.code;
+    return typeof code === 'string' ? code : undefined;
+  }
+  return undefined;
+}
+
+function getTrpcHttpStatus(err: unknown): number | undefined {
+  if (err instanceof TRPCClientError) {
+    const status = (err.data as { httpStatus?: number } | undefined)?.httpStatus;
+    return typeof status === 'number' ? status : undefined;
+  }
+  return undefined;
+}
+
+function getGenerateErrorCopy(err: unknown): GenerateErrorCopy {
+  let code = getTrpcErrorCode(err);
+  const msg = err instanceof Error ? err.message : '';
+  if (!code && msg.includes('Too many')) {
+    code = 'TOO_MANY_REQUESTS';
+  }
+  if (code && GENERATE_ERROR_BY_CODE[code]) {
+    return GENERATE_ERROR_BY_CODE[code];
+  }
+  return GENERATE_ERROR_FALLBACK;
+}
+
 function formatPick(mainNumbers: number[], specialNumbers: number[]) {
   const main = mainNumbers.join(' - ');
   return specialNumbers.length > 0
@@ -81,6 +140,14 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
     { refetchOnWindowFocus: false },
   );
 
+  const generate = trpc.predictions.generate.useMutation();
+
+  const generateErrorCopy = useMemo(
+    () =>
+      generate.isError && generate.error ? getGenerateErrorCopy(generate.error) : null,
+    [generate.isError, generate.error],
+  );
+
   useEffect(() => {
     if (!schedule.isLoading) {
       setShowSlowWarning(false);
@@ -90,7 +157,14 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
     return () => clearTimeout(timer);
   }, [schedule.isLoading]);
 
-  const generate = trpc.predictions.generate.useMutation();
+  const prevGenerateErrorRef = useRef(false);
+
+  useEffect(() => {
+    if (generate.isError && generate.error && !prevGenerateErrorRef.current) {
+      console.error('[predictions.generate] error:', JSON.stringify(generate.error, null, 2));
+    }
+    prevGenerateErrorRef.current = generate.isError;
+  }, [generate.isError, generate.error]);
 
   // Reset expanded/show-all state when game changes or new generation runs
   useEffect(() => {
@@ -392,15 +466,22 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
         />
 
         {generate.isError ? (
-          <StateBlock
-            tone="danger"
-            title={generate.error?.message?.includes('Too many') ? 'Rate limit active' : 'Generation failed'}
-            body={
-              generate.error?.message?.includes('Too many')
-                ? 'Wait a moment, then run the model set again.'
-                : 'The request did not complete. Check your connection and try again.'
-            }
-          />
+          <>
+            {__DEV__ ? (
+              <Text style={styles.debugStrip} selectable>
+                {[
+                  `code=${getTrpcErrorCode(generate.error) ?? 'n/a'}`,
+                  `http=${getTrpcHttpStatus(generate.error) ?? 'n/a'}`,
+                  generate.error?.message ?? '',
+                ].join('\n')}
+              </Text>
+            ) : null}
+            <StateBlock
+              tone="danger"
+              title={generateErrorCopy?.title ?? GENERATE_ERROR_FALLBACK.title}
+              body={generateErrorCopy?.body ?? GENERATE_ERROR_FALLBACK.body}
+            />
+          </>
         ) : null}
 
         {!generate.isPending && !generate.isError && !allSorted ? (
@@ -670,6 +751,19 @@ const styles = StyleSheet.create({
 
   generateButton: {
     marginBottom: ui.spacing.xl,
+  },
+
+  debugStrip: {
+    fontFamily: 'monospace',
+    fontSize: 10,
+    lineHeight: 14,
+    color: ui.colors.textMuted,
+    marginBottom: ui.spacing.sm,
+    padding: ui.spacing.sm,
+    backgroundColor: ui.colors.surfaceRaised,
+    borderRadius: ui.radii.sm,
+    borderWidth: 1,
+    borderColor: ui.colors.border,
   },
 
   numberRow: {

@@ -41,5 +41,6 @@ The AI Analysis feature uses a chat-completions compatible HTTP API. If credenti
 
 ## Health and rollouts
 
-- Web service health check: `GET /healthz` (see `render.yaml` comments).
+- Web service health check: `GET /healthz` returns JSON `{ "ok": true, "uptime": number }` (see `render.yaml` comments).
+- tRPC HTTP endpoint: `POST /trpc` (and legacy alias `POST /api/trpc`).
 - Manual deploys: the project may keep auto-deploy off; merge to `main` does not always roll out until a human deploys in the dashboard.
