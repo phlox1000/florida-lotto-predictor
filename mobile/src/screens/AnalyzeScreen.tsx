@@ -17,10 +17,30 @@ import {
   TerminalLabel,
   ui,
 } from '../components/ui';
+import { formatBuildIdentity, getBuildIdentity } from '../lib/buildIdentity';
 import { getModelDescription } from '../lib/modelDescriptions';
 import { derivePredictionSignals } from '../lib/predictionSignals';
 import { useSavedPicks, type SavePickInput } from '../lib/SavedPicksProvider';
 import { trpc } from '../lib/trpc';
+
+// Snapshot once at module load — runtimeVersion / updateId / commitSha are
+// fixed for the lifetime of the JS bundle, no need to recompute per render.
+const BUILD_IDENTITY_LINE = formatBuildIdentity(getBuildIdentity());
+
+function extractTrpcErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  // @trpc/client TRPCClientError exposes the server-side code on .data.code.
+  const data = (error as { data?: { code?: unknown } }).data;
+  if (data && typeof data.code === 'string' && data.code.length > 0) {
+    return data.code;
+  }
+  // Fallback for shape-mismatched / network errors that never reached tRPC.
+  const shape = (error as { shape?: { data?: { code?: unknown } } }).shape;
+  if (shape?.data && typeof shape.data.code === 'string' && shape.data.code.length > 0) {
+    return shape.data.code;
+  }
+  return null;
+}
 
 const ACTIVE_GAMES = GAME_TYPES.filter(gt => !FLORIDA_GAMES[gt].schedule.ended);
 
@@ -232,6 +252,14 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
       title="Analyze"
       subtitle="Live draw context, model output, and signal summary."
     >
+      <Text
+        style={styles.buildIdentity}
+        numberOfLines={1}
+        accessibilityLabel="Build identity"
+      >
+        {BUILD_IDENTITY_LINE}
+      </Text>
+
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -388,15 +416,23 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
         />
 
         {generate.isError ? (
-          <StateBlock
-            tone="danger"
-            title={generate.error?.message?.includes('Too many') ? 'Rate limit active' : 'Generation failed'}
-            body={
-              generate.error?.message?.includes('Too many')
-                ? 'Wait a moment, then run the model set again.'
-                : 'The request did not complete. Check your connection and try again.'
-            }
-          />
+          <>
+            <StateBlock
+              tone="danger"
+              title={generate.error?.message?.includes('Too many') ? 'Rate limit active' : 'Generation failed'}
+              body={
+                generate.error?.message?.includes('Too many')
+                  ? 'Wait a moment, then run the model set again.'
+                  : 'The request did not complete. Check your connection and try again.'
+              }
+            />
+            {/* Production-safe diagnostic: surface only the tRPC code (no
+                message body, stack, or PII) so the user can read it back
+                to support if Generate Analysis keeps failing. */}
+            <Text style={styles.errorCode} numberOfLines={1}>
+              {`code: ${extractTrpcErrorCode(generate.error) ?? 'UNKNOWN'}`}
+            </Text>
+          </>
         ) : null}
 
         {!generate.isPending && !generate.isError && !allSorted ? (
@@ -615,6 +651,23 @@ export default function AnalyzeScreen({ navigation }: AnalyzeScreenProps) {
 }
 
 const styles = StyleSheet.create({
+  buildIdentity: {
+    color: ui.colors.textSubtle,
+    fontFamily: 'monospace',
+    fontSize: 10,
+    letterSpacing: 0.3,
+    textAlign: 'left',
+    marginTop: -ui.spacing.md,
+    marginBottom: ui.spacing.md,
+  },
+  errorCode: {
+    color: ui.colors.textSubtle,
+    fontFamily: 'monospace',
+    fontSize: 10,
+    letterSpacing: 0.3,
+    marginTop: ui.spacing.xs,
+  },
+
   selectorRow: {
     borderBottomWidth: 1,
     borderBottomColor: ui.colors.border,
