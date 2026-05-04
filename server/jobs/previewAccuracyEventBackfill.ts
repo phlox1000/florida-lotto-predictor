@@ -22,6 +22,13 @@ import { predictions, drawResults } from "../../drizzle/schema";
 import { eq, and, gte, lte, isNotNull } from "drizzle-orm";
 import { FLORIDA_GAMES, type GameType } from "@shared/lottery";
 import { scorePredictionAgainstDraw } from "../predictions/scorePrediction";
+import {
+  findCandidateDraws,
+  extractFactorSnapshot,
+  buildBackfillEventRow,
+  type DrawLite,
+  type PredictionLite,
+} from "./backfillHelpers";
 
 // ===== CLI parsing =====
 
@@ -81,25 +88,12 @@ if (GAME_TYPE_ARG && !(GAME_TYPE_ARG in FLORIDA_GAMES)) {
   process.exit(1);
 }
 
-// ===== Constants =====
-
-const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-
 // ===== Types =====
 
-interface CandidateEvent {
-  predictionId: number;
-  drawResultId: number;
+interface ExampleSeed {
+  prediction: PredictionLite;
+  draw: DrawLite;
   gameType: string;
-  modelName: string;
-  userId: number;
-  occurredAt: Date;
-  predictedMain: number[];
-  actualMain: number[];
-  mainHits: number;
-  matchRatio: number;
-  factorSnapshot: Record<string, number>;
-  predictionCreatedAt: Date;
 }
 
 // ===== Main =====
@@ -132,7 +126,7 @@ async function main(): Promise<void> {
   let grandTotalEvents = 0;
   let grandTotalPredictions = 0;
   let grandTotalMatched = 0;
-  const exampleEvents: CandidateEvent[] = [];
+  const exampleEvents: ExampleSeed[] = [];
 
   for (const [gameType, cfg] of gameEntries) {
     if (!cfg) {
@@ -169,31 +163,38 @@ async function main(): Promise<void> {
       .where(eq(drawResults.gameType, gameType))
       .orderBy(drawResults.drawDate);
 
-    let gameEvents = 0;
+    let predictionsInRangeWithFactor = 0;
+    let matchedPredictionsWithFactor = 0;
     let predictionsMatched = 0;
-    let predictionsWithFactor = 0;
+    let gameEvents = 0;
     const matchRatios: number[] = [];
 
     for (const pred of preds) {
-      const predTimeMs = (pred.createdAt as Date).getTime();
-      const cutoffMs = predTimeMs + SEVEN_DAYS_MS;
+      const factorSnapshot = extractFactorSnapshot(pred.metadata as Record<string, unknown> | null);
+      const hasFactor = Object.keys(factorSnapshot).length > 0;
+      if (hasFactor) predictionsInRangeWithFactor++;
 
-      const candidateDraws = draws.filter(
-        (d) => d.drawDate > predTimeMs && d.drawDate <= cutoffMs,
+      const candidateDraws = findCandidateDraws(
+        { createdAt: pred.createdAt as Date },
+        draws.map(d => ({ id: d.id, drawDate: d.drawDate, mainNumbers: d.mainNumbers as number[] })),
       );
 
       if (candidateDraws.length === 0) continue;
       predictionsMatched++;
+      if (hasFactor) matchedPredictionsWithFactor++;
 
-      const factorSnapshot = ((pred.metadata as Record<string, any> | null)
-        ?.explainable?.factorSnapshot ?? {}) as Record<string, number>;
-      if (Object.keys(factorSnapshot).length > 0) predictionsWithFactor++;
-
-      const predMain = pred.mainNumbers as number[];
+      const predLite: PredictionLite = {
+        id: pred.id,
+        userId: pred.userId!,
+        modelName: pred.modelName,
+        gameType,
+        mainNumbers: pred.mainNumbers as number[],
+        metadata: pred.metadata as Record<string, unknown> | null,
+        createdAt: pred.createdAt as Date,
+      };
 
       for (const draw of candidateDraws) {
-        const actualMain = draw.mainNumbers as number[];
-        const { mainHits, matchRatio } = scorePredictionAgainstDraw(predMain, actualMain);
+        const { matchRatio } = scorePredictionAgainstDraw(predLite.mainNumbers, draw.mainNumbers);
         matchRatios.push(matchRatio);
         gameEvents++;
 
@@ -203,18 +204,9 @@ async function main(): Promise<void> {
           !exampleEvents.some((e) => e.gameType === gameType)
         ) {
           exampleEvents.push({
-            predictionId: pred.id,
-            drawResultId: draw.id,
+            prediction: predLite,
+            draw,
             gameType,
-            modelName: pred.modelName,
-            userId: pred.userId!,
-            occurredAt: new Date(draw.drawDate),
-            predictedMain: predMain,
-            actualMain,
-            mainHits,
-            matchRatio,
-            factorSnapshot,
-            predictionCreatedAt: pred.createdAt as Date,
           });
         }
       }
@@ -235,8 +227,12 @@ async function main(): Promise<void> {
       }`,
     );
     console.log(
-      `  Predictions with factor_snapshot:    ${predictionsWithFactor}` +
-        ` (${preds.length > 0 ? Math.round((100 * predictionsWithFactor) / preds.length) : 0}%)`,
+      `  Predictions in range with factor_snapshot:  ${predictionsInRangeWithFactor}` +
+        ` (${preds.length > 0 ? Math.round((100 * predictionsInRangeWithFactor) / preds.length) : 0}%)`,
+    );
+    console.log(
+      `  Matched preds with factor_snapshot:         ${matchedPredictionsWithFactor}` +
+        ` (${predictionsMatched > 0 ? Math.round((100 * matchedPredictionsWithFactor) / predictionsMatched) : 0}% of matched)`,
     );
     if (matchRatios.length > 0) {
       const sorted = [...matchRatios].sort((a, b) => a - b);
@@ -263,46 +259,20 @@ async function main(): Promise<void> {
   console.log(`Events that would be emitted:          ${grandTotalEvents}`);
   console.log(``);
 
-  // Example payloads
+  // Example payloads — built with the same helper the write-capable script uses,
+  // so the preview's example output is byte-identical to what PR 3 would insert.
   if (exampleEvents.length > 0) {
     console.log(`========== Example Synthetic Event Payloads (${exampleEvents.length}) ==========`);
     for (let i = 0; i < exampleEvents.length; i++) {
       const e = exampleEvents[i];
-      const correlation_id = `prediction:${e.gameType}:${e.userId}:${e.predictionCreatedAt.getTime()}`;
-      const deterministic_id = `backfill:accuracy:${e.gameType}:${e.predictionId}:${e.drawResultId}`;
-
-      const examplePayload = {
-        // Top-level event row fields (would be inserted into app_events)
-        id: deterministic_id,
-        event_type: "prediction_accuracy_calculated",
-        app_id: "florida-lotto",
-        user_id: e.userId,
-        correlation_id,
-        occurred_at: e.occurredAt.toISOString(),
-        // recorded_at is set automatically by DB at insert time
-        schema_version: "1.0",
-        platform_version: "1.0.0",
-        // Payload (matches the live emit shape, plus backfill metadata)
-        payload: {
-          game: e.gameType,
-          matched_numbers: e.mainHits,
-          total_picks: e.predictedMain.length,
-          net_outcome: 0,
-          model_scores: { [e.modelName]: e.matchRatio },
-          factor_snapshot: e.factorSnapshot,
-          match_ratio: e.matchRatio,
-          triggered_by: correlation_id,
-          // Backfill-specific metadata; ignored by rebuild aggregation,
-          // queryable for audit and rollback.
-          source: "historical_backfill_phase1",
-          backfill_run_id: RUN_ID,
-          prediction_id: e.predictionId,
-          draw_result_id: e.drawResultId,
-        },
-      };
+      const row = buildBackfillEventRow({
+        prediction: e.prediction,
+        draw: e.draw,
+        backfillRunId: RUN_ID,
+      });
 
       console.log(`\n--- Example ${i + 1} of ${exampleEvents.length} (${e.gameType}) ---`);
-      console.log(JSON.stringify(examplePayload, null, 2));
+      console.log(JSON.stringify(row, null, 2));
     }
     console.log(``);
   }

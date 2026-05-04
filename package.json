@@ -12,7 +12,8 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "db:push": "drizzle-kit generate && drizzle-kit migrate",
-    "preview:accuracy-backfill": "tsx server/jobs/previewAccuracyEventBackfill.ts"
+    "preview:accuracy-backfill": "tsx server/jobs/previewAccuracyEventBackfill.ts",
+    "backfill:accuracy-events": "tsx server/jobs/backfillAccuracyEvents.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.693.0",

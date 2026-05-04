@@ -124,3 +124,63 @@ coverage:
 After Phase 1 ships, factor rollups will grow naturally as new attributed
 predictions accumulate (the explainable scoring pipeline is now standard
 in the live path).
+
+## Running the write-capable backfill
+
+After a clean preview, the write-capable script emits events for real:
+
+```powershell
+# Pilot one game first (dry-run validates expected event count)
+pnpm backfill:accuracy-events -- --game-type=fantasy_5
+
+# Pilot one game, commit
+pnpm backfill:accuracy-events -- --game-type=fantasy_5 --commit=BACKFILL_PHASE1_EVENTS
+
+# After validating PLM rows in DBeaver, run all games
+pnpm backfill:accuracy-events -- --commit=BACKFILL_PHASE1_EVENTS
+```
+
+The exact phrase `--commit=BACKFILL_PHASE1_EVENTS` is required for any write. Any other value (including `--commit=true`, `--commit=yes`, or a missing value) aborts before touching the DB.
+
+## Idempotency and re-runs
+
+The backfill is safe to re-run.
+
+Each event has a deterministic `id` of the form `backfill:accuracy:<gameType>:<predictionId>:<drawResultId>`. The primary key on `app_events.id` enforces uniqueness. The script's insert uses `ON DUPLICATE KEY UPDATE recorded_at = recorded_at` (no-op upsert), so collisions on re-run produce zero new rows and zero changes to existing rows.
+
+Re-running picks up new (prediction, draw) pairs that became matchable since the previous run — for example, predictions made within the last 7 days whose draw windows have since filled in. The 54 unmatched fantasy_5 predictions noted in the preview will become processable as new fantasy_5 draws arrive over the following week. Re-running this script after that point captures them automatically.
+
+## Rolling back
+
+To remove all events from a specific backfill run:
+
+```sql
+DELETE FROM app_events
+WHERE event_type = 'prediction_accuracy_calculated'
+  AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.source')) = 'historical_backfill_phase1'
+  AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.backfill_run_id')) = '<RUN_ID>';
+```
+
+To remove all Phase 1 backfill events (across all runs):
+
+```sql
+DELETE FROM app_events
+WHERE event_type = 'prediction_accuracy_calculated'
+  AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.source')) = 'historical_backfill_phase1';
+```
+
+After deletion, re-run `refreshPredictionLearningMetrics` to recompute PLM from the remaining events.
+
+## Concurrency with the live path
+
+If a real new draw arrives mid-backfill, the live `evaluatePredictionsAgainstDraw` will fire-and-forget call `rebuildPredictionLearningMetricsFromEvents`. PLM upsert is last-write-wins on the unique key, so:
+
+- Transient state during a concurrent run may show a partial snapshot from the live rebuild
+- The backfill's own per-game rebuild call is the last write, restoring correct state
+- No data corruption is possible; only transient inconsistency
+
+If observability of brain weights is critical during a backfill window, run during low-traffic periods. Otherwise, the architecture self-heals.
+
+## Deferred follow-up
+
+A unit test for `rebuildPredictionLearningMetricsFromEvents` itself was identified as desirable additive coverage. It was not included in PR 3 because the function's testable surface — beyond the already-tested `buildLearningRollupsFromAccuracyPayloads` — requires either a real-DB integration test or substantial Drizzle mock infrastructure. Add as a future small PR if the rebuild path becomes a source of bugs.
