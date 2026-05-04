@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
-import { Image, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Image, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import * as DocumentPicker from 'expo-document-picker';
+import * as Sharing from 'expo-sharing';
 import { FLORIDA_GAMES, GAME_TYPES, type GameType } from '@florida-lotto/shared';
 import {
   Card,
@@ -184,6 +186,8 @@ export default function TrackScreen({ navigation }: TrackScreenProps) {
   const {
     clearSavedPicks,
     deletePick,
+    exportPicks,
+    importPicks,
     isLoaded,
     isSaved,
     savedPicks,
@@ -213,6 +217,10 @@ export default function TrackScreen({ navigation }: TrackScreenProps) {
   const [authPassword, setAuthPassword] = useState('');
   const [authFormMessage, setAuthFormMessage] = useState<string | null>(null);
   const [authFormError, setAuthFormError] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [dataMessage, setDataMessage] = useState<string | null>(null);
+  const [dataError, setDataError] = useState<string | null>(null);
 
   const stats = useMemo(() => deriveLedgerStats(savedPicks), [savedPicks]);
   const manualConfig = FLORIDA_GAMES[manualDraft.gameType];
@@ -421,6 +429,121 @@ export default function TrackScreen({ navigation }: TrackScreenProps) {
     ].filter(Boolean).join('\n');
 
     await Share.share({ message });
+  }
+
+  async function runImport(uri: string, mode: 'merge' | 'replace') {
+    setIsImporting(true);
+    setDataMessage(null);
+    setDataError(null);
+    try {
+      const result = await importPicks(uri, mode);
+      const verb = mode === 'replace' ? 'Replaced' : 'Imported';
+      const dupes = mode === 'merge' && result.skipped > 0
+        ? ` (${result.skipped} skipped — already in your ledger)`
+        : '';
+      setDataMessage(`${verb} ${result.added} of ${result.totalInFile} picks${dupes}.`);
+    } catch (err) {
+      // InvalidPicksFileError surfaces as a sentinel; everything else is a
+      // file-system or platform-level read failure. Either way the message
+      // stays generic — we never leak raw error text to the UI.
+      const message = err instanceof Error && err.name === 'InvalidPicksFileError'
+        ? "This file doesn't contain valid Florida Lotto picks. Make sure you selected a file exported from this app."
+        : 'Could not import picks. The file may be unreadable or in an unexpected format.';
+      setDataError(message);
+    } finally {
+      setIsImporting(false);
+    }
+  }
+
+  async function handleExport() {
+    if (savedPicks.length === 0) {
+      setDataError('There are no saved picks to export.');
+      setDataMessage(null);
+      return;
+    }
+    setIsExporting(true);
+    setDataMessage(null);
+    setDataError(null);
+    try {
+      const uri = await exportPicks();
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(uri, {
+          mimeType: 'application/json',
+          UTI: 'public.json',
+          dialogTitle: 'Save your Florida Lotto picks export',
+        });
+        setDataMessage(`Exported ${savedPicks.length} picks. Save the file somewhere safe.`);
+      } else {
+        // Fallback for environments without a native share sheet (e.g. some
+        // emulators). We at least confirm the file was written.
+        setDataMessage(`Exported ${savedPicks.length} picks to ${uri}.`);
+      }
+    } catch {
+      setDataError('Could not export picks. Try again in a moment.');
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
+  async function handleImport() {
+    setDataMessage(null);
+    setDataError(null);
+    let pick;
+    try {
+      pick = await DocumentPicker.getDocumentAsync({
+        type: 'application/json',
+        multiple: false,
+        copyToCacheDirectory: true,
+      });
+    } catch {
+      setDataError('Could not open the file picker.');
+      return;
+    }
+
+    if (pick.canceled || !pick.assets || pick.assets.length === 0) {
+      // User dismissed the picker — silent no-op per spec.
+      return;
+    }
+
+    const uri = pick.assets[0].uri;
+    const existingCount = savedPicks.length;
+
+    // Merge by default. Replace requires a second confirmation per spec
+    // because it's destructive.
+    Alert.alert(
+      'Import picks',
+      existingCount === 0
+        ? 'Import the picks from this file into your local ledger?'
+        : `Merge with your existing ${existingCount} pick${existingCount === 1 ? '' : 's'}, or replace them all?`,
+      existingCount === 0
+        ? [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Import', onPress: () => { void runImport(uri, 'merge'); } },
+          ]
+        : [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Merge', onPress: () => { void runImport(uri, 'merge'); } },
+            {
+              text: 'Replace all',
+              style: 'destructive',
+              onPress: () => {
+                Alert.alert(
+                  'Replace all picks?',
+                  `This permanently deletes your current ${existingCount} pick${existingCount === 1 ? '' : 's'} and replaces them with the picks in the imported file. This cannot be undone.`,
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Replace',
+                      style: 'destructive',
+                      onPress: () => { void runImport(uri, 'replace'); },
+                    },
+                  ],
+                );
+              },
+            },
+          ],
+    );
   }
 
   return (
@@ -982,6 +1105,39 @@ export default function TrackScreen({ navigation }: TrackScreenProps) {
 
       <Card>
         <SectionHeader
+          eyebrow="Backup"
+          title="Data"
+          caption="Save your picks to a file you can keep, share, or move to another device."
+        />
+
+        <View style={styles.dataActions}>
+          <PrimaryButton
+            label="Export Picks"
+            onPress={handleExport}
+            loading={isExporting}
+            disabled={isExporting || isImporting || savedPicks.length === 0}
+            style={styles.dataButton}
+          />
+          <PrimaryButton
+            label="Import Picks"
+            onPress={handleImport}
+            loading={isImporting}
+            disabled={isExporting || isImporting}
+            variant="secondary"
+            style={styles.dataButton}
+          />
+        </View>
+
+        {dataMessage ? (
+          <Text style={styles.dataMessage}>{dataMessage}</Text>
+        ) : null}
+        {dataError ? (
+          <Text style={styles.dataError}>{dataError}</Text>
+        ) : null}
+      </Card>
+
+      <Card>
+        <SectionHeader
           eyebrow="Workflow"
           title="Tracking path"
           caption="Structured for real outcomes without fake return estimates."
@@ -1352,5 +1508,25 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 17,
     paddingHorizontal: ui.spacing.xs,
+  },
+  dataActions: {
+    flexDirection: 'row',
+    gap: ui.spacing.sm,
+    marginTop: ui.spacing.md,
+  },
+  dataButton: {
+    flex: 1,
+  },
+  dataMessage: {
+    color: ui.colors.text,
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: ui.spacing.md,
+  },
+  dataError: {
+    color: ui.colors.danger,
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: ui.spacing.md,
   },
 });
