@@ -2,8 +2,11 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import {
   createPickKey,
   createSavedPick,
+  exportSavedPicksToFile,
+  importSavedPicksFromFile,
   loadSavedPicks,
   persistSavedPicks,
+  type ImportedPicksResult,
   type SavedPick,
   type SavedPickGradePatch,
   type SavedPickSourceType,
@@ -23,6 +26,8 @@ type SavedPicksContextValue = {
   updatePickStatus: (id: string, status: SavedPickStatus) => void;
   updatePickNotes: (id: string, notes: string) => void;
   isSaved: (pick: SavePickInput) => boolean;
+  exportPicks: () => Promise<string>;
+  importPicks: (fileUri: string, mode: 'merge' | 'replace') => Promise<ImportedPicksResult>;
 };
 
 const SavedPicksContext = createContext<SavedPicksContextValue | null>(null);
@@ -114,6 +119,15 @@ export function SavedPicksProvider({ children }: { children: ReactNode }) {
     isSaved: pick => {
       const key = createPickKey(createSavedPick(pick));
       return savedPicks.some(savedPick => createPickKey(savedPick) === key);
+    },
+    exportPicks: () => exportSavedPicksToFile(savedPicks),
+    importPicks: async (fileUri, mode) => {
+      const { picks, result } = await importSavedPicksFromFile(fileUri, savedPicks, mode);
+      // Replace savedPicks wholesale with the merge/replace result. The
+      // existing persistSavedPicks effect picks this up automatically and
+      // writes the new ledger to AsyncStorage.
+      setSavedPicks(picks);
+      return result;
     },
   }), [isLoaded, savedPicks, storageError]);
 
