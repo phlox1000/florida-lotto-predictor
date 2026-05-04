@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { File, Paths } from 'expo-file-system';
 import type { GameType } from '@florida-lotto/shared';
 
 const STORAGE_KEY = 'florida-lotto-predictor.saved-picks.v1';
@@ -256,4 +257,145 @@ export async function persistSavedPicks(picks: SavedPick[]) {
   };
 
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+}
+
+// ---------------------------------------------------------------------------
+// Export / Import
+//
+// Lets the user back up local picks across reinstalls. The on-disk export
+// format intentionally mirrors the AsyncStorage payload (`{ version, picks }`)
+// plus an `exportedAt` ISO timestamp, so a future change to the storage
+// payload should be reflected here as well to keep the formats compatible.
+// ---------------------------------------------------------------------------
+
+export const EXPORT_FILENAME_PREFIX = 'florida-lotto-picks-export';
+
+export type ExportPayload = {
+  version: number;
+  exportedAt: string;
+  picks: SavedPick[];
+};
+
+export type ImportedPicksResult = {
+  added: number;
+  skipped: number;
+  totalInFile: number;
+};
+
+export class InvalidPicksFileError extends Error {
+  constructor(message = 'INVALID_PICKS_FILE') {
+    super(message);
+    this.name = 'InvalidPicksFileError';
+  }
+}
+
+function buildExportFilename(date: Date = new Date()): string {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${EXPORT_FILENAME_PREFIX}-${yyyy}-${mm}-${dd}.json`;
+}
+
+/**
+ * Writes the given picks to a JSON file in the app's document directory and
+ * returns the file URI. A re-export on the same calendar day overwrites the
+ * existing file rather than accumulating duplicates.
+ *
+ * Uses the expo-file-system v19 class API (File / Paths) — `file.create()` and
+ * `file.write()` are synchronous, so the async wrapper is for future-proofing
+ * against an API change and to give callers a uniform Promise surface.
+ */
+export async function exportSavedPicksToFile(picks: SavedPick[]): Promise<string> {
+  const payload: ExportPayload = {
+    version: STORAGE_VERSION,
+    exportedAt: new Date().toISOString(),
+    picks,
+  };
+  const filename = buildExportFilename();
+  const file = new File(Paths.document, filename);
+
+  if (file.exists) {
+    file.delete();
+  }
+  file.create();
+  file.write(JSON.stringify(payload, null, 2));
+
+  return file.uri;
+}
+
+/**
+ * Reads a previously-exported picks file and returns the picks the caller
+ * should now persist, plus a result summary for surface-level UI copy.
+ *
+ * `mode === 'merge'` keeps every existing pick and appends only the imported
+ * picks whose `createPickKey` is not already represented locally.
+ * `mode === 'replace'` discards `existingPicks` and returns the imported
+ * (normalized) set verbatim — caller must confirm with the user first.
+ *
+ * Accepts either the canonical export shape (`{ picks: SavedPick[] }`) or a
+ * raw array fallback so files hand-edited by power users still load. Throws
+ * `InvalidPicksFileError` for any other shape so the caller can surface a
+ * clean message instead of leaking JSON parse errors.
+ */
+export async function importSavedPicksFromFile(
+  fileUri: string,
+  existingPicks: SavedPick[],
+  mode: 'merge' | 'replace',
+): Promise<{ picks: SavedPick[]; result: ImportedPicksResult }> {
+  const file = new File(fileUri);
+  const raw = await file.text();
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new InvalidPicksFileError();
+  }
+
+  const rawPicks: unknown[] | null = isObject(parsed) && Array.isArray(parsed.picks)
+    ? (parsed.picks as unknown[])
+    : Array.isArray(parsed)
+      ? (parsed as unknown[])
+      : null;
+
+  if (rawPicks === null) {
+    throw new InvalidPicksFileError();
+  }
+
+  const totalInFile = rawPicks.length;
+  const normalized = rawPicks
+    .map(normalizeSavedPick)
+    .filter((pick): pick is SavedPick => Boolean(pick));
+
+  if (mode === 'replace') {
+    return {
+      picks: normalized,
+      result: {
+        added: normalized.length,
+        skipped: totalInFile - normalized.length,
+        totalInFile,
+      },
+    };
+  }
+
+  // Dedup imported picks against the existing ledger AND against each other,
+  // so a malformed export with internal duplicates still produces a sensible
+  // count.
+  const seenKeys = new Set(existingPicks.map(p => createPickKey(p)));
+  const merged: SavedPick[] = [];
+  for (const candidate of normalized) {
+    const key = createPickKey(candidate);
+    if (seenKeys.has(key)) continue;
+    seenKeys.add(key);
+    merged.push(candidate);
+  }
+
+  return {
+    picks: [...merged, ...existingPicks],
+    result: {
+      added: merged.length,
+      skipped: totalInFile - merged.length,
+      totalInFile,
+    },
+  };
 }
