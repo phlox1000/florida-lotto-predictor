@@ -1,5 +1,6 @@
 import { getDb } from "../db";
 import { appEvents, type InsertAppEvent } from "../db/schema/appEvents";
+import { matchRatioFromCounts } from "../predictions/scorePrediction";
 
 export function buildPredictionCorrelationId(userId: number, game: string, timestamp: number): string {
   return `prediction:${game}:${userId}:${timestamp}`;
@@ -121,7 +122,7 @@ export async function emitPredictionAccuracyCalculated(input: {
         factor_snapshot: input.factorSnapshot ?? {},
         match_ratio: typeof input.matchRatio === "number"
           ? input.matchRatio
-          : (input.totalPicks > 0 ? input.matchedNumbers / input.totalPicks : 0),
+          : matchRatioFromCounts(input.matchedNumbers, input.totalPicks),
         game: input.game ?? null,
       },
     };
