@@ -15,6 +15,7 @@ import {
   predictionLearningMetrics,
 } from "../drizzle/schema";
 import { appEvents } from "./db/schema/appEvents";
+import { scorePredictionAgainstDraw } from "./predictions/scorePrediction";
 import { ENV } from './_core/env';
 import { FLORIDA_GAMES, type GameType } from '@shared/lottery';
 
@@ -674,7 +675,7 @@ export async function evaluatePredictionsAgainstDraw(
     const predMain = pred.mainNumbers as number[];
     const predSpecial = (pred.specialNumbers as number[]) || [];
 
-    const mainHits = predMain.filter(n => resultMainSet.has(n)).length;
+    const { mainHits, matchRatio } = scorePredictionAgainstDraw(predMain, mainNumbers);
     const specialHits = predSpecial.filter(n => resultSpecialSet.has(n)).length;
 
     perfRecords.push({
@@ -701,7 +702,7 @@ export async function evaluatePredictionsAgainstDraw(
         correlationId,
         matchedNumbers: mainHits,
         totalPicks: predMain.length,
-        modelScores: { [pred.modelName]: predMain.length > 0 ? mainHits / predMain.length : 0 },
+        modelScores: { [pred.modelName]: matchRatio },
         factorSnapshot: ((pred.metadata as Record<string, any> | null)?.explainable?.factorSnapshot ?? {}) as Record<string, number>,
         game: gameType,
       });
