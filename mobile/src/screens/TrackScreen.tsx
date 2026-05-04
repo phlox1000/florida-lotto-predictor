@@ -550,7 +550,7 @@ export default function TrackScreen({ navigation }: TrackScreenProps) {
     <Screen
       eyebrow="Results"
       title="Track"
-      subtitle="A private local ledger for saved picks, official result checks, and honest outcome review."
+      subtitle="A private local ledger for saved picks, official result checks, and honest outcome review. (OTA test)"
     >
       {storageError ? (
         <StateBlock tone="warning" title="Local storage warning" body={storageError} />
